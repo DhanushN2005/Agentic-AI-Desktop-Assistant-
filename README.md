@@ -97,7 +97,7 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 ## Core Features
 
 | Area | Features |
-|------|----------|
+|---|---|
 | **Voice** | VAD RMS+webrtcvad, barge-in, Indian English en-IN, PowerShell TTS, streaming, 8s stuck watchdog |
 | **Browser** | Playwright persistent context, navigate/click/fill/scroll, multi-tab research parallel (DAG), gmail_read, ad skip |
 | **Files** | create/rename/delete, organize desktop, Downloads/Desktop/Documents resolver `utils/path_resolver.py` |
@@ -114,7 +114,7 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 **Tested 75/75 pass via `IntentRouter.route()`:**
 
 | Category | Example Commands | Intent |
-|----------|----------------|--------|
+|---|---|---|
 | **Social** | `hello`, `hey flexie`, `how are you` | `social` |
 | **Voice** | `test voice`, `start dictation` | `voice`/`dictation_mode` |
 | **Weather** | `what is the weather`, `weather in chennai` | `weather` |
@@ -161,7 +161,7 @@ tell me binary search code and save to downloads  # single code_gen, not split
 
 **All 90 intents `core/router.py:201` (unique):**
 
-| # | Intent | Example | Engine/Handler | Category |
+|---:|---|---|---|---|
 |---|--------|---------|---------------|----------|
 | 1 | `undo` | `undo`, `revert` | `handlers/system.py:10` | System |
 | 2 | `voice_macro` | `start coding mode` | `handlers/system.py:178` | System |
@@ -263,7 +263,7 @@ tell me binary search code and save to downloads  # single code_gen, not split
 ## Engines & Stack
 
 | Engine | Tech | Free? |
-|--------|------|-------|
+|---|---|-------|
 | Voice | SpeechRecognition, Vosk, PowerShell System.Speech, webrtcvad | Yes |
 | LLM | Groq llama-3.1-8b-instant, Gemini 1.5-flash, Ollama tinyllama, DDGS | Yes |
 | Browser | Playwright 1.52 chromium persistent `browser_session/` | Yes |
@@ -385,7 +385,7 @@ python interface/web_ui_bridge.py  # ws://localhost:8765
 `utils/config.py:8` `load_dotenv .env`:
 
 | Var | Default | Purpose |
-|-----|---------|---------|
+|---|---|---------|
 | `GROQ_API_KEY` | `""` | Groq `llama-3.1-8b-instant` `brain.py:94` |
 | `GEMINI_API_KEY` | `""` | Gemini `1.5-flash` `brain.py:106` |
 | `FLEXIE_EMAIL`/`FLEXIE_PASS` | `""` | EmailEngine IMAP/SMTP `engines/email_engine.py:8` |
@@ -475,8 +475,3 @@ python -c "from core.workflow_parser import WorkflowParser; print(WorkflowParser
 ---
 
 *Flexie 2.0 — Built for Dhanush. 359 tests. Voice → Router → Hybrid → Planner → DAG → Verify → Memory → Stream.*
-#   A g e n t i c - A I - D e s k t o p - A s s i s t a n t - 
- 
- #   A g e n t i c - A I - D e s k t o p - A s s i s t a n t - 
- 
- 
