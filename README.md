@@ -1,7 +1,6 @@
 # Flexie 2.0 — Autonomous Agentic AI Desktop Assistant
 
 > **Resume:** *Flexie 2.0 — Agentic AI Desktop Assistant — A Windows-native AI agent capable of voice interaction, multi-step task planning, tool execution, desktop automation, memory, web research, code generation, and task verification.*
->
 > **GitHub:** *Flexie 2.0 — Autonomous Agentic AI Desktop Assistant — AI Agent is the core identity; voice, chatbot, automation, and desktop control are capabilities of the agent.*
 
 A **zero-config, Windows-native autonomous AI agent** with 30+ free plugins, self-awareness, persistent memory, hybrid agentic routing, browser automation, and automation scheduler — all running locally on Windows.
@@ -476,6 +475,8 @@ python -c "from core.workflow_parser import WorkflowParser; print(WorkflowParser
 ---
 
 *Flexie 2.0 — Built for Dhanush. 359 tests. Voice → Router → Hybrid → Planner → DAG → Verify → Memory → Stream.*
-#   A g e n t i c - A I - D e s k t o p - A s s i s t a n t -  
- #   A g e n t i c - A I - D e s k t o p - A s s i s t a n t -  
+#   A g e n t i c - A I - D e s k t o p - A s s i s t a n t - 
+ 
+ #   A g e n t i c - A I - D e s k t o p - A s s i s t a n t - 
+ 
  
