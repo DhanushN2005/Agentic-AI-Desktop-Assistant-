@@ -95,7 +95,7 @@ class LLMProviderManager:
         LLMProvider(
             name="groq",
             api_key_env="GROQ_API_KEY",
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",
             priority=1,
             timeout=15.0,
             max_tokens=2048,

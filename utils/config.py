@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'), override=True)
 
 SUPPORTED_PROVIDERS = {
-    "groq":      {"env": "GROQ_API_KEY",      "model_env": "GROQ_MODEL",      "label": "Groq",              "placeholder": "gsk_...", "help": "console.groq.com/keys", "prefix": "gsk_", "default_model": "llama-3.1-8b-instant",
-                 "models": ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it", "whisper-large-v3"]},
+    "groq":      {"env": "GROQ_API_KEY",      "model_env": "GROQ_MODEL",      "label": "Groq",              "placeholder": "gsk_...", "help": "console.groq.com/keys", "prefix": "gsk_", "default_model": "openai/gpt-oss-20b",
+                 "models": ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3-8b-27b", "qwen/qwen3-6-27b", "groq/compound", "groq/compound-mini", "whisper-large-v3"]},
     "gemini":    {"env": "GEMINI_API_KEY",    "model_env": "GEMINI_MODEL",    "label": "Google Gemini",     "placeholder": "AIza...", "help": "aistudio.google.com/app/apikey", "prefix": "AIza", "default_model": "gemini-1.5-flash",
                  "models": ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-exp"]},
     "openai":    {"env": "OPENAI_API_KEY",    "model_env": "OPENAI_MODEL",    "label": "OpenAI (GPT)",      "placeholder": "sk-...", "help": "platform.openai.com/api-keys", "prefix": "sk-", "default_model": "gpt-4o-mini",
@@ -143,6 +143,9 @@ class Config:
     # Per-provider models (hot-reloadable via set_model)
     GROQ_MODEL      = os.getenv("GROQ_MODEL", SUPPORTED_PROVIDERS["groq"]["default_model"])
     GEMINI_MODEL    = os.getenv("GEMINI_MODEL", SUPPORTED_PROVIDERS["gemini"]["default_model"])
+    # Groq legacy alias cleanup: old installs may have GROQ_MODEL=llama-* which is now decommissioned
+    if GROQ_MODEL in ("llama-3.1-8b-instant", "llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"):
+        GROQ_MODEL = "openai/gpt-oss-20b"
     OPENAI_MODEL    = os.getenv("OPENAI_MODEL", SUPPORTED_PROVIDERS["openai"]["default_model"])
     DEEPSEEK_MODEL  = os.getenv("DEEPSEEK_MODEL", SUPPORTED_PROVIDERS["deepseek"]["default_model"])
     ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", SUPPORTED_PROVIDERS["anthropic"]["default_model"])

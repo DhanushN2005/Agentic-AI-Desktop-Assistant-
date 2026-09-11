@@ -69,17 +69,17 @@ class Brain:
 
     def _init_all_providers(self):
         """Initialize all LLM clients from Config (supports hot-reload)."""
-        # Groq (model from Config.GROQ_MODEL)
+        # Groq (model from Config.GROQ_MODEL) - Sep 2026: Groq decommissioned llama-* , current valid: openai/gpt-oss-20b
         if Config.GROQ_API_KEY and Groq:
             try:
                 self.groq_client = Groq(api_key=Config.GROQ_API_KEY)
-                self.groq_model = getattr(Config, 'GROQ_MODEL', 'llama-3.1-8b-instant')
+                self.groq_model = getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b')
             except Exception as e:
                 print(f"[Groq Init Error]: {e}")
                 self.groq_client = None
         else:
             self.groq_client = None
-            self.groq_model = getattr(Config, 'GROQ_MODEL', 'llama-3.1-8b-instant')
+            self.groq_model = getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b')
         # Gemini (model from Config.GEMINI_MODEL)
         if Config.GEMINI_API_KEY and genai:
             try:
@@ -213,10 +213,10 @@ class Brain:
             # Active provider override
             active = getattr(Config, 'ACTIVE_PROVIDER', 'auto').lower() if hasattr(Config, 'ACTIVE_PROVIDER') else 'auto'
             # Priority chain: Groq -> OpenAI -> DeepSeek -> Gemini -> Anthropic -> Mistral (or single active)
-            # Groq
+            # Groq - current Sep 2026 valid: openai/gpt-oss-20b
             if active in ('auto','groq') and self.groq_client:
                 try:
-                    model = getattr(self, 'groq_model', getattr(Config, 'GROQ_MODEL', 'llama-3.1-8b-instant'))
+                    model = getattr(self, 'groq_model', getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b'))
                     chat_completion = self.groq_client.chat.completions.create(
                         messages=[
                             {"role": "system", "content": sys_p},
@@ -285,7 +285,7 @@ class Brain:
         if is_online():
             if active in ('auto','groq') and self.groq_client:
                 try:
-                    model = getattr(self, 'groq_model', getattr(Config, 'GROQ_MODEL', 'llama-3.1-8b-instant'))
+                    model = getattr(self, 'groq_model', getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b'))
                     stream = self.groq_client.chat.completions.create(
                         messages=[{"role": "system", "content": sys_p}, {"role": "user", "content": prompt}],
                         model=model,
