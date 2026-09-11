@@ -1765,14 +1765,51 @@ class FlexieUI(QWidget):
 
     def _set_brightness(self, val): self._send_udp(f"SET_BRIGHTNESS:{val}")
 
-    def _change_mode(self, mode):
-        self.orb.mode = mode.lower()
-        cfg = FlexieConfig.MODES.get(self.orb.mode, FlexieConfig.MODES["jarvis"])
+    def _apply_mode_visuals(self, mode):
+        """Visual-only update (no UDP) — shared by local and remote mode changes."""
+        mode_key = mode.lower().strip()
+        self.orb.mode = mode_key
+        cfg = FlexieConfig.MODES.get(mode_key, FlexieConfig.MODES["jarvis"])
         accent = cfg["accent"]
-        self.panel.status_indicator.setStyleSheet(f"background-color: {accent}; border-radius: 6px;")
-        self.panel.status_label.setText(f"SWITCHING TO {mode.upper()}")
-        self._send_udp(f"mode:{mode}")
+        secondary = cfg.get("secondary", accent)
+        bg_tint = cfg.get("bg_tint", (10, 15, 25, 235))
+        bg_rgba = f"rgba({bg_tint[0]}, {bg_tint[1]}, {bg_tint[2]}, {bg_tint[3]})"
+        try:
+            self.panel.container.setStyleSheet(f"""
+                QFrame#MainContainer {{
+                    background: {bg_rgba};
+                    border: 1px solid {accent};
+                    border-radius: 18px;
+                }}
+                QLabel {{ color: rgba(255, 255, 255, 210); font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 12px; }}
+                QLabel#Title {{ color: #FFFFFF; font-size: 18px; font-weight: 800; background: transparent; letter-spacing: 3px; }}
+                QLabel#SectionHeader {{ color: {accent}; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 2.5px; }}
+            """)
+            self.panel.container.setObjectName("MainContainer")
+            self.panel.container.style().unpolish(self.panel.container); self.panel.container.style().polish(self.panel.container)
+        except: pass
+        try:
+            self.panel.status_indicator.setStyleSheet(f"background-color: {accent}; border-radius: 6px; border: 1px solid {secondary};")
+            self.panel.provider_badge.setStyleSheet(f"background: rgba(255,255,255,6); border: 1px solid {accent}; border-radius: 10px;")
+            self.panel.wake_btn.setStyleSheet(f"QPushButton#WakeButton {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {accent}, stop:1 {secondary}); border: none; padding: 12px; font-size: 13px; letter-spacing: 1px; border-radius: 10px; color: #FFFFFF; font-weight: 600; }}")
+        except: pass
+        try:
+            if self.orb.state in ("IDLE","SLEEP","MINIMIZED"):
+                self.orb._accent_from = self.orb._accent_to
+                self.orb._secondary_from = self.orb._secondary_to
+                self.orb._accent_to = QColor(accent)
+                self.orb._secondary_to = QColor(secondary)
+                self.orb.color_anim.stop(); self.orb._color_blend = 0.0; self.orb.color_anim.start()
+        except: pass
         self.orb.set_state(self.orb.state)
+        try: self.panel.refresh_provider_badge()
+        except: pass
+
+    def _change_mode(self, mode, send_udp=True):
+        self._apply_mode_visuals(mode)
+        self.panel.status_label.setText(f"MODE → {mode.upper()}  •  {FlexieConfig.MODES.get(mode.lower().strip(), FlexieConfig.MODES['jarvis'])['accent']}")
+        if send_udp:
+            self._send_udp(f"mode:{mode}")
 
     def _process_udp(self):
         while self.udp_sock.hasPendingDatagrams():
@@ -1789,8 +1826,14 @@ class FlexieUI(QWidget):
                     accent = _acc
                     self.panel.status_indicator.setStyleSheet(f"background-color: {accent}; border-radius: 6px;")
                 elif tag == "MODE":
-                    self.orb.mode = val
+                    try: self.panel.mode_combo.blockSignals(True)
+                    except: pass
                     self.panel.mode_combo.setCurrentText(val.capitalize())
+                    try: self.panel.mode_combo.blockSignals(False)
+                    except: pass
+                    try: self._apply_mode_visuals(val)
+                    except: pass
+                    self.panel.status_label.setText(f"MODE → {val.upper()}")
                 elif tag == "QUIT":
                     QApplication.quit()
                 elif tag == "SAY":
