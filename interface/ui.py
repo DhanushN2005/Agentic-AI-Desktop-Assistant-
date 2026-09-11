@@ -11,7 +11,7 @@ import random
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QFrame, QGraphicsDropShadowEffect, QSystemTrayIcon,
                              QMenu, QSlider, QComboBox, QLineEdit, QPushButton, QProgressBar,
-                             QSizePolicy, QGridLayout, QTextBrowser)
+                             QSizePolicy, QGridLayout, QTextBrowser, QDialog, QScrollArea, QTabWidget)
 from PyQt6.QtCore import (Qt, QTimer, QPropertyAnimation, QEasingCurve, 
                            QRect, QRectF, pyqtProperty, QPoint, QPointF,
                            QParallelAnimationGroup, QSequentialAnimationGroup, QSize)
@@ -100,6 +100,347 @@ class CustomProgressBar(QProgressBar):
                 border-radius: 3px;
             }
         """)
+
+class ApiKeysDialog(QDialog):
+    """Glassmorphism settings dialog for all LLM provider API keys + model picker."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Flexie — AI Provider Keys & Models")
+        self.setModal(True)
+        self.setMinimumWidth(580)
+        self.setMaximumWidth(660)
+        self.setStyleSheet("""
+            QDialog { background: rgba(10,15,25,245); border-radius: 16px; }
+            QLabel { color: rgba(255,255,255,200); font-size: 11px; }
+            QLabel#DialogTitle { color: #FFFFFF; font-size: 16px; font-weight: 800; letter-spacing: 2px; }
+            QLabel#Help { color: rgba(0,210,255,180); font-size: 10px; }
+            QLabel#Status { color: #00FF41; font-size: 11px; font-weight: 600; }
+            QLineEdit { background: rgba(0,0,0,80); border: 1px solid rgba(255,255,255,15); border-radius: 8px; color: #FFFFFF; padding: 8px 10px; font-size: 11px; }
+            QLineEdit:focus { border: 1px solid #00D2FF; }
+            QComboBox { background: rgba(0,0,0,80); border: 1px solid rgba(255,255,255,15); border-radius: 8px; color: #FFFFFF; padding: 6px 10px; font-size: 11px; }
+            QComboBox:hover { border: 1px solid #00D2FF; }
+            QComboBox QAbstractItemView { background: rgba(15,20,35,250); color: #FFFFFF; selection-background-color: rgba(0,210,255,40); border: 1px solid rgba(255,255,255,15); }
+            QPushButton { background: rgba(255,255,255,8); color: #FFFFFF; border-radius: 8px; padding: 8px 14px; font-weight: 600; border: 1px solid rgba(255,255,255,12); }
+            QPushButton:hover { background: rgba(0,210,255,20); border: 1px solid rgba(0,210,255,50); }
+            QPushButton#SaveBtn { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #0095FF, stop:1 #0055FF); border: none; padding: 10px; font-size: 13px; }
+            QPushButton#SaveBtn:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #00A5FF, stop:1 #0065FF); }
+        """)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setSpacing(12)
+        title = QLabel("🔑  AI PROVIDER KEYS  +  MODELS")
+        title.setObjectName("DialogTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(title)
+        subtitle = QLabel("Keys + model per provider. ACTIVE picks who answers. AUTO = fallback Groq → OpenAI → DeepSeek → Gemini → Claude → Ollama")
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color: rgba(255,255,255,120); font-size: 10px;")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(subtitle)
+        # Active provider selector
+        active_row = QHBoxLayout()
+        active_row.addWidget(QLabel("⚡ Active Provider:"))
+        self.active_combo = QComboBox()
+        self.active_combo.addItems(["auto (fallback chain)", "groq", "openai", "deepseek", "gemini", "anthropic", "mistral", "ollama"])
+        self.active_combo.setMinimumHeight(32)
+        active_row.addWidget(self.active_combo, 1)
+        outer.addLayout(active_row)
+        # Search filter
+        search_row = QHBoxLayout()
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("🔍 Filter providers (groq, openai, deepseek...)")
+        self.search_edit.setMinimumHeight(30)
+        self.search_edit.setStyleSheet("QLineEdit { background: rgba(255,255,255,8); border-radius: 8px; padding: 6px 12px; }")
+        search_row.addWidget(self.search_edit, 1)
+        self.search_clear = QPushButton("✕")
+        self.search_clear.setFixedSize(28, 28)
+        self.search_clear.clicked.connect(lambda: self.search_edit.clear())
+        search_row.addWidget(self.search_clear)
+        outer.addLayout(search_row)
+        # Priority hint
+        prio = QLabel("Priority: Groq(1) → OpenAI(2) → DeepSeek(3) → Gemini(4) → Claude(5) → Ollama(fallback)")
+        prio.setStyleSheet("color: rgba(255,255,255,70); font-size: 9px;")
+        prio.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(prio)
+        # Scroll area for providers
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; } QWidget#ScrollContent { background: transparent; }")
+        scroll.setMaximumHeight(460)
+        content = QFrame()
+        content.setObjectName("ScrollContent")
+        self.form_layout = QVBoxLayout(content)
+        self.form_layout.setSpacing(14)
+        self.form_layout.setContentsMargins(4, 4, 4, 4)
+        self.fields = {}
+        self.model_combos = {}
+        self.provider_boxes = {}
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("Status")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.hide()
+        try:
+            from utils.config import SUPPORTED_PROVIDERS
+            providers = list(SUPPORTED_PROVIDERS.items())
+        except Exception:
+            providers = []
+        _icons = {"groq":"⚡","gemini":"✦","openai":"🤖","deepseek":"🧠","anthropic":"◆","mistral":"🌬️","cohere":"🌀","together":"🔗","ollama":"💻"}
+        for pid, meta in providers:
+            box = QFrame()
+            box.setStyleSheet("QFrame { background: rgba(255,255,255,6); border: 1px solid rgba(255,255,255,10); border-radius: 10px; }")
+            box_layout = QVBoxLayout(box)
+            box_layout.setContentsMargins(10, 10, 10, 10)
+            box_layout.setSpacing(6)
+            header = QHBoxLayout()
+            icon = _icons.get(pid, "●")
+            prio_num = list(SUPPORTED_PROVIDERS.keys()).index(pid) + 1 if pid in SUPPORTED_PROVIDERS else 99
+            lbl = QLabel(f"{icon}  {meta['label']}  (#{prio_num} • {meta['env']})")
+            lbl.setStyleSheet("font-weight: 700; color: #FFFFFF; font-size: 11px; background: transparent; border: none;")
+            header.addWidget(lbl)
+            header.addStretch()
+            # Live key status dot
+            _dot = QLabel("●")
+            _dot.setStyleSheet("color: rgba(255,255,255,40); font-size: 10px; background: transparent; border: none;")
+            _dot.setObjectName(f"dot_{pid}")
+            header.addWidget(_dot)
+            help_lbl = QLabel(f"↗ {meta['help']}")
+            help_lbl.setStyleSheet("color: rgba(0,210,255,90); font-size: 9px; background: transparent; border: none;")
+            header.addWidget(help_lbl)
+            box_layout.addLayout(header)
+            # Key row
+            key_row = QHBoxLayout()
+            key_row.addWidget(QLabel("Key:"))
+            edit = QLineEdit()
+            edit.setEchoMode(QLineEdit.EchoMode.Password)
+            edit.setPlaceholderText(meta['placeholder'] + " — leave empty to keep")
+            edit.setMinimumHeight(32)
+            key_row.addWidget(edit, 1)
+            toggle = QPushButton("👁")
+            toggle.setFixedSize(32, 32)
+            toggle.setCheckable(True)
+            def make_toggle(e=edit, b=toggle):
+                def _t(checked):
+                    e.setEchoMode(QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password)
+                    b.setText("🙈" if checked else "👁")
+                return _t
+            toggle.toggled.connect(make_toggle())
+            key_row.addWidget(toggle)
+            box_layout.addLayout(key_row)
+            # Model row
+            model_row = QHBoxLayout()
+            model_row.addWidget(QLabel("Model:"))
+            combo = QComboBox()
+            combo.setEditable(True)
+            combo.setMinimumHeight(30)
+            models = meta.get("models", [meta.get("default_model","")])
+            for m in models:
+                combo.addItem(m)
+            combo.setPlaceholderText(meta.get("default_model",""))
+            model_row.addWidget(combo, 1)
+            box_layout.addLayout(model_row)
+            self.form_layout.addWidget(box)
+            self.fields[pid] = edit
+            self.model_combos[pid] = combo
+            self.provider_boxes[pid] = box
+            # Live validation wiring
+            def make_validate(p=pid, e=edit, d=_dot, meta=meta):
+                def _v(txt):
+                    prefix = meta.get("prefix","")
+                    has = bool(txt.strip())
+                    if not has:
+                        # Show saved state
+                        try: from utils.config import Config as _C; has_saved = bool(_C.get_api_key(p)); d.setStyleSheet("color: #00FF41; font-size: 10px; background: transparent; border: none;" if has_saved else "color: rgba(255,255,255,40); font-size: 10px; background: transparent; border: none;")
+                        except: pass
+                        e.setStyleSheet("background: rgba(0,0,0,80); border: 1px solid rgba(255,255,255,15); border-radius: 8px;")
+                    elif prefix and not txt.strip().startswith(prefix):
+                        d.setStyleSheet("color: #FFD700; font-size: 10px; background: transparent; border: none;")
+                        e.setStyleSheet("background: rgba(255,215,0,10); border: 1px solid rgba(255,215,0,50); border-radius: 8px;")
+                    else:
+                        d.setStyleSheet("color: #00FF41; font-size: 10px; background: transparent; border: none;")
+                        e.setStyleSheet("background: rgba(0,0,0,80); border: 1px solid rgba(0,255,65,40); border-radius: 8px;")
+                return _v
+            edit.textChanged.connect(make_validate())
+        # Ollama section
+        ollama_box = QFrame()
+        ollama_box.setStyleSheet("QFrame { background: rgba(255,255,255,6); border: 1px solid rgba(255,255,255,10); border-radius: 10px; }")
+        ollama_layout = QVBoxLayout(ollama_box)
+        ollama_layout.setContentsMargins(10, 10, 10, 10)
+        ollama_layout.setSpacing(6)
+        ollama_header = QHBoxLayout()
+        ollama_lbl = QLabel("Ollama (Local)")
+        ollama_lbl.setStyleSheet("font-weight: 700; color: #FFFFFF; font-size: 11px; background: transparent; border: none;")
+        ollama_header.addWidget(ollama_lbl)
+        ollama_header.addStretch()
+        ollama_help = QLabel("↗ ollama.com")
+        ollama_help.setStyleSheet("color: rgba(0,210,255,90); font-size: 9px; background: transparent; border: none;")
+        ollama_header.addWidget(ollama_help)
+        ollama_layout.addLayout(ollama_header)
+        ollama_url_row = QHBoxLayout()
+        ollama_url_row.addWidget(QLabel("URL:"))
+        self.ollama_edit = QLineEdit()
+        self.ollama_edit.setPlaceholderText("http://localhost:11434/api/generate")
+        self.ollama_edit.setMinimumHeight(30)
+        ollama_url_row.addWidget(self.ollama_edit, 1)
+        ollama_layout.addLayout(ollama_url_row)
+        ollama_model_row = QHBoxLayout()
+        ollama_model_row.addWidget(QLabel("Model:"))
+        self.ollama_model_combo = QComboBox()
+        self.ollama_model_combo.setEditable(True)
+        self.ollama_model_combo.addItems(["tinyllama:latest", "llama3:latest", "llama3.1:latest", "mistral:latest", "gemma2:latest", "qwen2.5:latest", "phi3:latest"])
+        self.ollama_model_combo.setMinimumHeight(30)
+        ollama_model_row.addWidget(self.ollama_model_combo, 1)
+        ollama_layout.addLayout(ollama_model_row)
+        self.form_layout.addWidget(ollama_box)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        outer.addWidget(self.status_label)
+        btn_row = QHBoxLayout()
+        self.btn_test = QPushButton("🧪 Test")
+        self.btn_save = QPushButton("💾 Save & Reload")
+        self.btn_save.setObjectName("SaveBtn")
+        self.btn_cancel = QPushButton("Cancel")
+        btn_row.addWidget(self.btn_test)
+        btn_row.addWidget(self.btn_save)
+        btn_row.addWidget(self.btn_cancel)
+        outer.addLayout(btn_row)
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_save.clicked.connect(self._save)
+        self.btn_test.clicked.connect(self._test)
+        # Search filter wiring
+        def _filter(txt):
+            q = txt.lower().strip()
+            for pid, box in self.provider_boxes.items():
+                show = not q or q in pid or q in box.findChild(QLabel).text().lower() if box.findChild(QLabel) else True
+                # Simpler: check pid and label
+                try:
+                    from utils.config import SUPPORTED_PROVIDERS as _SP
+                    meta = _SP[pid]
+                    show = not q or q in pid or q in meta['label'].lower() or q in meta['env'].lower()
+                except: pass
+                box.setVisible(show)
+        self.search_edit.textChanged.connect(_filter)
+        self._load_existing()
+        # Init dot colors
+        try:
+            from utils.config import Config as _C
+            for pid, dot in [(p, self.findChild(QLabel, f"dot_{p}")) for p in self.fields]:
+                if dot:
+                    has = bool(_C.get_api_key(pid))
+                    dot.setStyleSheet("color: #00FF41; font-size: 10px; background: transparent; border: none;" if has else "color: rgba(255,255,255,40); font-size: 10px; background: transparent; border: none;")
+        except: pass
+
+    def _load_existing(self):
+        try:
+            from utils.config import Config, SUPPORTED_PROVIDERS
+            # Active provider
+            active = getattr(Config, 'ACTIVE_PROVIDER', 'auto')
+            idx = self.active_combo.findText(active, 0) if active != "auto" else 0
+            # find auto entry
+            for i in range(self.active_combo.count()):
+                if self.active_combo.itemText(i).startswith("auto"):
+                    if active == "auto": idx = i; break
+                elif self.active_combo.itemText(i) == active:
+                    idx = i; break
+            self.active_combo.setCurrentIndex(max(0, idx))
+            for pid in self.fields:
+                meta = SUPPORTED_PROVIDERS[pid]
+                raw = Config.get_api_key(pid)
+                if raw:
+                    self.fields[pid].setPlaceholderText(raw[:4] + "•" * max(4, len(raw)-8) + raw[-4:] + "  (saved)")
+                self.fields[pid].setText("")
+                # Model
+                cur_model = Config.get_model(pid)
+                combo = self.model_combos[pid]
+                # Ensure cur_model is in combo
+                if cur_model and combo.findText(cur_model) == -1:
+                    combo.addItem(cur_model)
+                combo.setCurrentText(cur_model or meta.get("default_model",""))
+            from utils.config import Config as C
+            self.ollama_edit.setText(C.OLLAMA_URL if C.OLLAMA_URL != "http://localhost:11434/api/generate" else "")
+            self.ollama_edit.setPlaceholderText(C.OLLAMA_URL)
+            self.ollama_model_combo.setCurrentText(C.OLLAMA_MODEL)
+        except Exception:
+            pass
+
+    def _collect_updates(self) -> dict:
+        updates = {}
+        for pid, edit in self.fields.items():
+            txt = edit.text().strip()
+            if txt:
+                from utils.config import SUPPORTED_PROVIDERS
+                env = SUPPORTED_PROVIDERS[pid]["env"]
+                updates[env] = txt
+        # Models
+        for pid, combo in self.model_combos.items():
+            txt = combo.currentText().strip()
+            if txt:
+                from utils.config import SUPPORTED_PROVIDERS
+                menv = SUPPORTED_PROVIDERS[pid]["model_env"]
+                # Only save if changed from default or current
+                from utils.config import Config
+                cur = Config.get_model(pid)
+                if txt != cur:
+                    updates[menv] = txt
+        ollama_txt = self.ollama_edit.text().strip()
+        if ollama_txt:
+            updates["OLLAMA_URL"] = ollama_txt
+        om = self.ollama_model_combo.currentText().strip()
+        if om:
+            from utils.config import Config
+            if om != Config.OLLAMA_MODEL:
+                updates["OLLAMA_MODEL"] = om
+        # Active provider
+        active_txt = self.active_combo.currentText().strip()
+        active_val = "auto" if active_txt.startswith("auto") else active_txt
+        from utils.config import Config as C
+        if active_val != getattr(C, 'ACTIVE_PROVIDER', 'auto'):
+            updates["ACTIVE_PROVIDER"] = active_val
+        return updates
+
+    def _save(self):
+        updates = self._collect_updates()
+        if not updates:
+            self._show_status("No changes to save.", "#FFD700")
+            return
+        try:
+            from utils.config import Config
+            ok = Config.set_many_keys(updates)
+            if ok:
+                try:
+                    import socket
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.sendto(b"RELOAD_BRAIN", ("127.0.0.1", 9887))
+                    s.close()
+                except: pass
+                self._show_status(f"Saved {len(updates)} change(s). Reloading brain…", "#00FF41")
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(1200, self.accept)
+            else:
+                self._show_status("Failed to write .env — check permissions.", "#FF3B30")
+        except Exception as e:
+            self._show_status(f"Error: {e}", "#FF3B30")
+
+    def _test(self):
+        try:
+            from utils.config import Config as C
+            preview = []
+            from utils.config import SUPPORTED_PROVIDERS
+            for pid, meta in SUPPORTED_PROVIDERS.items():
+                edit_txt = self.fields[pid].text().strip()
+                has = bool(edit_txt or C.get_api_key(pid))
+                icon = "✅" if has else "⚪"
+                model = self.model_combos[pid].currentText().strip() or C.get_model(pid)
+                preview.append(f"{icon} {meta['label']}:{model}")
+            active = self.active_combo.currentText()
+            msg = f"Active: {active} | " + " | ".join(preview[:4])
+            self._show_status(msg, "#00D2FF")
+        except Exception as e:
+            self._show_status(f"Test error: {e}", "#FF3B30")
+
+    def _show_status(self, msg: str, color: str):
+        self.status_label.setText(msg)
+        self.status_label.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 600;")
+        self.status_label.show()
 
 class ControlPopup(QWidget):
     def __init__(self, parent=None):
@@ -231,6 +572,49 @@ class ControlPopup(QWidget):
         self.status_label = QLabel("STATUS: READY")
         self.status_label.setStyleSheet("color: #00D2FF; font-size: 10px; font-weight: 700; letter-spacing: 2px;")
         layout.addWidget(self.status_label)
+
+        # — Active AI Provider Badge (live) —
+        self.provider_badge = QFrame()
+        self.provider_badge.setStyleSheet("background: rgba(0,210,255,10); border: 1px solid rgba(0,210,255,25); border-radius: 10px;")
+        badge_layout = QHBoxLayout(self.provider_badge)
+        badge_layout.setContentsMargins(10, 8, 10, 8)
+        badge_layout.setSpacing(8)
+        self.provider_dot = QLabel("●")
+        self.provider_dot.setStyleSheet("color: #00FF41; font-size: 14px; background: transparent; border: none;")
+        self.provider_label = QLabel("AUTO")
+        self.provider_label.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 700; background: transparent; border: none;")
+        self.provider_model_label = QLabel("—")
+        self.provider_model_label.setStyleSheet("color: rgba(255,255,255,160); font-size: 10px; background: transparent; border: none;")
+        self.provider_model_label.setWordWrap(True)
+        badge_layout.addWidget(self.provider_dot)
+        badge_layout.addWidget(self.provider_label)
+        badge_layout.addWidget(self.provider_model_label, 1)
+        self.btn_provider_refresh = QPushButton("↻")
+        self.btn_provider_refresh.setFixedSize(26, 26)
+        self.btn_provider_refresh.setStyleSheet("background: rgba(255,255,255,8); border-radius: 6px; font-size: 12px;")
+        badge_layout.addWidget(self.btn_provider_refresh)
+        layout.addWidget(self.provider_badge)
+        # Provider dots row (all providers)
+        self.provider_dots_row = QHBoxLayout()
+        self.provider_dots_row.setSpacing(6)
+        self.provider_dots_widgets = {}
+        dots_container = QWidget()
+        dots_container.setLayout(self.provider_dots_row)
+        dots_container.setStyleSheet("background: transparent;")
+        # Provider mini badges • + label
+        try:
+            from utils.config import SUPPORTED_PROVIDERS as _SP
+            _provider_icons = {"groq":"⚡","gemini":"✦","openai":"●","deepseek":"◆","anthropic":"▲","mistral":"⬢","cohere":"⬣","together":"⬔","ollama":"◉"}
+            for _pid in ["groq","openai","deepseek","gemini","anthropic","mistral","ollama"]:
+                _meta = _SP.get(_pid, {"label": _pid})
+                _lbl = QLabel(f"{_provider_icons.get(_pid,'●')} {_pid[:3]}")
+                _lbl.setStyleSheet("color: rgba(255,255,255,90); font-size: 9px; background: rgba(255,255,255,6); border: 1px solid rgba(255,255,255,10); border-radius: 6px; padding: 2px 6px;")
+                self.provider_dots_widgets[_pid] = _lbl
+                self.provider_dots_row.addWidget(_lbl)
+            self.provider_dots_row.addStretch()
+        except: pass
+        self.dots_container = dots_container
+        layout.addWidget(dots_container)
         
         # System Metrics Panel
         self.metrics_frame = QFrame()
@@ -329,6 +713,29 @@ class ControlPopup(QWidget):
         self.mode_container = QWidget(); self.mode_container.setLayout(mode_layout)
         layout.addWidget(self.mode_container)
 
+        # — Quick Model Switch (no dialog) —
+        quick_ai_row = QHBoxLayout()
+        quick_ai_row.setSpacing(6)
+        quick_ai_row.addWidget(QLabel("🤖"))
+        self.quick_provider_combo = QComboBox()
+        self.quick_provider_combo.addItems(["auto", "groq", "openai", "deepseek", "gemini", "anthropic", "mistral", "ollama"])
+        self.quick_provider_combo.setMinimumHeight(28)
+        self.quick_provider_combo.setStyleSheet("QComboBox { font-size: 10px; padding: 4px 8px; }")
+        quick_ai_row.addWidget(self.quick_provider_combo, 1)
+        self.quick_model_combo = QComboBox()
+        self.quick_model_combo.setEditable(True)
+        self.quick_model_combo.setMinimumHeight(28)
+        self.quick_model_combo.setStyleSheet("QComboBox { font-size: 10px; padding: 4px 8px; }")
+        self.quick_model_combo.setPlaceholderText("model")
+        quick_ai_row.addWidget(self.quick_model_combo, 1)
+        self.btn_quick_apply = QPushButton("✔")
+        self.btn_quick_apply.setFixedSize(28, 28)
+        self.btn_quick_apply.setStyleSheet("background: rgba(0,255,65,15); color: #00FF41; border-radius: 6px; font-size: 12px; border: 1px solid rgba(0,255,65,30);")
+        quick_ai_row.addWidget(self.btn_quick_apply)
+        self.quick_ai_container = QWidget()
+        self.quick_ai_container.setLayout(quick_ai_row)
+        layout.addWidget(self.quick_ai_container)
+
         # Quick action grid
         quick_grid = QGridLayout()
         quick_grid.setSpacing(8)
@@ -343,6 +750,11 @@ class ControlPopup(QWidget):
         quick_grid.addWidget(self.btn_snap, 1, 1)
         self.grid_container = QWidget(); self.grid_container.setLayout(quick_grid)
         layout.addWidget(self.grid_container)
+
+        # AI Keys button
+        self.btn_keys = QPushButton("🔑 AI KEYS")
+        self.btn_keys.setStyleSheet("background: rgba(255,215,0,15); color: #FFD700; border: 1px solid rgba(255,215,0,30);")
+        layout.addWidget(self.btn_keys)
         
         # Big Wake Button
         self.wake_btn = QPushButton("⚡ WAKE FLEXIE")
@@ -355,20 +767,110 @@ class ControlPopup(QWidget):
         self.ver_stamp.setStyleSheet("color: rgba(255,255,255,60); font-size: 9px; letter-spacing: 2px; margin-top: 5px;")
         layout.addWidget(self.ver_stamp)
         
+        self._init_provider_quick_switch()
+        self.refresh_provider_badge()
         self.container.adjustSize()
         self.setFixedHeight(self.container.sizeHint().height() + 20)
+
+    def _init_provider_quick_switch(self):
+        """Wire quick provider/model switch logic."""
+        try:
+            from utils.config import SUPPORTED_PROVIDERS as _SP
+            def _on_provider_changed(text):
+                pid = text.strip().lower() if text else "auto"
+                combo = self.quick_model_combo
+                combo.clear()
+                if pid == "auto":
+                    combo.addItems(["auto"])
+                    combo.setCurrentText("auto")
+                    combo.setEnabled(False)
+                else:
+                    models = _SP.get(pid, {}).get("models", [])
+                    if models:
+                        combo.addItems(models)
+                    else:
+                        combo.addItems(["tinyllama:latest","llama3:latest","mistral:latest"])
+                    # Set current model
+                    try:
+                        from utils.config import Config as _C
+                        cur = _C.get_model(pid) if pid != "ollama" else _C.OLLAMA_MODEL
+                        if cur and combo.findText(cur) == -1:
+                            combo.addItem(cur)
+                        combo.setCurrentText(cur)
+                    except: pass
+                    combo.setEnabled(True)
+            self.quick_provider_combo.currentTextChanged.connect(_on_provider_changed)
+            # Init with current active
+            try:
+                from utils.config import Config as _C
+                active = getattr(_C, 'ACTIVE_PROVIDER', 'auto')
+                idx = self.quick_provider_combo.findText(active)
+                if idx >= 0: self.quick_provider_combo.setCurrentIndex(idx)
+                else: _on_provider_changed(active)
+            except: pass
+        except: pass
+
+    def refresh_provider_badge(self):
+        """Update badge + dots from Config. Called on show and every _update_stats."""
+        try:
+            from utils.config import Config as _C, SUPPORTED_PROVIDERS as _SP
+            active = getattr(_C, 'ACTIVE_PROVIDER', 'auto')
+            # Resolve display model
+            if active == "auto":
+                # Show first available provider's model
+                model_disp = "fallback chain"
+                dot_color = "#00D2FF"
+                # Check if any key exists
+                any_key = any(_C.get_api_key(pid) for pid in _SP)
+                if not any_key: dot_color = "#FF3B30"
+            else:
+                model_disp = _C.get_model(active) if active != "ollama" else _C.OLLAMA_MODEL
+                has_key = bool(_C.get_api_key(active)) if active != "ollama" else True
+                dot_color = "#00FF41" if has_key else "#FF3B30"
+            self.provider_label.setText(active.upper())
+            self.provider_model_label.setText(model_disp or "—")
+            self.provider_dot.setStyleSheet(f"color: {dot_color}; font-size: 14px; background: transparent; border: none;")
+            # Update dots row
+            _icons = {"groq":"⚡","gemini":"✦","openai":"●","deepseek":"◆","anthropic":"▲","mistral":"⬢","ollama":"◉"}
+            for pid, lbl in self.provider_dots_widgets.items():
+                has = bool(_C.get_api_key(pid)) if pid != "ollama" else True
+                is_active = (active == pid) or (active == "auto" and pid == "groq")
+                bg = "rgba(0,255,65,15)" if has else "rgba(255,255,255,6)"
+                border = "rgba(0,255,65,40)" if is_active else "rgba(255,255,255,10)"
+                color = "#00FF41" if has else "rgba(255,255,255,90)"
+                lbl.setStyleSheet(f"color: {color}; font-size: 9px; background: {bg}; border: 1px solid {border}; border-radius: 6px; padding: 2px 6px;")
+                # Highlight active with bold
+                if is_active:
+                    lbl.setStyleSheet(lbl.styleSheet() + " font-weight: 700;")
+        except Exception as e:
+            pass
+        # Update quick combo current model display
+        try:
+            from utils.config import Config as _C
+            if hasattr(self, 'quick_provider_combo'):
+                # don't override if user is interacting
+                pass
+        except: pass
     
     def set_minimal_mode(self, minimal=True):
         """Toggles between full dashboard and minimal search popup."""
         self.header_container.setVisible(not minimal) # HIDE HEADER TOO
         self.metrics_frame.setVisible(not minimal)
         self.status_label.setVisible(not minimal)
+        if hasattr(self, 'provider_badge'):
+            self.provider_badge.setVisible(not minimal)
+        if hasattr(self, 'dots_container'):
+            self.dots_container.setVisible(not minimal)
         self.hardware_header.setVisible(not minimal)
         self.vol_container.setVisible(not minimal)
         self.bri_container.setVisible(not minimal)
         self.ai_core_header.setVisible(not minimal)
         self.mode_container.setVisible(not minimal)
+        if hasattr(self, 'quick_ai_container'):
+            self.quick_ai_container.setVisible(not minimal)
         self.grid_container.setVisible(not minimal)
+        if hasattr(self, 'btn_keys'):
+            self.btn_keys.setVisible(not minimal)
         self.wake_btn.setVisible(not minimal)
         self.ver_stamp.setVisible(not minimal)
         
@@ -1157,6 +1659,12 @@ class FlexieUI(QWidget):
         self.panel.btn_mute.clicked.connect(lambda: self._send_udp("SET_VOLUME:0" if "MUTE" in self.panel.btn_mute.text() else "SET_VOLUME:50"))
         self.panel.btn_snap.clicked.connect(lambda: self._send_udp("vision_capture"))
         self.panel.btn_clip.clicked.connect(self._scan_clipboard)
+        if hasattr(self.panel, 'btn_keys'):
+            self.panel.btn_keys.clicked.connect(self._open_keys_dialog)
+        if hasattr(self.panel, 'btn_provider_refresh'):
+            self.panel.btn_provider_refresh.clicked.connect(self._refresh_provider_badge)
+        if hasattr(self.panel, 'btn_quick_apply'):
+            self.panel.btn_quick_apply.clicked.connect(self._apply_quick_switch)
         self.panel.btn_min.clicked.connect(lambda: self.panel.set_minimal_mode(True))
         self.panel.btn_pin.toggled.connect(self.panel.toggle_pin)
         self.panel.spotlight.returnPressed.connect(self._send_spotlight)
@@ -1222,6 +1730,33 @@ class FlexieUI(QWidget):
             self.panel.spotlight.clear()
             self.orb.set_state("PROCESSING")
             self._set_activity()
+
+    def _refresh_provider_badge(self):
+        self.panel.refresh_provider_badge()
+        self.panel.status_label.setText("STATUS: PROVIDER REFRESHED")
+        QTimer.singleShot(1500, lambda: self.panel.status_label.setText(f"STATUS: {self.orb.state}"))
+
+    def _apply_quick_switch(self):
+        prov = self.panel.quick_provider_combo.currentText().strip().lower()
+        model = self.panel.quick_model_combo.currentText().strip()
+        # Active provider
+        if prov:
+            active_val = prov if prov != "auto (fallback chain)" else "auto"
+            if active_val.startswith("auto"): active_val = "auto"
+            self._send_udp(f"SET_ACTIVE_PROVIDER:{active_val}")
+        # Model for that provider
+        if prov and prov != "auto" and model and model != "auto":
+            self._send_udp(f"SET_MODEL:{prov}:{model}")
+        self._send_udp("RELOAD_BRAIN")
+        self.panel.status_label.setText(f"SWITCHING → {prov}:{model}")
+        QTimer.singleShot(1200, self._refresh_provider_badge)
+
+    def _open_keys_dialog(self):
+        dlg = ApiKeysDialog(self)
+        dlg.exec()
+        # Refresh status after dialog closes
+        self.panel.refresh_provider_badge()
+        self.panel.status_label.setText("STATUS: KEYS UPDATED")
 
     def _set_volume(self, val): 
         self._send_udp(f"SET_VOLUME:{val}")
@@ -1314,6 +1849,9 @@ class FlexieUI(QWidget):
                 self.panel.batt_value.setText(f"{batt}%")
                 self.panel.batt_progress.setValue(int(batt))
                 self.panel.batt_progress.setStyleSheet(f"QProgressBar::chunk {{ background: {'#FF3B30' if batt < 20 else '#FFD700' if batt < 50 else '#00FF41'}; }}")
+                # Refresh provider badge every ~6s
+                if int(time.time()) % 3 == 0:
+                    self.panel.refresh_provider_badge()
             except: pass
 
     def _scan_clipboard(self):

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://opencode.ai/schema.json",
+  "name": "flexie-v2",
+  "description": "Flexie 2.0 — Autonomous Agentic AI Desktop Assistant - opencode autonomous coding config",
+  "permissions": {
+    "allow": [
+      "read",
+      "glob",
+      "grep",
+      "edit",
+      "write",
+      "bash:python *",
+      "bash:python -m pytest *",
+      "bash:pytest *",
+      "bash:git status",
+      "bash:git diff*",
+      "bash:git log*",
+      "bash:git add *",
+      "bash:git commit *",
+      "bash:git branch*",
+      "bash:pip show*",
+      "bash:ruff *",
+      "bash:python -c *"
+    ],
+    "ask": [
+      "bash:git push*",
+      "bash:git reset*",
+      "bash:rm *",
+      "bash:del *",
+      "bash:docker *",
+      "bash:powershell *"
+    ],
+    "deny": [
+      "bash:rm -rf *",
+      "bash:del /s *",
+      "bash:format *",
+      "bash:shutdown *",
+      "bash:sudo *"
+    ]
+  },
+  "agents": {
+    "flexie-coder": {
+      "description": "Autonomous coding agent for Flexie - handles code generation, patching, testing, and git autonomy",
+      "model": "groq/llama-3.1-8b-instant",
+      "prompt": "You are Flexie-Coder, an autonomous coding agent embedded in Flexie 2.0. You execute code tasks via the ToolRegistry (file.read/write/patch, git, terminal, test, code_search). Follow Observe->Act->Verify loop: 1) Read relevant files, 2) Make minimal edit, 3) Run tests via sandbox/executor, 4) Verify, 5) Retry with fix if failed, 6) Log to MemoryManager TASKS.",
+      "tools": ["read", "edit", "write", "bash", "glob", "grep"],
+      "permission": "SAFE_ACTION"
+    },
+    "flexie-explore": {
+      "description": "Fast codebase exploration for Flexie (code search, repo analysis)",
+      "model": "groq/llama-3.1-8b-instant",
+      "tools": ["read", "glob", "grep"],
+      "permission": "READ_ONLY"
+    },
+    "flexie-planner": {
+      "description": "Goal decomposition via GoalPlanner - breaks complex coding goals into TaskGraph",
+      "model": "groq/llama-3.1-8b-instant",
+      "tools": ["read", "grep"],
+      "permission": "READ_ONLY"
+    }
+  },
+  "skills": {
+    "coding": {
+      "path": ".opencode/skills/coding/SKILL.md",
+      "description": "Flexie autonomous coding workflow - spec -> task graph -> implement -> test -> verify -> commit"
+    }
+  },
+  "hooks": {
+    "post_edit": "python -m ruff check --fix . 2>nul & python -m pytest tests/ -q 2>nul | head -n 50",
+    "pre_commit": "python -m pytest tests/ -q"
+  },
+  "mcp": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "E:/HACKATHON/flexiee/flexie_v2"],
+      "enabled": false,
+      "note": "Enable after npm install - uncomment and set enabled:true for full filesystem MCP"
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" },
+      "enabled": false
+    }
+  },
+  "autonomy": {
+    "maxPlanningDepth": 3,
+    "dagThreads": 4,
+    "actionTimeouts": {
+      "app_op": 5,
+      "file_write": 10,
+      "terminal_run": 15,
+      "test_run": 30,
+      "browser_navigate": 20
+    },
+    "verification": {
+      "file_exists": true,
+      "tests_pass": true,
+      "app_running": true
+    },
+    "memory": {
+      "vectorStore": "context/flexie_memory",
+      "memoryManagerCategory": "TASKS",
+      "autoLogSuccess": true
+    }
+  }
+}

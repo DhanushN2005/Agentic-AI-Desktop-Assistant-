@@ -213,9 +213,15 @@ class DeveloperEngine:
         except Exception as e:
             return f"I had trouble generating tests: {e}"
 
-    def autonomous_build(self, user_request: str) -> str:
-        """Plans, creates, and implement a full mini-project based on description."""
+    def autonomous_build(self, user_request: str, autonomous: bool = False) -> str:
+        """Plans, creates, and implement a full mini-project based on description.
+        
+        When autonomous=True (called via ToolRegistry / opencode agent), skips voice.confirm
+        and auto-runs verification + tests without blocking.
+        """
         self.flexie.speak("Initiating Autonomous Build Sequence. Planning your project now...")
+        # Detect autonomous mode from ToolRegistry permission or caller flag
+        is_auto = autonomous or getattr(self.flexie, 'current_mode', '') in ('hacker', 'developer')
         
         # 1. Project Planning
         plan_prompt = f"""
@@ -273,18 +279,55 @@ class DeveloperEngine:
                 self.flexie.logger.info(f"Autonomous Developer: Created {name}")
             
             self.flexie.speak(f"Finished writing {len(files)} files. Your project is ready in the '{folder_name}' directory.")
-            
-            # 3. Open in Coder (VS Code)
-            if self.flexie.voice.confirm("Would you like me to open this project in VS Code?"):
-                self.flexie.files.open_item("vscode", target_path=folder)
-            
-            # 4. Attempt Run if Python
+
+            # 3. Verify + auto-test loop (autonomous)
+            verify_failed = []
+            for f_info in files:
+                fpath = os.path.join(folder, f_info["name"])
+                if not os.path.exists(fpath) or os.path.getsize(fpath) == 0:
+                    verify_failed.append(f_info["name"])
+            if verify_failed:
+                return f"Build incomplete - missing/empty: {', '.join(verify_failed)}"
+            # Auto-run tests if tests were generated
+            try:
+                from sandbox.executor import SandboxExecutor
+                main_f = plan.get("main_file")
+                if main_f and main_f.endswith(".py"):
+                    test_path = os.path.join(folder, main_f)
+                    if os.path.exists(test_path):
+                        ex = SandboxExecutor(timeout=15, allow_host_fallback=True)
+                        run_out = ex.run_python_script(test_path)
+                        self.flexie.logger.info(f"Autonomous build run output: {run_out[:500]}")
+                        if "Execution Failure" in run_out or "Error" in run_out:
+                            # Self-correction attempt via brain
+                            fix = self.brain.ask(f"Fix this python error and return ONLY corrected code:\n{run_out[:1000]}\n\nCode:\n{open(test_path, encoding='utf-8').read()[:2000]}")
+                            if "```" in fix:
+                                import re as _re
+                                m = _re.search(r"```(?:python)?\s*(.*?)\s*```", fix, _re.DOTALL)
+                                if m: fix = m.group(1)
+                            with open(test_path, "w", encoding="utf-8") as f: f.write(fix.strip())
+                            self.flexie.logger.info("Autonomous build: self-corrected main file")
+            except Exception as ve:
+                self.flexie.logger.warning(f"Autonomous verify loop: {ve}")
+
+            # 4. Open in Coder (VS Code) - autonomous skips confirm
+            if is_auto:
+                try:
+                    self.flexie.files.open_item("vscode", target_path=folder)
+                except: pass
+            else:
+                if self.flexie.voice.confirm("Would you like me to open this project in VS Code?"):
+                    self.flexie.files.open_item("vscode", target_path=folder)
+
+            # 5. Attempt Run if Python
             main_f = plan.get("main_file")
             if main_f and main_f.endswith(".py"):
+                if is_auto:
+                    return self.run_python_script(os.path.join(folder, main_f))
                 if self.flexie.voice.confirm(f"Should I try to run the main script {main_f}?"):
                     return self.run_python_script(os.path.join(folder, main_f))
                     
-            return "Autonomous project build complete."
+            return f"Autonomous project build complete at {folder} - {len(files)} files verified."
             
         except Exception as e:
             return f"The autonomous build failed: {e}"

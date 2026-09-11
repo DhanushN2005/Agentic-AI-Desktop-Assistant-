@@ -97,16 +97,15 @@ class FlexieOrchestrator:
         self.execution_graph = ExecutionGraph()
         self.adaptive_router = AdaptiveRouter()
         self.workflow = WorkflowExecutor(self)
-        # Hybrid routing + Goal planning
+        # Hybrid routing + Goal planning (deferred wiring until ToolRegistry is ready)
+        self.hybrid_router = None
+        self.goal_planner = None
         try:
             from core.hybrid_router import HybridRouter
-            from core.goal_planner import GoalPlanner
             self.hybrid_router = HybridRouter(self.router, ctx=self.ctx)
-            self.goal_planner = GoalPlanner()
+            logging.info("HybridRouter wired")
         except Exception as e:
-            self.hybrid_router = None
-            self.goal_planner = None
-            logging.warning(f"HybridRouter/GoalPlanner not wired: {e}")
+            logging.warning(f"HybridRouter not wired: {e}")
 
         # FIX 12: Async speech queue — decouples TTS from the action worker thread
         # so speech never blocks command execution.
@@ -148,18 +147,33 @@ class FlexieOrchestrator:
             self.automation = AutomationScheduler(self)
         except:
             self.automation = None
-        # Desktop control + Agent executor
+        # Desktop control + Agent executor + Coding tools
         try:
             from core.desktop_control import DesktopControl
             from core.agent_executor import AgentExecutor
             from core.tool_registry import ToolRegistry
             from core.permission_system import PermissionSystem
+            from core.coding_tools import register_coding_tools
             self.desktop_control = DesktopControl()
             self.tool_registry = ToolRegistry()
             self.agent_executor = AgentExecutor(self.tool_registry, PermissionSystem(), self.execution_graph, speak_fn=self.speak, orch=self)
-            # Register desktop tools
-            from core.desktop_control import DesktopControl as DC
-            self.tool_registry.register_tool_from_spec = getattr(self.tool_registry, 'register', None)
+            # Register autonomous coding tools (file.read/write/patch, code.search, git, terminal, test, python.exec)
+            try:
+                n = register_coding_tools(self.tool_registry, self)
+                logging.info(f"CodingTools registered: {n} tools")
+            except Exception as ce:
+                logging.warning(f"CodingTools registration failed: {ce}")
+            # Wire GoalPlanner with brain + registry after registry is ready (fixes None brain bug)
+            try:
+                from core.goal_planner import GoalPlanner
+                if self.goal_planner is None:
+                    self.goal_planner = GoalPlanner(brain=self.brain, tool_registry=self.tool_registry)
+                    logging.info("GoalPlanner wired with brain+tool_registry")
+                else:
+                    self.goal_planner.brain = self.brain
+                    self.goal_planner.tool_registry = self.tool_registry
+            except Exception as ge:
+                logging.warning(f"GoalPlanner wiring failed: {ge}")
         except Exception as e:
             self.desktop_control = None
             self.agent_executor = None
@@ -928,6 +942,62 @@ class FlexieOrchestrator:
                     
                     if msg == "wake up": 
                         self.active = True; self.speak("Ready.")
+                    elif msg == "RELOAD_BRAIN":
+                        try:
+                            self.brain.reload_providers()
+                            self.logger.info("Brain reloaded via UI (RELOAD_BRAIN)")
+                            self.send_to_ui("SAY", "✅ Brain reloaded — new AI keys & models are live. Try asking something!")
+                            self.speak("AI providers reloaded. New keys and models are now active.")
+                        except Exception as e:
+                            self.logger.error(f"Brain reload failed: {e}")
+                            self.send_to_ui("SAY", f"⚠️ Reload failed: {e}")
+                    elif msg.startswith("RELOAD_BRAIN:"):
+                        # Direct key/model update: RELOAD_BRAIN:provider:key or RELOAD_BRAIN:model:provider:model
+                        try:
+                            payload = msg.split(":", 1)[1]
+                            if payload.startswith("model:"):
+                                _, prov, model = payload.split(":", 2)
+                                from utils.config import Config as C
+                                C.set_model(prov.strip(), model.strip())
+                                self.brain.reload_providers()
+                            else:
+                                prov, key = payload.split(":", 1)
+                                from utils.config import Config as C
+                                C.set_api_key(prov.strip(), key.strip())
+                                self.brain.reload_providers()
+                            self.send_to_ui("SAY", "✅ Updated and reloaded.")
+                        except Exception as e:
+                            self.logger.error(f"RELOAD_BRAIN payload error: {e}")
+                    elif msg.startswith("SET_API_KEY:"):
+                        # SET_API_KEY:provider:sk-xxx  (from web UI)
+                        try:
+                            _, prov, key = msg.split(":", 2)
+                            from utils.config import Config as C
+                            C.set_api_key(prov.strip(), key.strip())
+                            self.brain.reload_providers()
+                            self.send_to_ui("SAY", f"✅ {prov} key saved. Brain reloaded.")
+                            self.speak(f"{prov} key updated.")
+                        except Exception as e:
+                            self.logger.error(f"SET_API_KEY error: {e}")
+                    elif msg.startswith("SET_MODEL:"):
+                        # SET_MODEL:provider:model_name
+                        try:
+                            _, prov, model = msg.split(":", 2)
+                            from utils.config import Config as C
+                            C.set_model(prov.strip(), model.strip())
+                            self.brain.reload_providers()
+                            self.send_to_ui("SAY", f"✅ {prov} model set to {model}.")
+                        except Exception as e:
+                            self.logger.error(f"SET_MODEL error: {e}")
+                    elif msg.startswith("SET_ACTIVE_PROVIDER:"):
+                        try:
+                            prov = msg.split(":", 1)[1].strip().lower()
+                            from utils.config import Config as C
+                            C.set_active_provider(prov)
+                            self.brain.reload_providers()
+                            self.send_to_ui("SAY", f"✅ Active provider: {prov}")
+                        except Exception as e:
+                            self.logger.error(f"SET_ACTIVE_PROVIDER error: {e}")
                     elif msg.startswith("mode:"): # Old UI format
                         self.current_mode = msg.split(":")[1].lower()
                         self.logger.info(f"Mode switched via UDP: {self.current_mode}")

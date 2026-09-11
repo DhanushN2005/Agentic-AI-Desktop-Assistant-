@@ -5,6 +5,33 @@ import logging
 from typing import Dict, List, Callable
 from datetime import datetime
 
+# ---- Compatibility shims for orchestrator (fixes ImportError: cannot import name 'GoalExecutor') ----
+# Original repo exported GoalExecutor/RuleEngine; current file only has AutomationScheduler.
+# Provide lightweight stubs so core/orchestrator.py:52 import succeeds and _monitor_loop keeps working.
+
+class GoalExecutor:
+    """Stub — orchestrator instantiates but never calls complex methods directly."""
+    def __init__(self, orch):
+        self.orch = orch
+        self.logger = logging.getLogger("Flexie.GoalExecutor")
+    def execute(self, goal: str, *args, **kwargs):
+        self.logger.info(f"GoalExecutor stub: {goal}")
+        try:
+            self.orch.cmd_queue.put(goal)
+        except: pass
+        return f"Queued goal: {goal}"
+
+class RuleEngine:
+    """Stub — provides monitor_and_trigger() used in orchestrator _monitor_loop:924."""
+    def __init__(self, orch):
+        self.orch = orch
+        self.logger = logging.getLogger("Flexie.RuleEngine")
+    def monitor_and_trigger(self):
+        # No-op: real scheduling is done by AutomationScheduler. Kept for compatibility.
+        pass
+    def add_rule(self, *a, **kw): pass
+    def remove_rule(self, *a, **kw): pass
+
 class AutomationScheduler:
     """Simple in-process scheduler for recurring tasks."""
     def __init__(self, orchestrator):

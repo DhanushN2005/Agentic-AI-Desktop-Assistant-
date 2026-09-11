@@ -89,7 +89,8 @@ class LLMProviderManager:
         # Falls back through providers if one fails
     """
 
-    # Default provider configurations
+    # Default provider configurations — priority = fallback order
+    # Groq (fast+free) -> OpenAI -> DeepSeek -> Gemini -> Anthropic -> Mistral -> Ollama fallback handled in Brain
     DEFAULT_PROVIDERS = [
         LLMProvider(
             name="groq",
@@ -102,13 +103,53 @@ class LLMProviderManager:
             supports_streaming=True,
         ),
         LLMProvider(
-            name="gemini",
-            api_key_env="GEMINI_API_KEY",
-            model="gemini-1.5-flash",
+            name="openai",
+            api_key_env="OPENAI_API_KEY",
+            model="gpt-4o-mini",
             priority=2,
             timeout=20.0,
             max_tokens=2048,
             supports_vision=True,
+            supports_streaming=True,
+        ),
+        LLMProvider(
+            name="deepseek",
+            api_key_env="DEEPSEEK_API_KEY",
+            model="deepseek-chat",
+            priority=3,
+            timeout=20.0,
+            max_tokens=2048,
+            supports_vision=False,
+            supports_streaming=True,
+        ),
+        LLMProvider(
+            name="gemini",
+            api_key_env="GEMINI_API_KEY",
+            model="gemini-1.5-flash",
+            priority=4,
+            timeout=20.0,
+            max_tokens=2048,
+            supports_vision=True,
+            supports_streaming=True,
+        ),
+        LLMProvider(
+            name="anthropic",
+            api_key_env="ANTHROPIC_API_KEY",
+            model="claude-3-5-sonnet-20241022",
+            priority=5,
+            timeout=25.0,
+            max_tokens=2048,
+            supports_vision=True,
+            supports_streaming=False,
+        ),
+        LLMProvider(
+            name="mistral",
+            api_key_env="MISTRAL_API_KEY",
+            model="mistral-small-latest",
+            priority=6,
+            timeout=20.0,
+            max_tokens=2048,
+            supports_vision=False,
             supports_streaming=True,
         ),
     ]
@@ -123,8 +164,28 @@ class LLMProviderManager:
         self._load_config()
 
     def _init_providers(self):
-        """Initialize default providers."""
+        """Initialize default providers — model overridden by env if set."""
         for p in self.DEFAULT_PROVIDERS:
+            # Hot-override model from Config / env (e.g. GROQ_MODEL)
+            try:
+                from utils.config import Config as C
+                env_model = os.getenv(p.api_key_env.replace("_API_KEY", "_MODEL"), "")
+                # Also try SUPPORTED_PROVIDERS mapping
+                if not env_model:
+                    try:
+                        from utils.config import SUPPORTED_PROVIDERS as SP
+                        me = SP.get(p.name, {}).get("model_env")
+                        if me:
+                            env_model = os.getenv(me, "")
+                    except: pass
+                if env_model:
+                    p.model = env_model.strip()
+                # Respect ACTIVE_PROVIDER filtering: if ACTIVE_PROVIDER != auto, disable others
+                active = os.getenv("ACTIVE_PROVIDER", "auto").lower()
+                if active != "auto" and active != p.name:
+                    # Keep but mark as not priority — we filter later, just log
+                    pass
+            except: pass
             self.providers.append(p)
 
     def _load_config(self):
@@ -147,20 +208,40 @@ class LLMProviderManager:
                 self.logger.warning(f"[LLM] Failed to load config: {e}")
 
     def get_available_providers(self, vision_required: bool = False) -> List[LLMProvider]:
-        """Get providers sorted by priority, filtered by availability."""
+        """Get providers sorted by priority, filtered by availability + ACTIVE_PROVIDER."""
+        active = os.getenv("ACTIVE_PROVIDER", "auto").lower()
         available = []
         for p in self.providers:
+            if active != "auto" and p.name != active and p.name != "ollama":
+                continue
             if not p.is_available:
                 continue
             if vision_required and not p.supports_vision:
                 continue
-            # Check cooldown
             if p.status == ProviderStatus.UNAVAILABLE and p.last_error:
-                # Try to recover after cooldown
                 if p.last_error:
                     p.reset_status()
+            # Refresh model from env on each call (hot-change)
+            try:
+                env_model = os.getenv(p.api_key_env.replace("_API_KEY", "_MODEL"), "")
+                if env_model and env_model.strip() != p.model:
+                    p.model = env_model.strip()
+            except: pass
             available.append(p)
         return sorted(available, key=lambda x: x.priority)
+
+    def set_provider_model(self, provider_name: str, model: str) -> bool:
+        """Update model for a provider at runtime + persist to .env via Config."""
+        provider_name = provider_name.lower()
+        for p in self.providers:
+            if p.name == provider_name:
+                p.model = model.strip()
+                try:
+                    from utils.config import Config as C
+                    C.set_model(provider_name, model.strip())
+                except: pass
+                return True
+        return False
 
     def query(
         self,
@@ -205,10 +286,21 @@ class LLMProviderManager:
         """Call a specific LLM provider."""
         if provider.name == "groq":
             return self._call_groq(provider, prompt, system_override, **kwargs)
+        elif provider.name == "openai":
+            return self._call_openai_compatible(provider, prompt, system_override, base_url=None, **kwargs)
+        elif provider.name == "deepseek":
+            return self._call_openai_compatible(provider, prompt, system_override, base_url="https://api.deepseek.com", **kwargs)
+        elif provider.name == "mistral":
+            return self._call_openai_compatible(provider, prompt, system_override, base_url="https://api.mistral.ai/v1", **kwargs)
+        elif provider.name == "together":
+            return self._call_openai_compatible(provider, prompt, system_override, base_url="https://api.together.xyz/v1", **kwargs)
         elif provider.name == "gemini":
             return self._call_gemini(provider, prompt, system_override, img_path, **kwargs)
+        elif provider.name == "anthropic":
+            return self._call_anthropic(provider, prompt, system_override, **kwargs)
         else:
-            raise ValueError(f"Unknown provider: {provider.name}")
+            # Generic OpenAI-compatible fallback
+            return self._call_openai_compatible(provider, prompt, system_override, **kwargs)
 
     def _call_groq(self, provider: LLMProvider, prompt: str, system_override: Optional[str] = None, **kwargs) -> str:
         """Call Groq API."""
@@ -227,6 +319,45 @@ class LLMProviderManager:
             timeout=provider.timeout,
         )
         return response.choices[0].message.content
+
+    def _call_openai_compatible(self, provider: LLMProvider, prompt: str, system_override: Optional[str] = None, base_url: Optional[str] = None, **kwargs) -> str:
+        """Call any OpenAI-compatible API (OpenAI, DeepSeek, Mistral, Together)."""
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("openai package not installed. Run: pip install openai")
+        client_kwargs = {"api_key": provider.api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = OpenAI(**client_kwargs)
+        messages = []
+        if system_override:
+            messages.append({"role": "system", "content": system_override})
+        messages.append({"role": "user", "content": prompt})
+        resp = client.chat.completions.create(
+            model=provider.model,
+            messages=messages,
+            max_tokens=kwargs.get("max_tokens", provider.max_tokens),
+            temperature=kwargs.get("temperature", provider.temperature),
+            timeout=provider.timeout,
+        )
+        return resp.choices[0].message.content
+
+    def _call_anthropic(self, provider: LLMProvider, prompt: str, system_override: Optional[str] = None, **kwargs) -> str:
+        """Call Anthropic Claude API."""
+        try:
+            import anthropic
+        except ImportError:
+            raise ImportError("anthropic package not installed. Run: pip install anthropic")
+        client = anthropic.Anthropic(api_key=provider.api_key)
+        resp = client.messages.create(
+            model=provider.model,
+            max_tokens=kwargs.get("max_tokens", provider.max_tokens),
+            temperature=kwargs.get("temperature", provider.temperature),
+            system=system_override or "",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return "".join([b.text for b in resp.content if hasattr(b, 'text')])
 
     def _call_gemini(self, provider: LLMProvider, prompt: str, system_override: Optional[str] = None, img_path: Optional[str] = None, **kwargs) -> str:
         """Call Gemini API."""

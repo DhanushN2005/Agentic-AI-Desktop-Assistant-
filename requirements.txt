@@ -9,10 +9,12 @@ vosk>=0.3.45
 # Browser Automation
 playwright>=1.52.0
 
-# AI / LLM Providers
+# AI / LLM Providers — all configurable via UI: 🔑 AI KEYS
 google-genai>=0.8.0
 google-generativeai>=0.3.0  # deprecated, kept for fallback
 groq>=0.4.0
+openai>=1.30.0
+anthropic>=0.40.0
 
 # System & Clipboard
 pyperclip>=1.8.2
