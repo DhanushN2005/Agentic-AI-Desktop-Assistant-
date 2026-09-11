@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flexie 2.0 | Professional AI Interface</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap');
+
+        :root {
+            --bg: #03060a;
+            --accent-primary: #00f2ff;
+            --accent-secondary: #0066ff;
+            --surface: rgba(10, 15, 25, 0.7);
+            --border: rgba(255, 255, 255, 0.08);
+            --text-main: #f0f4f8;
+            --text-dim: #8ba0b2;
+            --glow: rgba(0, 242, 255, 0.15);
+            --glass-blur: blur(25px);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Ambient Background Elements */
+        .ambient-glow {
+            position: fixed;
+            width: 60vw;
+            height: 60vh;
+            background: radial-gradient(circle, var(--glow) 0%, transparent 70%);
+            top: -20vh;
+            right: -20vw;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .ambient-glow-bottom {
+            position: fixed;
+            width: 40vw;
+            height: 40vh;
+            background: radial-gradient(circle, rgba(0, 102, 255, 0.1) 0%, transparent 70%);
+            bottom: -10vh;
+            left: -10vw;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* Layout */
+        .app-container {
+            position: relative;
+            z-index: 10;
+            display: grid;
+            grid-template-columns: 320px 1fr 320px;
+            height: 100%;
+            padding: 24px;
+            gap: 24px;
+        }
+
+        /* Header */
+        .main-header {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand h1 {
+            font-size: 1.2rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(to right, #fff, var(--text-dim));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .system-status {
+            display: flex;
+            gap: 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-dim);
+        }
+
+        .status-item span {
+            color: var(--accent-primary);
+            margin-left: 4px;
+        }
+
+        /* Panels */
+        .glass-panel {
+            background: var(--surface);
+            backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+
+        .panel-header {
+            padding: 18px 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* Sidebar content */
+        .metrics-list {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .control-group {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .control-item {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .control-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 4px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 2px;
+            outline: none;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            background: var(--accent-primary);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--accent-primary);
+        }
+
+        select {
+            width: 100%;
+            padding: 10px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: #fff;
+            font-family: inherit;
+            font-size: 12px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        /* Quick Actions Grid */
+        .actions-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            padding: 15px;
+        }
+
+        .action-btn {
+            padding: 12px;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text-dim);
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .action-btn:hover {
+            background: rgba(0, 242, 255, 0.05);
+            border-color: var(--accent-primary);
+            color: #fff;
+            transform: translateY(-2px);
+        }
+
+        .action-btn i { font-size: 16px; }
+
+        /* Neural Log */
+        .neural-log {
+            flex: 1;
+            padding: 15px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-dim);
+            overflow-y: auto;
+            line-height: 1.6;
+        }
+
+        .log-entry { margin-bottom: 4px; border-left: 1px solid var(--border); padding-left: 8px; }
+
+        /* Center Content - The Core */
+        .core-area {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .orb-container {
+            position: relative;
+            width: 400px;
+            height: 400px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Pure CSS Animated Orb */
+        .orb {
+            position: absolute;
+            width: 180px;
+            height: 180px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, var(--accent-primary), var(--accent-secondary));
+            box-shadow: 0 0 80px rgba(0, 242, 255, 0.4), inset 0 0 40px rgba(0,0,0,0.5);
+            animation: orb-pulse 4s ease-in-out infinite;
+            z-index: 2;
+        }
+
+        .orb-ring {
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            border: 2px solid rgba(0, 242, 255, 0.1);
+            animation: rotate 10s linear infinite;
+        }
+
+        .orb-ring::after {
+            content: '';
+            position: absolute;
+            top: -5px;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            background: var(--accent-primary);
+            border-radius: 50%;
+            box-shadow: 0 0 15px var(--accent-primary);
+        }
+
+        @keyframes orb-pulse {
+            0%, 100% { transform: scale(1); opacity: 0.9; }
+            50% { transform: scale(1.08); opacity: 1; filter: brightness(1.2); }
+        }
+
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        /* Voice State Text */
+        .state-text {
+            margin-top: 30px;
+            font-size: 1.5rem;
+            font-weight: 300;
+            letter-spacing: 2px;
+            color: var(--text-main);
+            text-shadow: 0 0 20px rgba(255,255,255,0.2);
+            opacity: 0.8;
+        }
+
+        /* Bottom Chat Bar */
+        .interaction-bar {
+            width: 100%;
+            max-width: 800px;
+            margin-top: auto;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border);
+            border-radius: 40px;
+            display: flex;
+            align-items: center;
+            backdrop-filter: blur(10px);
+            transition: border-color 0.3s;
+        }
+
+        .interaction-bar:focus-within {
+            border-color: var(--accent-primary);
+        }
+
+        .interaction-bar input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            padding: 12px 24px;
+            color: #fff;
+            font-size: 15px;
+            outline: none;
+        }
+
+        .interaction-bar button {
+            background: var(--accent-primary);
+            border: none;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            color: #000;
+            font-weight: 800;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .interaction-bar button:hover {
+            transform: scale(1.05);
+        }
+
+        /* Chat Log */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 14px;
+            font-size: 13px;
+            line-height: 1.5;
+            animation: msg-fade 0.4s ease forwards;
+        }
+
+        .message.ai {
+            background: rgba(255,255,255,0.04);
+            border-bottom-left-radius: 2px;
+            align-self: flex-start;
+        }
+
+        .message.user {
+            background: var(--accent-secondary);
+            color: #fff;
+            border-bottom-right-radius: 2px;
+            align-self: flex-end;
+        }
+
+        @keyframes msg-fade {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Proactive Suggestions */
+        .suggestion-list {
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .suggestion-item {
+            padding: 12px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .suggestion-item:hover {
+            background: rgba(0, 242, 255, 0.05);
+            border-color: rgba(0, 242, 255, 0.2);
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        /* Mobile / Small screen hiding */
+        @media (max-width: 1000px) {
+            .app-container { grid-template-columns: 1fr; }
+            aside { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="ambient-glow"></div>
+    <div class="ambient-glow-bottom"></div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="main-header">
+            <div class="brand">
+                <h1>FLEXIE <span style="font-weight: 300;">OS v2.0</span></h1>
+            </div>
+            <div class="system-status">
+                <div id="clock" style="color: #fff; font-weight: 600; font-size: 14px;">00:00:00</div>
+                <div class="status-item">UPTIME <span id="uptime">00:00:00</span></div>
+                <div class="status-item">WS <span id="wsState" style="color: #ff4d4d;">OFFLINE</span></div>
+            </div>
+        </header>
+
+        <!-- Left: System & Controls -->
+        <aside class="glass-panel">
+            <div class="panel-header">System Health</div>
+            <div class="metrics-list">
+                <div class="control-item">
+                    <div class="control-label">CPU <span id="cpuVal">0%</span></div>
+                    <div class="progress-track"><div class="progress-fill" id="cpuBar" style="width: 0%;"></div></div>
+                </div>
+                <div class="control-item">
+                    <div class="control-label">RAM <span id="ramVal">0%</span></div>
+                    <div class="progress-track"><div class="progress-fill" id="ramBar" style="width: 0%;"></div></div>
+                </div>
+                <div class="control-item">
+                    <div class="control-label">BATT <span id="battVal">--</span></div>
+                    <div class="progress-track"><div class="progress-fill" id="battBar" style="width: 0%;"></div></div>
+                </div>
+            </div>
+
+            <div class="panel-header">Hardware Control</div>
+            <div class="control-group">
+                <div class="control-item">
+                    <div class="control-label">Volume <span id="volLabel">50%</span></div>
+                    <input type="range" id="volSlider" min="0" max="100" value="50" oninput="sendHardware('volume', this.value)">
+                </div>
+                <div class="control-item">
+                    <div class="control-label">Brightness <span id="briLabel">70%</span></div>
+                    <input type="range" id="briSlider" min="0" max="100" value="70" oninput="sendHardware('brightness', this.value)">
+                </div>
+            </div>
+
+            <div class="panel-header">AI Personality</div>
+            <div class="control-group">
+                <select id="modeSelect" onchange="send('mode ' + this.value)">
+                    <option value="professional">Professional</option>
+                    <option value="developer">Developer</option>
+                    <option value="hacker">Hacker</option>
+                    <option value="minimal">Minimal</option>
+                </select>
+            </div>
+        </aside>
+
+        <!-- Center: Core Interface -->
+        <main class="core-area">
+            <div class="orb-container">
+                <div class="orb-ring" style="width: 320px; height: 320px; animation-duration: 15s;"></div>
+                <div class="orb-ring" style="width: 260px; height: 260px; animation-direction: reverse; animation-duration: 8s;"></div>
+                <div class="orb" id="theCore"></div>
+            </div>
+            <h2 class="state-text" id="stateBadge">SLEEPING</h2>
+
+            <div class="interaction-bar">
+                <input type="text" id="cmdInput" placeholder="Awaiting command..." autocomplete="off">
+                <button onclick="sendCmd()">➤</button>
+            </div>
+        </main>
+
+        <!-- Right: Neural Hub -->
+        <aside class="glass-panel">
+            <div class="panel-header">Quick Actions</div>
+            <div class="actions-grid">
+                <div class="action-btn" onclick="send('search google')"><span>🔍</span>Search</div>
+                <div class="action-btn" onclick="send('play music')"><span>🎵</span>Music</div>
+                <div class="action-btn" onclick="send('take screenshot')"><span>📸</span>Snap</div>
+                <div class="action-btn" onclick="send('open youtube')"><span>📺</span>YouTube</div>
+                <div class="action-btn" onclick="send('daily briefing')"><span>📰</span>Brief</div>
+                <div class="action-btn" onclick="send('analyze screen')"><span>👁️</span>Vision</div>
+            </div>
+
+            <div class="panel-header">Neural Activity</div>
+            <div class="chat-container" id="chatLog">
+                <div class="message ai">Neural link established.</div>
+            </div>
+
+            <div class="panel-header">System Log</div>
+            <div class="neural-log" id="neuralLog"></div>
+        </aside>
+    </div>
+
+    <script>
+        const WS_URL = 'ws://localhost:8765';
+        let ws = null;
+        let startTime = Date.now();
+
+        const STATES = {
+            SLEEP: { label: 'SLEEPING', color: '#444' },
+            IDLE: { label: 'READY', color: '#00f2ff' },
+            LISTENING: { label: 'LISTENING', color: '#0066ff' },
+            PROCESSING: { label: 'THINKING', color: '#ffd700' },
+            SPEAKING: { label: 'SPEAKING', color: '#ff007a' }
+        };
+
+        function connectWS() {
+            ws = new WebSocket(WS_URL);
+            ws.onopen = () => {
+                document.getElementById('wsState').textContent = 'ONLINE';
+                document.getElementById('wsState').style.color = '#00ff87';
+                updateState('IDLE');
+                log('WS Connected');
+            };
+            ws.onclose = () => {
+                document.getElementById('wsState').textContent = 'OFFLINE';
+                document.getElementById('wsState').style.color = '#ff4d4d';
+                updateState('SLEEP');
+                log('WS Disconnected');
+                setTimeout(connectWS, 3000);
+            };
+            ws.onmessage = (e) => {
+                const msg = e.data;
+                log('← ' + msg);
+                if (msg.includes(':')) {
+                    const [tag, val] = msg.split(':', 2);
+                    if (tag === 'STATE') updateState(val.toUpperCase());
+                    else if (tag === 'SAY') addChat('ai', val);
+                    else if (tag === 'METRICS') updateMetrics(JSON.parse(val));
+                }
+            };
+        }
+
+        function log(txt) {
+            const l = document.getElementById('neuralLog');
+            const e = document.createElement('div');
+            e.className = 'log-entry';
+            e.textContent = `[${new Date().toLocaleTimeString()}] ${txt}`;
+            l.prepend(e);
+        }
+
+        function sendHardware(type, val) {
+            document.getElementById(type === 'volume' ? 'volLabel' : 'briLabel').textContent = val + '%';
+            if (ws) ws.send(`${type} ${val}`);
+        }
+
+        function updateState(st) {
+            const config = STATES[st] || STATES.IDLE;
+            const badge = document.getElementById('stateBadge');
+            const orb = document.getElementById('theCore');
+            badge.textContent = config.label;
+            badge.style.color = config.color;
+            orb.style.background = `radial-gradient(circle at 30% 30%, ${config.color}, #000)`;
+            orb.style.boxShadow = `0 0 80px ${config.color}66`;
+        }
+
+        function updateMetrics(data) {
+            if (data.cpu !== undefined) {
+                document.getElementById('cpuVal').textContent = data.cpu + '%';
+                document.getElementById('cpuBar').style.width = data.cpu + '%';
+            }
+            if (data.ram !== undefined) {
+                document.getElementById('ramVal').textContent = data.ram + '%';
+                document.getElementById('ramBar').style.width = data.ram + '%';
+            }
+            if (data.batt !== undefined) {
+                document.getElementById('battVal').textContent = data.batt;
+                const bInt = parseInt(data.batt) || 100;
+                document.getElementById('battBar').style.width = bInt + '%';
+            }
+        }
+
+        function addChat(role, text) {
+            const log = document.getElementById('chatLog');
+            const msg = document.createElement('div');
+            msg.className = `message ${role}`;
+            msg.textContent = text;
+            log.appendChild(msg);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function sendCmd() {
+            const input = document.getElementById('cmdInput');
+            const val = input.value.trim();
+            if (val) {
+                addChat('user', val);
+                if (ws) ws.send(val);
+                input.value = '';
+            }
+        }
+
+        function send(txt) {
+            document.getElementById('cmdInput').value = txt;
+            sendCmd();
+        }
+
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('clock').textContent = now.toLocaleTimeString();
+            const diff = Math.floor((Date.now() - startTime) / 1000);
+            const h = Math.floor(diff / 3600).toString().padStart(2, '0');
+            const m = Math.floor((diff % 3600) / 60).toString().padStart(2, '0');
+            const s = (diff % 60).toString().padStart(2, '0');
+            document.getElementById('uptime').textContent = `${h}:${m}:${s}`;
+        }, 1000);
+
+        document.getElementById('cmdInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendCmd();
+        });
+
+        window.onload = connectWS;
+    </script>
+</body>
+</html>

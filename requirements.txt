@@ -1,0 +1,58 @@
+# Flexie 2.0 - Core Dependencies
+# Python 3.10+
+
+# Voice & Speech
+pyttsx3>=2.90
+SpeechRecognition>=3.10.0
+vosk>=0.3.45
+
+# Browser Automation
+playwright>=1.52.0
+
+# AI / LLM Providers
+google-genai>=0.8.0
+google-generativeai>=0.3.0  # deprecated, kept for fallback
+groq>=0.4.0
+
+# System & Clipboard
+pyperclip>=1.8.2
+pygetwindow>=0.0.9
+psutil>=5.9.0
+pyautogui>=0.9.54
+screen-brightness-control>=0.22.0
+
+# Windows Audio
+pycaw>=20230407
+comtypes>=1.2.0
+
+# Web & HTTP
+requests>=2.32.0
+websockets>=12.0
+duckduckgo-search>=4.0
+ddgs>=8.0.0  # renamed from duckduckgo-search
+
+# Environment & Config
+python-dotenv>=1.0.0
+
+# Image Processing
+pillow>=10.0.0
+pytesseract>=0.3.10
+
+# PDF Reading
+pymupdf>=1.23.0
+
+# UI
+PyQt6>=6.5.0
+pygame>=2.5.0
+
+# Async Support
+nest-asyncio>=1.5.8
+
+# Optional: Vector Store (for semantic memory)
+# chromadb>=0.4.0
+
+# Optional: Docker Sandbox
+# docker>=7.0.0
+
+# Optional: Enhanced VAD
+# webrtcvad>=2.0.10

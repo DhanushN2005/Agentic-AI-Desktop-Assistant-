@@ -1,0 +1,19 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501", "E731", "B008", "B904"]
+
+[tool.ruff.lint.per-file-ignores]
+# main.py must silence deprecation warnings BEFORE importing google libs,
+# so its imports intentionally follow a statement at module level.
+"main.py" = ["E402"]

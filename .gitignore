@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime artifacts
+*.log
+startup.log
+flexie_activity.log
+flexie_telemetry.log
+
+# Databases & state
+*.db
+*.sqlite3
+flexie_global_profile.db
+flexie_intelligence.db
+first_party_sets.db
+context/graph_db.json
+context/routing_history.json
+knowledge_index.json
+flexie_durable_workflows.json
+
+# Secrets
+.env
+
+# Browser / Playwright session artifacts
+browser_session/
+
+# Test & temp
+captures/
+temp_test_chroma/
+recovery/
+.sixth/
+extracted.json
+flexie_meeting_summary.md
+temp_code_*.py
+
+# Frontend
+flexie_web/node_modules/
+flexie_web/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
