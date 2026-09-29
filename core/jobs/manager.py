@@ -161,8 +161,10 @@ class JobManager:
         flag = self._pause_flags.get(target_id)
         if flag:
             flag.set()
+        if self._active_job and self._active_job.id == target_id:
+            self._active_job.status = JobStatus.PAUSED
         job = self.store.load(target_id)
-        if job and job.status in (JobStatus.RUNNING, JobStatus.QUEUED):
+        if job and job.status in (JobStatus.RUNNING, JobStatus.QUEUED, JobStatus.PAUSED):
             job.status = JobStatus.PAUSED
             job.updated_at = time.time()
             self.store.save(job)
@@ -172,8 +174,12 @@ class JobManager:
 
     def resume_job(self, job_id: Optional[str] = None) -> bool:
         target = self.get_latest_job(job_id)
-        if not target or target.status != JobStatus.PAUSED:
+        if not target or target.status not in (JobStatus.PAUSED, JobStatus.FAILED):
             return False
+        if 0 <= target.current_phase < len(target.phase_list):
+            target.phase_list[target.current_phase].status = "pending"
+            target.phase_list[target.current_phase].error = None
+        target.error = None
         self._pause_flags.pop(target.id, None)
         self._cancel_flags.pop(target.id, None)
         return self.submit_job(target)
@@ -284,16 +290,21 @@ class JobManager:
             # Run test suite
             test_ok, test_msg = run_tests(job.workspace_path, stack)
             if not test_ok and self._brain:
-                # Attempt self-heal
+                # Attempt self-heal up to 3 iterations
                 from core.jobs.verifier import SelfHealer
-                healer = SelfHealer()
-                # Find most likely broken file
+                healer = SelfHealer(max_attempts=3)
                 broken_file = "app.py" if os.path.exists(os.path.join(job.workspace_path, "app.py")) else "main.py"
-                heal_ok, _ = healer.attempt_heal(
-                    job.workspace_path, test_msg, broken_file, self._brain, plan_summary=job.title
-                )
-                if heal_ok:
+                for attempt_idx in range(3):
+                    heal_ok, heal_exp = healer.attempt_heal(
+                        job.workspace_path, test_msg, broken_file, self._brain, plan_summary=job.title
+                    )
+                    if not heal_ok:
+                        logger.warning("Self-heal attempt %d failed: %s", attempt_idx + 1, heal_exp)
+                        break
                     test_ok, test_msg = run_tests(job.workspace_path, stack)
+                    if test_ok:
+                        logger.info("Self-heal succeeded on attempt %d!", attempt_idx + 1)
+                        break
 
             if not test_ok:
                 phase.error = f"Tests failed: {test_msg}"
@@ -385,6 +396,12 @@ class JobManager:
                     completed_cleanly = False
                     break
 
+                if pause_flag.is_set():
+                    job.status = JobStatus.PAUSED
+                    self.store.save(job)
+                    completed_cleanly = False
+                    break
+
                 if success:
                     phase.status = "done"
                     phase.completed_at = time.time()
@@ -397,6 +414,14 @@ class JobManager:
                     job.elapsed_seconds += time.time() - start_clock
                     start_clock = time.time()
                     job.updated_at = time.time()
+
+                    if pause_flag.is_set():
+                        job.status = JobStatus.PAUSED
+                        self.store.save(job)
+                        self._emit("phase_done", {"job_id": job.id, "phase": phase.name, "commit": commit_sha})
+                        completed_cleanly = False
+                        break
+
                     self.store.save(job)
                     self._emit("phase_done", {"job_id": job.id, "phase": phase.name, "commit": commit_sha})
                 else:

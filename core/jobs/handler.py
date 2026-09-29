@@ -72,9 +72,9 @@ def handle_job_intent(orch: Any, intent: str, command: str) -> bool:
         orch.speak("Build job paused." if ok else "No running build job to pause.")
         return True
 
-    elif intent in ("job_resume", "resume_build"):
+    elif intent in ("job_resume", "resume_build", "fix_build"):
         ok = mgr.resume_job()
-        orch.speak("Resuming build job in the background." if ok else "No paused build job found to resume.")
+        orch.speak("Resuming build and retrying verification in the background." if ok else "No paused or failed build job found to resume.")
         return True
 
     elif intent in ("job_cancel", "cancel_build"):

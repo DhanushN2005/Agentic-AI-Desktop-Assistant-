@@ -321,17 +321,30 @@ class SelfHealer:
             return False, f"Cannot access file for repair: {e}"
 
         truncated_error = "\n".join(error_output.strip().splitlines()[-50:])
+
+        test_context = ""
+        for test_candidate in ("tests/test_app.py", "test_app.py", "tests/test_main.py", "test_main.py"):
+            t_path = os.path.join(workspace_path, test_candidate)
+            if os.path.isfile(t_path):
+                try:
+                    with open(t_path, "r", encoding="utf-8") as tf:
+                        test_context = f"\n\nTest Suite Requirements ({test_candidate}):\n{tf.read()[:2500]}"
+                        break
+                except Exception:
+                    pass
+
         prompt = f"""You are an automated code repair expert.
 Project Plan: {plan_summary}
 File to fix: {relevant_file}
 
 Recent Error / Traceback:
 {truncated_error}
+{test_context}
 
 Current File Content:
 {current_code[:3000]}
 
-Fix the issue in {relevant_file}. Return ONLY the complete, corrected source code inside a single code block.
+Fix the issue in {relevant_file} so all tests pass. Return ONLY the complete, corrected source code inside a single code block.
 Do not provide conversational prose.
 """
         try:

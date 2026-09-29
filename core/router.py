@@ -244,7 +244,7 @@ NL_OVERRIDES = [
     # Build Jobs (control & status)
     (r"\b(job\s+status|build\s+status|status\s+of\s+(?:the\s+)?build|how\s+is\s+the\s+build\s+going)\b", "job_status", 0.95),
     (r"\b(pause\s+(?:the\s+)?(?:build|job|project))\b", "job_pause", 0.95),
-    (r"\b(resume\s+(?:the\s+)?(?:build|job|project))\b", "job_resume", 0.95),
+    (r"\b(resume\s+(?:the\s+)?(?:build|job|project)|fix\s+(?:the\s+)?(?:build|tests?|code|that)|retry\s+(?:the\s+)?build|heal\s+(?:the\s+)?build)\b", "job_resume", 0.95),
     (r"\b(cancel\s+(?:the\s+)?(?:build|job|project)|stop\s+(?:the\s+)?build)\b", "job_cancel", 0.95),
     (r"\b(undo\s+(?:the\s+)?(?:last\s+)?(?:build\s+)?phase|rollback\s+(?:last\s+)?phase)\b", "job_undo", 0.95),
     (r"\b(open\s+(?:the\s+)?(?:project|workspace|in\s+vscode|in\s+code)|launch\s+(?:the\s+)?(?:project|app|application))\b", "job_open", 0.95),
