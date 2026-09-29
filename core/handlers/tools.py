@@ -3,6 +3,7 @@ import operator
 import re
 
 from engines.system import SystemCtrl
+import logging
 
 
 def _safe_eval(node):
@@ -64,7 +65,8 @@ def handle_calc(orch, c):
             result = int(result)
         orch.speak(f"That equals {result}.")
         orch.ctx.update(last_response=str(result))
-    except Exception:
+    except Exception as _e:
+        logging.debug("[core/handlers/tools.py:67] Swallowed exception: %s: %s", type(_e).__name__, _e)
         orch.speak("I couldn't calculate that. Please try a simpler math question.")
     return True
 
@@ -74,7 +76,8 @@ def handle_status(orch, c):
         cpu, ram = SystemCtrl.cpu_ram()
         batt = SystemCtrl.battery_status()
         orch.speak(f"CPU is at {cpu} percent, RAM at {ram} percent, battery at {batt}.")
-    except Exception:
+    except Exception as _e:
+        logging.debug("[core/handlers/tools.py:77] Swallowed exception: %s: %s", type(_e).__name__, _e)
         orch.speak("I couldn't read the system status right now.")
     return True
 

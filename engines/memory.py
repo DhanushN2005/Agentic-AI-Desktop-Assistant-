@@ -1,9 +1,11 @@
-import sqlite3
-import threading
 import datetime
 import json
+import sqlite3
+import threading
 import time
+
 from utils.config import Config
+
 
 class MemoryEngine:
     def __init__(self):
@@ -26,6 +28,9 @@ class MemoryEngine:
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
                 CREATE TABLE IF NOT EXISTS chat_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                    role TEXT, content TEXT, ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE IF NOT EXISTS conversation_turns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     role TEXT, content TEXT, ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
             """)
             self.conn.commit()
@@ -140,7 +145,36 @@ class MemoryEngine:
         with self._lock:
             cur = self.conn.cursor()
             rows = cur.execute(
-                "SELECT role, content FROM chat_history ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-            # Reverse to maintain chronological order
+                "SELECT role, content FROM chat_history ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
             context = [f"{r[0]}: {r[1]}" for r in reversed(rows)]
             return "\n".join(context)
+
+    def add_conversation_turn(self, role, content):
+        if role not in {"user", "assistant"} or not content:
+            return
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("INSERT INTO conversation_turns(role, content) VALUES(?,?)", (role, content))
+            self.conn.commit()
+
+    def get_conversation_messages(self, limit=None, max_chars=None):
+        if limit is None:
+            limit = Config.CONVERSATION_HISTORY_TURNS
+        if max_chars is None:
+            max_chars = Config.CONVERSATION_HISTORY_CHARS
+        with self._lock:
+            cur = self.conn.cursor()
+            rows = cur.execute(
+                "SELECT role, content FROM conversation_turns ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+
+        messages = [
+            {"role": role, "content": str(content)}
+            for role, content in reversed(rows)
+            if role in {"user", "assistant"} and content
+        ]
+        while messages and sum(len(item["content"]) for item in messages) > max_chars:
+            messages.pop(0)
+        return messages

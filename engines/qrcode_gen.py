@@ -1,6 +1,7 @@
-import urllib.request
-import urllib.parse
 import os
+import urllib.parse
+import urllib.request
+import logging
 
 
 class QRCodeEngine:
@@ -22,6 +23,7 @@ class QRCodeEngine:
                     f.write(qr_data)
                 return f"QR code saved to {filepath}"
         except Exception as e:
+            logging.debug("[engines/qrcode_gen.py:24] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Could not generate QR code: {e}"
 
     def generate_url(self, url: str, size: int = 300) -> str:

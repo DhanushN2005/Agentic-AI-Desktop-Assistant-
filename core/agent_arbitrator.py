@@ -1,6 +1,7 @@
+import logging
 import threading
 import time
-import logging
+
 
 class AgentArbitrator:
     """
@@ -12,7 +13,7 @@ class AgentArbitrator:
         self.logger = logging.getLogger("Flexie.Arbitrator")
         self._locks = {}
         self._lock_mutex = threading.Lock()
-        
+
     def acquire_lock(self, resource_id: str, agent_id: str, timeout: float = 5.0) -> bool:
         """
         Attempts to acquire a lock for a specific resource.
@@ -28,10 +29,10 @@ class AgentArbitrator:
                     # Already owns the lock
                     return True
             time.sleep(0.1)
-            
+
         self.logger.warning(f"[ARBITRATOR] '{agent_id}' failed to acquire lock on '{resource_id}'. Currently held by '{self._locks.get(resource_id)}'")
         return False
-        
+
     def release_lock(self, resource_id: str, agent_id: str):
         """
         Releases a lock if the requesting agent currently owns it.
@@ -42,7 +43,7 @@ class AgentArbitrator:
                 self.logger.debug(f"[ARBITRATOR] Lock released on '{resource_id}' by '{agent_id}'")
             else:
                 self.logger.warning(f"[ARBITRATOR] '{agent_id}' attempted to release lock on '{resource_id}' but does not own it.")
-                
+
     def force_release(self, resource_id: str):
         """
         Admin override to force release a lock.

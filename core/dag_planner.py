@@ -1,17 +1,18 @@
 import concurrent.futures
 import logging
-from typing import List, Callable
+from collections.abc import Callable
 
 # FIX 10: Import ActionResult for structured task results.
 # Imported here so DAGPlanner can surface failures to execute_graph.
 try:
     from core.action_result import ActionResult
-except ImportError:
+except ImportError as _e:
+    logging.debug("[core/dag_planner.py:9] Swallowed exception: %s: %s", type(_e).__name__, _e)
     ActionResult = None  # Graceful degradation if module not yet present
 
 
 class DAGTask:
-    def __init__(self, task_id: str, command: str, dependencies: List[str] = None):
+    def __init__(self, task_id: str, command: str, dependencies: list[str] = None):
         self.task_id = task_id
         self.command = command
         self.dependencies = dependencies or []
@@ -38,7 +39,7 @@ class DAGPlanner:
         # executor_callback must be a blocking call — see docstring above.
         self.executor_callback = executor_callback
 
-    def execute_graph(self, tasks: List[DAGTask]):
+    def execute_graph(self, tasks: list[DAGTask]):
         self.logger.info(f"[DAG] Starting DAG execution with {len(tasks)} tasks.")
 
         task_dict = {t.task_id: t for t in tasks}

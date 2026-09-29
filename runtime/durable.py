@@ -1,19 +1,22 @@
-import os
 import json
 import logging
-import uuid
+import os
 import time
-from typing import List, Dict, Any, Callable
-from core.event_bus.bus import EventBus, Event
+import uuid
+from collections.abc import Callable
+from typing import Any
+
+from core.event_bus.bus import Event, EventBus
+
 
 class DurableTask:
     """Represents a state-persistent, resumable execution task wrapping workflow steps."""
-    def __init__(self, steps: List[str], task_id: str = None):
+    def __init__(self, steps: list[str], task_id: str = None):
         self.task_id = task_id or str(uuid.uuid4())
         self.steps = steps
         self.current_step_idx = 0
         self.status = "pending"  # pending, running, completed, failed
-        self.checkpoints: Dict[int, Dict[str, Any]] = {}
+        self.checkpoints: dict[int, dict[str, Any]] = {}
         self.created_at = time.time()
         self.updated_at = time.time()
 
@@ -45,13 +48,13 @@ class DurableWorkflowRuntime:
         self.storage_path = storage_path
         self.bus = EventBus()
         self.logger = logging.getLogger("DurableRuntime")
-        self.active_tasks: Dict[str, DurableTask] = {}
+        self.active_tasks: dict[str, DurableTask] = {}
         self._load_state()
 
     def _load_state(self):
         if os.path.exists(self.storage_path):
             try:
-                with open(self.storage_path, "r") as f:
+                with open(self.storage_path) as f:
                     data = json.load(f)
                     for t_id, t_dict in data.items():
                         self.active_tasks[t_id] = DurableTask.from_dict(t_dict)
@@ -65,14 +68,14 @@ class DurableWorkflowRuntime:
         except Exception as e:
             self.logger.error(f"Failed to save durable workflow state: {e}")
 
-    def create_task(self, steps: List[str]) -> DurableTask:
+    def create_task(self, steps: list[str]) -> DurableTask:
         task = DurableTask(steps)
         self.active_tasks[task.task_id] = task
         self.save_state()
         self.bus.publish(Event("workflow.created", {"task_id": task.task_id, "steps_count": len(steps)}))
         return task
 
-    def record_checkpoint(self, task_id: str, step_idx: int, state_data: Dict[str, Any]):
+    def record_checkpoint(self, task_id: str, step_idx: int, state_data: dict[str, Any]):
         """Saves intermediate execution progress for resume triggers."""
         task = self.active_tasks.get(task_id)
         if task:
@@ -98,7 +101,7 @@ class DurableWorkflowRuntime:
         while task.current_step_idx < len(task.steps):
             step = task.steps[task.current_step_idx]
             self.logger.info(f"Durable Runtime: Running task {task_id} step {task.current_step_idx}: '{step}'")
-            
+
             # Execute step through runner callback
             try:
                 step_success = execute_step_fn(step)

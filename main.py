@@ -1,8 +1,8 @@
 import warnings
+import logging
 
 # SILENCE ALL DEPRECATION WARNINGS IMMEDIATELY
 warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", module="google.generativeai")
 
 import os
 import subprocess
@@ -36,9 +36,11 @@ def check_single_instance():
                         print(f"[Conflict]: Flexie is already running (PID: {proc.info['pid']}).")
                         print("Please close the other instance before starting a new one.")
                         sys.exit(1)
-                except Exception:
+                except Exception as _e:
+                    logging.debug("[main.py:39] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     continue
-    except Exception:
+    except Exception as _e:
+        logging.debug("[main.py:41] Swallowed exception: %s: %s", type(_e).__name__, _e)
         pass
 
 def run_ui():
@@ -49,6 +51,10 @@ def run_ui():
 
 def main():
     check_single_instance()
+    # Per-run UDP control-plane token shared with child UI/bridge processes
+    # (they inherit os.environ). See utils/udp_auth.py.
+    import secrets as _secrets
+    os.environ.setdefault("FLEXIE_UDP_TOKEN", _secrets.token_urlsafe(24))
     print("\n" + "="*40)
     print("      F L E X I E   2 . 0   C O R E      ")
     print("="*40)
@@ -77,19 +83,22 @@ def main():
 
     try:
         assistant.run()
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as _e:
+        logging.debug("[main.py:80] Swallowed exception: %s: %s", type(_e).__name__, _e)
         print("\n[System]: Shutting down Flexie gracefully...")
         # 1. Graceful AI Cleanup
         try:
             assistant.cleanup()
-        except Exception:
+        except Exception as _e:
+            logging.debug("[main.py:85] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
         # 2. Cleanup UI Process
         if ui_proc:
             try:
                 ui_proc.terminate()
-            except Exception:
+            except Exception as _e:
+                logging.debug("[main.py:92] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 pass
 
         # 3. Final Hard Kill for any zombies (scoped to OUR child processes only)
@@ -103,9 +112,11 @@ def main():
                 if ("playwright" in n or "chrome" in n) and proc.info['pid'] in child_pids:
                     try:
                         proc.kill()
-                    except Exception:
+                    except Exception as _e:
+                        logging.debug("[main.py:106] Swallowed exception: %s: %s", type(_e).__name__, _e)
                         pass
-        except Exception:
+        except Exception as _e:
+            logging.debug("[main.py:108] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
         print("[System]: Cleanup complete.")
         sys.exit(0)

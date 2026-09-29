@@ -1,10 +1,12 @@
 import importlib.util
 import subprocess
 import sys
+import logging
 
 REQUIRED_PACKAGES = [
     "pyttsx3",
     "SpeechRecognition",
+    "PyAudio",
     "playwright",
     "pyperclip",
     "pygetwindow",
@@ -16,14 +18,15 @@ REQUIRED_PACKAGES = [
     "groq",
     "requests",
     "python-dotenv",
-    "duckduckgo_search",
+    "ddgs",
     "pillow",
     "pytesseract",
     "pyautogui",
     "websockets",
     "nest_asyncio",
     "PyQt6",
-    "pygame"
+    "pygame",
+    "edge-tts"
 ]
 
 def install_missing():
@@ -32,11 +35,11 @@ def install_missing():
         # Map package name to actual import name
         import_map = {
             "SpeechRecognition": "speech_recognition",
+            "PyAudio": "pyaudio",
             "python-dotenv": "dotenv",
             "pillow": "PIL",
             "google-genai": "google.genai",
-            "screen-brightness-control": "screen_brightness_control",
-            "duckduckgo-search": "duckduckgo_search"
+            "screen-brightness-control": "screen_brightness_control"
         }
 
         import_name = import_map.get(pkg, pkg.replace("-", "_"))
@@ -51,6 +54,7 @@ def install_missing():
                 print(f"[Installer] Installing {package}...")
                 subprocess.check_call([sys.executable, "-m", "pip", "install", package])
             except Exception as e:
+                logging.debug("[utils/installer.py:53] Swallowed exception: %s: %s", type(e).__name__, e)
                 print(f"[Installer] Failed to install {package}: {e}")
 
         # Special case for playwright - only if playwright was missing
@@ -58,7 +62,8 @@ def install_missing():
             print("[Installer] Installing Playwright browsers...")
             try:
                 subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
-            except Exception:
+            except Exception as _e:
+                logging.debug("[utils/installer.py:61] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 pass
 
         print("[Installer] All missing packages processed.")

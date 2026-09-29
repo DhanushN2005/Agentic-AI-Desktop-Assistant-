@@ -1,5 +1,6 @@
-import urllib.request
 import json
+import urllib.request
+import logging
 
 
 class IPLookupEngine:
@@ -33,6 +34,7 @@ class IPLookupEngine:
                     return ". ".join(parts)
                 return f"Could not look up IP: {data.get('message', 'unknown error')}"
         except Exception as e:
+            logging.debug("[engines/ip_lookup.py:35] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"IP lookup failed: {e}"
 
     def get_public_ip(self) -> str:
@@ -41,5 +43,6 @@ class IPLookupEngine:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
                 return f"Your public IP: {data.get('ip', 'unknown')}"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/ip_lookup.py:44] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Could not determine public IP."

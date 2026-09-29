@@ -7,13 +7,16 @@ from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 import screen_brightness_control as sbc
 from utils.config import Config
 from utils.helpers import is_online
+import logging
 try:
     import pygetwindow as gw
-except ImportError:
+except ImportError as _e:
+    logging.debug("[engines/system.py:12] Swallowed exception: %s: %s", type(_e).__name__, _e)
     gw = None
 try:
     import pyperclip
-except ImportError:
+except ImportError as _e:
+    logging.debug("[engines/system.py:16] Swallowed exception: %s: %s", type(_e).__name__, _e)
     pyperclip = None
 
 class SystemCtrl:
@@ -22,7 +25,8 @@ class SystemCtrl:
         """Returns the current text in the clipboard."""
         try:
             return pyperclip.paste() if pyperclip else ""
-        except:
+        except Exception as _e:
+            logging.debug("[engines/system.py:25] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return ""
 
     @staticmethod
@@ -30,7 +34,8 @@ class SystemCtrl:
         """Sets the clipboard text."""
         try:
             if pyperclip: pyperclip.copy(text)
-        except:
+        except Exception as _e:
+            logging.debug("[engines/system.py:33] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
     @staticmethod
@@ -41,7 +46,8 @@ class SystemCtrl:
             interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
             volume = cast(interface, POINTER(IAudioEndpointVolume))
             volume.SetMasterVolumeLevelScalar(db_volume, None)
-        except:
+        except Exception as _e:
+            logging.debug("[engines/system.py:44] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
     @staticmethod
@@ -51,27 +57,33 @@ class SystemCtrl:
             interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
             volume = cast(interface, POINTER(IAudioEndpointVolume))
             return int(volume.GetMasterVolumeLevelScalar() * 100)
-        except:
+        except Exception as _e:
+            logging.debug("[engines/system.py:54] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return 50
 
     @staticmethod
     def set_brightness(v):
         try:
             sbc.set_brightness(v)
-        except:
+        except Exception as _e:
+            logging.debug("[engines/system.py:61] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
     @staticmethod
     def power(action):
         table = {
-            "shutdown": "shutdown /s /t 10",
-            "restart": "shutdown /r /t 10",
-            "lock": "rundll32.exe user32.dll,LockWorkStation",
-            "sleep": "rundll32.exe powrprof.dll,SetSuspendState 0,1,0"
+            "shutdown": ["shutdown", "/s", "/t", "10"],
+            "restart": ["shutdown", "/r", "/t", "10"],
+            "lock": ["rundll32.exe", "user32.dll,LockWorkStation"],
+            "sleep": ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"]
         }
-        for k, cmd in table.items():
+        for k, argv in table.items():
             if k in action.lower():
-                os.system(cmd)
+                try:
+                    import subprocess
+                    subprocess.Popen(argv, shell=False)
+                except Exception as _e:
+                    logging.debug("[engines/system.py:power] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 return
 
     @staticmethod
@@ -115,7 +127,8 @@ class SystemCtrl:
         try:
             pyautogui.hotkey('ctrl', 's')
             return True
-        except:
+        except Exception as _e:
+            logging.debug("[engines/system.py:118] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return False
 
     @staticmethod
@@ -126,8 +139,56 @@ class SystemCtrl:
                 win = gw.getActiveWindow()
                 return win.title if win else "Unknown"
             return "Unknown"
-        except:
+        except Exception as _e:
+            logging.debug("[engines/system.py:129] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Unknown"
+
+    @staticmethod
+    def run_cmd(command: str) -> str:
+        """Execute a CMD command with safety restrictions.
+        
+        Blocks destructive commands for security.
+        Returns the output or error message."""
+        import subprocess
+        
+        # Security: Block destructive commands
+        destructive = [
+            "rm -rf", "del /s", "format", "fdisk",
+            "shutdown", "restart", "poweroff",
+            ">null", ">>null", ">/dev", "2>/dev"
+        ]
+        
+        cmd_lower = command.lower().strip()
+        for d in destructive:
+            if d in cmd_lower:
+                return f"Security blocked: '{d}' command prevented."
+        
+        # Only allow specific safe commands
+        safe_prefixes = ["dir ", "cd ", "type ", "echo ", "cls ", "ver "]
+        if not any(cmd_lower.startswith(p) for p in safe_prefixes):
+            return "Command not allowed. Use: dir, cd, type, echo, cls, or ver commands only."
+        
+        try:
+            result = subprocess.run(
+                command, 
+                capture_output=True, 
+                text=True, 
+                timeout=10,
+                shell=False
+            )
+            output = result.stdout.strip()
+            error = result.stderr.strip()
+            
+            if output:
+                return output[:500]  # Limit output length
+            elif error:
+                return f"Error: {error[:200]}"
+            else:
+                return "Command executed successfully (no output)."
+        except subprocess.TimeoutExpired:
+            return "Command timed out (10s limit)."
+        except Exception as e:
+            return f"Command failed: {str(e)[:200]}"
 
     @staticmethod
     def close_app(app_name: str) -> bool:
@@ -154,7 +215,8 @@ class SystemCtrl:
                 if any(tn in pname for tn in process_names) or target == pname.replace(".exe", ""):
                     proc.terminate()
                     killed = True
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as _e:
+                logging.debug("[engines/system.py:157] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 continue
         return killed
 
@@ -199,13 +261,15 @@ class SystemCtrl:
                     if active_win and active_win._hWnd == win._hWnd:
                         focused = True
                         break
-                except Exception:
+                except Exception as _e:
+                    logging.debug("[engines/system.py:202] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass
                 
                 # Tap ALT key as a self-healing fallback to release Windows foreground lock
                 try:
                     pyautogui.press('alt')
-                except:
+                except Exception as _e:
+                    logging.debug("[engines/system.py:208] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass
                 time.sleep(0.15)
                 
@@ -238,4 +302,5 @@ class SystemCtrl:
             else:
                 return f"Unknown snap direction '{direction}'."
         except Exception as e:
+            logging.debug("[engines/system.py:240] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Failed to snap window: {e}"

@@ -466,11 +466,11 @@
             <div class="control-group">
                 <div class="control-item">
                     <div class="control-label">Volume <span id="volLabel">50%</span></div>
-                    <input type="range" id="volSlider" min="0" max="100" value="50" oninput="sendHardware('volume', this.value)">
+                    <input type="range" id="volSlider" min="0" max="100" value="50" oninput="sendLabel('volume', this.value)" onchange="sendHardware('volume', this.value)">
                 </div>
                 <div class="control-item">
                     <div class="control-label">Brightness <span id="briLabel">70%</span></div>
-                    <input type="range" id="briSlider" min="0" max="100" value="70" oninput="sendHardware('brightness', this.value)">
+                    <input type="range" id="briSlider" min="0" max="100" value="70" oninput="sendLabel('brightness', this.value)" onchange="sendHardware('brightness', this.value)">
                 </div>
             </div>
 
@@ -481,6 +481,7 @@
                     <option value="developer">Developer</option>
                     <option value="hacker">Hacker</option>
                     <option value="minimal">Minimal</option>
+                    <option value="focus">Focus</option>
                 </select>
             </div>
         </aside>
@@ -524,7 +525,10 @@
 
     <script>
         const WS_URL = 'ws://localhost:8765';
+        // Token injected by the bridge's local HTTP server ({{AUTH_TOKEN}} placeholder).
+        const AUTH_TOKEN = '{{AUTH_TOKEN}}';
         let ws = null;
+        let wsAuthed = false;
         let startTime = Date.now();
 
         const STATES = {
@@ -537,27 +541,40 @@
 
         function connectWS() {
             ws = new WebSocket(WS_URL);
+            wsAuthed = false;
             ws.onopen = () => {
-                document.getElementById('wsState').textContent = 'ONLINE';
-                document.getElementById('wsState').style.color = '#00ff87';
-                updateState('IDLE');
-                log('WS Connected');
+                // Authenticate first — the bridge relays nothing until this succeeds.
+                ws.send('AUTH:' + AUTH_TOKEN);
             };
-            ws.onclose = () => {
+            ws.onclose = (e) => {
                 document.getElementById('wsState').textContent = 'OFFLINE';
                 document.getElementById('wsState').style.color = '#ff4d4d';
                 updateState('SLEEP');
-                log('WS Disconnected');
+                log('WS Disconnected' + (e.code === 4001 ? ' (auth failed)' : ''));
                 setTimeout(connectWS, 3000);
             };
             ws.onmessage = (e) => {
                 const msg = e.data;
+                if (!wsAuthed) {
+                    if (msg === 'AUTH_OK') {
+                        wsAuthed = true;
+                        document.getElementById('wsState').textContent = 'ONLINE';
+                        document.getElementById('wsState').style.color = '#00ff87';
+                        updateState('IDLE');
+                        log('WS Connected (authenticated)');
+                    }
+                    return; // ignore everything before AUTH_OK
+                }
                 log('← ' + msg);
-                if (msg.includes(':')) {
-                    const [tag, val] = msg.split(':', 2);
+                const separator = msg.indexOf(':');
+                if (separator >= 0) {
+                    const tag = msg.slice(0, separator);
+                    const val = msg.slice(separator + 1);
                     if (tag === 'STATE') updateState(val.toUpperCase());
                     else if (tag === 'SAY') addChat('ai', val);
                     else if (tag === 'METRICS') updateMetrics(JSON.parse(val));
+                    else if (tag === 'MODE') applyMode(val.toLowerCase());
+                    else if (tag === 'PARTIAL') document.getElementById('cmdInput').placeholder = val + " ...";
                 }
             };
         }
@@ -570,9 +587,21 @@
             l.prepend(e);
         }
 
-        function sendHardware(type, val) {
+        function sendRaw(msg) {
+            // All outgoing traffic funnels here — nothing is sent before auth.
+            if (ws && wsAuthed && ws.readyState === WebSocket.OPEN) ws.send(msg);
+            else log('⚠ Not authenticated — message dropped');
+        }
+
+        function sendLabel(type, val) {
             document.getElementById(type === 'volume' ? 'volLabel' : 'briLabel').textContent = val + '%';
-            if (ws) ws.send(`${type} ${val}`);
+        }
+
+        function sendHardware(type, val) {
+            // Fire only once per drag release (onchange), and use the silent
+            // SET_ prefix so the orchestrator applies it without speaking each tick.
+            sendLabel(type, val);
+            sendRaw(`SET_${type.toUpperCase()}:${val}`);
         }
 
         function updateState(st) {
@@ -601,6 +630,27 @@
             }
         }
 
+        const MODE_COLORS = {
+            professional: { p: '#00f2ff', s: '#0066ff' },
+            developer:    { p: '#00ff87', s: '#00a85a' },
+            hacker:       { p: '#ff003c', s: '#8b0018' },
+            minimal:      { p: '#c0c0c0', s: '#707070' },
+            focus:        { p: '#a970ff', s: '#5b2ea6' },
+        };
+        let currentMode = 'professional';
+
+        function applyMode(mode) {
+            currentMode = mode;
+            const c = MODE_COLORS[mode] || MODE_COLORS.professional;
+            const r = document.documentElement.style;
+            r.setProperty('--accent-primary', c.p);
+            r.setProperty('--accent-secondary', c.s);
+            const orb = document.getElementById('theCore');
+            const badge = document.getElementById('stateBadge');
+            if (orb) orb.style.background = `radial-gradient(circle at 30% 30%, ${c.p}, ${c.s})`;
+            if (badge) badge.style.color = c.p;
+        }
+
         function addChat(role, text) {
             const log = document.getElementById('chatLog');
             const msg = document.createElement('div');
@@ -615,7 +665,7 @@
             const val = input.value.trim();
             if (val) {
                 addChat('user', val);
-                if (ws) ws.send(val);
+                sendRaw(val);
                 input.value = '';
             }
         }

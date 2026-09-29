@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import socket
+import logging
 
 
 def find_executable(name: str, default_path: str = None) -> str:
@@ -22,7 +23,8 @@ def is_online() -> bool:
         s = socket.create_connection(("8.8.8.8", 53))
         s.close()
         return True
-    except Exception:
+    except Exception as _e:
+        logging.debug("[utils/helpers.py:25] Swallowed exception: %s: %s", type(_e).__name__, _e)
         return False
 
 def get_numbers(text: str) -> list[int]:

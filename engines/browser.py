@@ -42,7 +42,8 @@ class BrowserEngine:
                     for p in pages[:-1]: # Keep the last active page
                         if p != self.page:
                             try: p.close()
-                            except: pass
+                            except Exception as _e:
+                                logging.debug("[engines/browser.py:45] Swallowed exception: %s: %s", type(_e).__name__, _e)
         except Exception as e:
             self.logger.warning(f"Failed to limit tabs: {e}")
 
@@ -88,7 +89,8 @@ class BrowserEngine:
                         if loop:
                             import nest_asyncio
                             nest_asyncio.apply()
-                    except RuntimeError:
+                    except RuntimeError as _e:
+                        logging.debug("[engines/browser.py:91] Swallowed exception: %s: %s", type(_e).__name__, _e)
                         pass
                     self.playwright = sync_playwright().start()
                 
@@ -162,7 +164,8 @@ class BrowserEngine:
                     lock_file = os.path.join(self.user_data_dir, "SingletonLock")
                     if os.path.exists(lock_file):
                         os.remove(lock_file)
-                except: pass
+                except Exception as _e:
+                    logging.debug("[engines/browser.py:165] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 return False
         return True
 
@@ -251,7 +254,8 @@ class BrowserEngine:
                         });
                     }, 1000);
                 }""")
-            except: pass
+            except Exception as _e:
+                logging.debug("[engines/browser.py:254] Swallowed exception: %s: %s", type(_e).__name__, _e)
             
         return f"Navigated to {url}"
 
@@ -273,7 +277,9 @@ class BrowserEngine:
                 self.page.add_style_tag(content=f"{selector} {{ outline: 4px solid red !important; background-color: rgba(255,0,0,0.2) !important; }}")
                 self.page.locator(selector).first.scroll_into_view_if_needed()
             return True
-        except: return False
+        except Exception as _e:
+            logging.debug("[engines/browser.py:276] Swallowed exception: %s: %s", type(_e).__name__, _e)
+            return False
 
     def is_risky(self, selector: str) -> bool:
         """Checks if the target text contains dangerous keywords."""
@@ -292,7 +298,8 @@ class BrowserEngine:
             start_pages_count = len(self.context.pages) if self.context else 1
             try:
                 start_text_len = len(self.page.inner_text("body"))
-            except:
+            except Exception as _e:
+                logging.debug("[engines/browser.py:295] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 start_text_len = 0
             
             # Robust selector attempt
@@ -302,7 +309,8 @@ class BrowserEngine:
                 # Try text match first, then ARIA role for better accessibility support
                 try:
                     self.page.get_by_text(selector, exact=False).first.click(timeout=3000)
-                except:
+                except Exception as _e:
+                    logging.debug("[engines/browser.py:305] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.page.click(f"text='{selector}'", timeout=3000)
             
             # Cleanup outline
@@ -315,7 +323,8 @@ class BrowserEngine:
             end_pages_count = len(self.context.pages) if self.context else 1
             try:
                 end_text_len = len(self.page.inner_text("body"))
-            except:
+            except Exception as _e:
+                logging.debug("[engines/browser.py:318] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 end_text_len = 0
                 
             # If nothing seems to have changed, we can suspect standard click did not register
@@ -346,7 +355,8 @@ class BrowserEngine:
         import pyautogui
         try:
             import pygetwindow as gw
-        except ImportError:
+        except ImportError as _e:
+            logging.debug("[engines/browser.py:349] Swallowed exception: %s: %s", type(_e).__name__, _e)
             gw = None
 
         self.logger.info(f"Visual click fallback: Attempting visual coordinate click for '{selector}'...")
@@ -429,7 +439,8 @@ class BrowserEngine:
             try:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
-            except:
+            except Exception as _e:
+                logging.debug("[engines/browser.py:432] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 pass
 
     def fill_field(self, selector: str, value: str) -> str:
@@ -448,11 +459,13 @@ class BrowserEngine:
                 try:
                     locator = self.page.get_by_placeholder(selector, exact=False).first
                     locator.wait_for(timeout=1000)
-                except:
+                except Exception as _e:
+                    logging.debug("[engines/browser.py:451] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     try:
                         locator = self.page.get_by_label(selector, exact=False).first
                         locator.wait_for(timeout=1000)
-                    except:
+                    except Exception as _e:
+                        logging.debug("[engines/browser.py:455] Swallowed exception: %s: %s", type(_e).__name__, _e)
                         locator = self.page.locator(f"text='{selector}'").first
             
             if locator:
@@ -495,7 +508,8 @@ class BrowserEngine:
         import pyautogui
         try:
             import pygetwindow as gw
-        except ImportError:
+        except ImportError as _e:
+            logging.debug("[engines/browser.py:498] Swallowed exception: %s: %s", type(_e).__name__, _e)
             gw = None
 
         self.logger.info(f"Visual fill fallback: Attempting visual coordinate fill for '{selector}'...")
@@ -582,7 +596,8 @@ class BrowserEngine:
             try:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
-            except:
+            except Exception as _e:
+                logging.debug("[engines/browser.py:585] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 pass
 
     def hover_element(self, selector: str) -> str:
@@ -597,7 +612,8 @@ class BrowserEngine:
             else:
                 try:
                     self.page.get_by_text(selector, exact=False).first.hover(timeout=3000)
-                except:
+                except Exception as _e:
+                    logging.debug("[engines/browser.py:600] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.page.hover(f"text='{selector}'", timeout=3000)
                     
             return f"Successfully hovered over {selector}."
@@ -618,7 +634,8 @@ class BrowserEngine:
         import pyautogui
         try:
             import pygetwindow as gw
-        except ImportError:
+        except ImportError as _e:
+            logging.debug("[engines/browser.py:621] Swallowed exception: %s: %s", type(_e).__name__, _e)
             gw = None
 
         self.logger.info(f"Visual hover fallback: Attempting visual coordinate hover for '{selector}'...")
@@ -693,7 +710,8 @@ class BrowserEngine:
             try:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
-            except:
+            except Exception as _e:
+                logging.debug("[engines/browser.py:696] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 pass
 
     def select_dropdown(self, selector: str, option: str) -> str:
@@ -708,7 +726,8 @@ class BrowserEngine:
             else:
                 try:
                     self.page.locator(f"select:has-text('{selector}')").first.select_option(label=option, timeout=3000)
-                except:
+                except Exception as _e:
+                    logging.debug("[engines/browser.py:711] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     # Let's try matching custom select elements by clicking and then clicking the option
                     self.click_element(selector)
                     time.sleep(0.3)
@@ -774,6 +793,7 @@ class BrowserEngine:
                 return f"I found these interactive elements on the page:\n{result}"
             return "No interactive elements detected on the current view."
         except Exception as e:
+            logging.debug("[engines/browser.py:776] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Error gathering interactive elements: {e}"
 
     def capture_page(self) -> str:
@@ -784,6 +804,7 @@ class BrowserEngine:
             self.page.screenshot(path=path)
             return f"Screenshot saved to {path}"
         except Exception as e:
+            logging.debug("[engines/browser.py:786] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Screenshot error: {e}"
 
     def list_tabs(self) -> str:
@@ -816,6 +837,7 @@ class BrowserEngine:
                 return "Closed tab. Switched to previous tab."
             return "Closed tab. No more tabs open."
         except Exception as e:
+            logging.debug("[engines/browser.py:818] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Error closing tab: {e}"
 
     def scroll(self, direction: str = "down") -> str:
@@ -824,7 +846,8 @@ class BrowserEngine:
             distance = 500 if direction == "down" else -500
             self.page.mouse.wheel(0, distance)
             return f"Scrolled {direction}."
-        except:
+        except Exception as _e:
+            logging.debug("[engines/browser.py:827] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Scroll failed."
 
     def extract_page_data(self, mode: str = "text") -> str:
@@ -842,6 +865,7 @@ class BrowserEngine:
                 return f"Found {len(tables)} tables on the page."
             return "Unknown extraction mode."
         except Exception as e:
+            logging.debug("[engines/browser.py:844] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Extraction error: {e}"
 
     def get_summary(self, brain_instance) -> str:
@@ -856,7 +880,8 @@ class BrowserEngine:
             self.page.wait_for_selector("tr.zA.zE", timeout=10000) # Unread row
             subjects = self.page.eval_on_selector_all("tr.zA.zE span.bog", "elements => elements.map(e => e.innerText)")
             return f"You have {len(subjects)} unread emails. Recent subjects: {', '.join(subjects[:3])}"
-        except:
+        except Exception as _e:
+            logging.debug("[engines/browser.py:859] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Could not detect unread emails. Are you logged in?"
 
     def _check_interruption(self):
@@ -885,7 +910,8 @@ class BrowserEngine:
                             return
                         time.sleep(1)
                     break
-            except: pass
+            except Exception as _e:
+                logging.debug("[engines/browser.py:888] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def multi_tab_research(self, query: str, brain_instance) -> str:
         """Opens multiple tabs to research a topic and synthesizes a report."""
@@ -951,6 +977,7 @@ class BrowserEngine:
             return f"I have finished researching {query}. A detailed comparative report has been saved to flexie_research_report.md."
             
         except Exception as e:
+            logging.debug("[engines/browser.py:953] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Research failed: {e}"
 
     def cleanup(self):

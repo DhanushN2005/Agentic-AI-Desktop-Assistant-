@@ -16,9 +16,10 @@ Each tool has:
 The LLM never executes arbitrary code. It requests a registered tool by name.
 """
 import logging
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
 
 from core.action_result import ActionResult
 
@@ -45,7 +46,7 @@ class ToolSchema:
     required: bool = True
     default: Any = None
     description: str = ""
-    enum: Optional[List[Any]] = None  # allowed values
+    enum: list[Any] | None = None  # allowed values
 
     def to_dict(self) -> dict:
         d = {"type": self.type, "required": self.required, "description": self.description}
@@ -61,15 +62,15 @@ class ToolSpec:
     """Complete specification for a registered tool."""
     name: str
     description: str
-    params: List[ToolSchema]
+    params: list[ToolSchema]
     permission: PermissionLevel
     execute_fn: Callable[..., ActionResult]
     result_format: str = "ActionResult"  # "ActionResult", "text", "json", "file"
     timeout: float = 10.0
-    verify_fn: Optional[Callable[..., bool]] = None
+    verify_fn: Callable[..., bool] | None = None
     error_strategy: str = "abort"  # "retry", "fallback", "escalate", "abort"
     max_retries: int = 2
-    tags: List[str] = field(default_factory=list)  # for grouping: "browser", "file", "system"
+    tags: list[str] = field(default_factory=list)  # for grouping: "browser", "file", "system"
     enabled: bool = True
 
     def input_schema_dict(self) -> dict:
@@ -111,7 +112,7 @@ class ToolRegistry:
     """
 
     def __init__(self):
-        self._tools: Dict[str, ToolSpec] = {}
+        self._tools: dict[str, ToolSpec] = {}
         self.logger = logging.getLogger("Flexie.ToolRegistry")
 
     def register(self, tool: ToolSpec):
@@ -123,11 +124,11 @@ class ToolRegistry:
         """Remove a tool by name."""
         self._tools.pop(name, None)
 
-    def get(self, name: str) -> Optional[ToolSpec]:
+    def get(self, name: str) -> ToolSpec | None:
         """Get a tool by name."""
         return self._tools.get(name)
 
-    def list_tools(self, tag: Optional[str] = None, enabled_only: bool = True) -> List[ToolSpec]:
+    def list_tools(self, tag: str | None = None, enabled_only: bool = True) -> list[ToolSpec]:
         """List all tools, optionally filtered by tag."""
         tools = list(self._tools.values())
         if enabled_only:
@@ -136,11 +137,11 @@ class ToolRegistry:
             tools = [t for t in tools if tag in t.tags]
         return tools
 
-    def list_tool_names(self, tag: Optional[str] = None) -> List[str]:
+    def list_tool_names(self, tag: str | None = None) -> list[str]:
         """Returns list of tool names."""
         return [t.name for t in self.list_tools(tag)]
 
-    def get_tools_for_llm(self, tag: Optional[str] = None) -> List[dict]:
+    def get_tools_for_llm(self, tag: str | None = None) -> list[dict]:
         """
         Returns tool definitions optimized for LLM function-calling.
         Each entry: {"name": ..., "description": ..., "parameters": {...}, "permission": ...}
@@ -176,7 +177,7 @@ class ToolRegistry:
             return False
         return tool.permission.value <= current_level.value
 
-    def execute(self, tool_name: str, args: dict, timeout: Optional[float] = None) -> ActionResult:
+    def execute(self, tool_name: str, args: dict, timeout: float | None = None) -> ActionResult:
         """
         Execute a tool with validated arguments.
         
@@ -203,13 +204,15 @@ class ToolRegistry:
                 result = ActionResult.ok(message=str(result), intent=tool_name, data={"raw": result})
             result.intent = tool_name
             return result
-        except TimeoutError:
+        except TimeoutError as _e:
+            logging.debug("[core/tool_registry.py:207] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return ActionResult.fail(
                 message=f"Tool '{tool_name}' timed out after {effective_timeout}s",
                 intent=tool_name,
                 data={"timeout": effective_timeout}
             )
         except Exception as e:
+            logging.debug("[core/tool_registry.py:213] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(
                 message=f"Tool '{tool_name}' error: {e}",
                 intent=tool_name,
@@ -223,7 +226,8 @@ class ToolRegistry:
             return result.success  # default: trust success flag
         try:
             return tool.verify_fn(result)
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/tool_registry.py:227] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return False
 
     def to_summary(self) -> str:

@@ -2,6 +2,7 @@ import re
 import subprocess
 import urllib.parse
 import webbrowser
+import logging
 
 
 def handle_search(orch, c):
@@ -14,7 +15,8 @@ def handle_search(orch, c):
         orch.speak("Opening your Google Chrome.")
         try:
             subprocess.Popen(['start', 'chrome', 'https://www.google.com'], shell=True)
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/handlers/search.py:17] Swallowed exception: %s: %s", type(_e).__name__, _e)
             webbrowser.open("https://www.google.com")
         return True
 
@@ -28,7 +30,8 @@ def handle_search(orch, c):
         url = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean_query)}"
         try:
             subprocess.Popen(['start', 'chrome', url], shell=True)
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/handlers/search.py:31] Swallowed exception: %s: %s", type(_e).__name__, _e)
             webbrowser.open(url)
     else:
         orch.speak("What should I search for?")

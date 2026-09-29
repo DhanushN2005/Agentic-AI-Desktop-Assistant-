@@ -1,6 +1,7 @@
-import hashlib
 import base64
 import binascii
+import hashlib
+import logging
 
 
 class HashEncoderEngine:
@@ -26,7 +27,8 @@ class HashEncoderEngine:
         try:
             decoded = base64.b64decode(text.encode()).decode()
             return f"Decoded: {decoded}"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/hash_encoder.py:29] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Invalid Base64 string."
 
     def hex_encode(self, text: str) -> str:
@@ -36,7 +38,8 @@ class HashEncoderEngine:
         try:
             decoded = binascii.unhexlify(text.encode()).decode()
             return f"Decoded: {decoded}"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/hash_encoder.py:39] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Invalid hex string."
 
     def binary_encode(self, text: str) -> str:
@@ -48,7 +51,8 @@ class HashEncoderEngine:
             chunks = text.replace(' ', '').split()
             decoded = ''.join(chr(int(chunk, 2)) for chunk in chunks)
             return f"Decoded: {decoded}"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/hash_encoder.py:51] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Invalid binary string."
 
     def morse_encode(self, text: str) -> str:

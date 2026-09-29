@@ -1,29 +1,68 @@
 # Enhanced version with NEXT-GEN GLASSMORPHISM UI improvements
-import sys
-import psutil
-import time
+# Silence system-level rendering warnings from Qt C++ core
+import ctypes
+import logging
 import math
 import os
-import webbrowser
-import subprocess
-import threading
 import random
-from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QLabel, QFrame, QGraphicsDropShadowEffect, QSystemTrayIcon,
-                             QMenu, QSlider, QComboBox, QLineEdit, QPushButton, QProgressBar,
-                             QSizePolicy, QGridLayout, QTextBrowser, QDialog, QScrollArea, QTabWidget)
-from PyQt6.QtCore import (Qt, QTimer, QPropertyAnimation, QEasingCurve, 
-                           QRect, QRectF, pyqtProperty, QPoint, QPointF,
-                           QParallelAnimationGroup, QSequentialAnimationGroup, QSize)
-from PyQt6.QtGui import (QPainter, QColor, QRadialGradient, QLinearGradient, QBrush, QPen, 
-                          QIcon, QPixmap, QFont, QFontDatabase, QPainterPath)
-from PyQt6.QtCore import pyqtSignal, QThread
-from PyQt6.QtNetwork import QUdpSocket, QHostAddress
-# Silence system-level rendering warnings from Qt C++ core
-import os
+import subprocess
 import sys
-import ctypes
+import threading
+import time
+import webbrowser
 from ctypes import wintypes
+
+import psutil
+from PyQt6.QtCore import (
+    QEasingCurve,
+    QParallelAnimationGroup,
+    QPoint,
+    QPointF,
+    QPropertyAnimation,
+    QRect,
+    QRectF,
+    QSequentialAnimationGroup,
+    Qt,
+    QThread,
+    QTimer,
+    pyqtProperty,
+    pyqtSignal,
+)
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QRadialGradient,
+)
+from PyQt6.QtNetwork import QHostAddress, QUdpSocket
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSystemTrayIcon,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
+
 sys.stderr = open(os.devnull, 'w')
 
 class HotkeyListener(QThread):
@@ -34,7 +73,7 @@ class HotkeyListener(QThread):
         # Using ID 99 to avoid collisions
         if not user32.RegisterHotKey(None, 99, 0x0002, 0x46):
             return
-        
+
         try:
             msg = wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
@@ -47,13 +86,11 @@ class HotkeyListener(QThread):
 
 class FlexieConfig:
     MODES = {
-        "jarvis":       {"accent": "#00BFFF", "glow": 25, "speed": 2000, "bg_tint": (10, 20, 30, 220), "secondary": "#0080FF"},
-        "cyberpunk":    {"accent": "#FF00FF", "glow": 30, "speed": 1500, "bg_tint": (30, 10, 30, 220), "secondary": "#00FFFF"},
-        "matrix":       {"accent": "#00FF41", "glow": 20, "speed": 1800, "bg_tint": (5, 25, 5, 220),  "secondary": "#008F11"},
-        "tron":         {"accent": "#00FFFF", "glow": 25, "speed": 2200, "bg_tint": (5, 5, 25, 220),  "secondary": "#0088FF"},
-        "space":        {"accent": "#FFFFFF", "glow": 15, "speed": 3500, "bg_tint": (5, 5, 15, 230),  "secondary": "#A0A0FF"},
-        "neon":         {"accent": "#FF3366", "glow": 35, "speed": 1200, "bg_tint": (25, 5, 15, 220), "secondary": "#FF9933"},
-        "alert":        {"accent": "#FF3B30", "glow": 40, "speed": 500,  "bg_tint": (40, 5, 5, 230),  "secondary": "#FF6B6B"}
+        "professional": {"accent": "#00BFFF", "glow": 25, "speed": 2000, "bg_tint": (10, 20, 30, 220), "secondary": "#0080FF"},
+        "developer":    {"accent": "#00FF87", "glow": 25, "speed": 2200, "bg_tint": (5, 25, 18, 220), "secondary": "#00A85A"},
+        "hacker":       {"accent": "#FF003C", "glow": 35, "speed": 1200, "bg_tint": (25, 5, 10, 220), "secondary": "#8B0018"},
+        "minimal":      {"accent": "#C0C0C0", "glow": 20, "speed": 1800, "bg_tint": (15, 15, 15, 230), "secondary": "#707070"},
+        "focus":        {"accent": "#A970FF", "glow": 25, "speed": 2200, "bg_tint": (18, 10, 30, 220), "secondary": "#5B2EA6"},
     }
 
 class ModernSlider(QSlider):
@@ -250,7 +287,8 @@ class ApiKeysDialog(QDialog):
                     if not has:
                         # Show saved state
                         try: from utils.config import Config as _C; has_saved = bool(_C.get_api_key(p)); d.setStyleSheet("color: #00FF41; font-size: 10px; background: transparent; border: none;" if has_saved else "color: rgba(255,255,255,40); font-size: 10px; background: transparent; border: none;")
-                        except: pass
+                        except Exception as _e:
+                            logging.debug("[interface/ui.py:291] Swallowed exception: %s: %s", type(_e).__name__, _e)
                         e.setStyleSheet("background: rgba(0,0,0,80); border: 1px solid rgba(255,255,255,15); border-radius: 8px;")
                     elif prefix and not txt.strip().startswith(prefix):
                         d.setStyleSheet("color: #FFD700; font-size: 10px; background: transparent; border: none;")
@@ -316,7 +354,8 @@ class ApiKeysDialog(QDialog):
                     from utils.config import SUPPORTED_PROVIDERS as _SP
                     meta = _SP[pid]
                     show = not q or q in pid or q in meta['label'].lower() or q in meta['env'].lower()
-                except: pass
+                except Exception as _e:
+                    logging.debug("[interface/ui.py:357] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 box.setVisible(show)
         self.search_edit.textChanged.connect(_filter)
         self._load_existing()
@@ -327,11 +366,12 @@ class ApiKeysDialog(QDialog):
                 if dot:
                     has = bool(_C.get_api_key(pid))
                     dot.setStyleSheet("color: #00FF41; font-size: 10px; background: transparent; border: none;" if has else "color: rgba(255,255,255,40); font-size: 10px; background: transparent; border: none;")
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:368] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def _load_existing(self):
         try:
-            from utils.config import Config, SUPPORTED_PROVIDERS
+            from utils.config import SUPPORTED_PROVIDERS, Config
             # Active provider
             active = getattr(Config, 'ACTIVE_PROVIDER', 'auto')
             idx = self.active_combo.findText(active, 0) if active != "auto" else 0
@@ -408,10 +448,12 @@ class ApiKeysDialog(QDialog):
             if ok:
                 try:
                     import socket
+                    from utils.udp_auth import pack as _udp_pack
                     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    s.sendto(b"RELOAD_BRAIN", ("127.0.0.1", 9887))
+                    s.sendto(_udp_pack("RELOAD_BRAIN").encode("utf-8"), ("127.0.0.1", 9887))
                     s.close()
-                except: pass
+                except Exception as _e:
+                    logging.debug("[interface/ui.py:452] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 self._show_status(f"Saved {len(updates)} change(s). Reloading brain…", "#00FF41")
                 from PyQt6.QtCore import QTimer
                 QTimer.singleShot(1200, self.accept)
@@ -445,15 +487,15 @@ class ApiKeysDialog(QDialog):
 class ControlPopup(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | 
-                            Qt.WindowType.WindowStaysOnTopHint | 
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint |
+                            Qt.WindowType.WindowStaysOnTopHint |
                             Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumWidth(340)
         self.setMaximumWidth(700) # Allow expansion for full text
-        
+
         QFontDatabase.addApplicationFont(":/fonts/SegoeUI.ttf")
-        
+
         self.container = QFrame(self)
         # Professional Minimalist Glassmorphism
         self.container.setStyleSheet("""
@@ -529,24 +571,24 @@ class ControlPopup(QWidget):
             QComboBox:hover { border: 1px solid #00D2FF; }
         """)
         self.container.setObjectName("MainContainer")
-        
+
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 10) # Shadow margins
         self.main_layout.addWidget(self.container)
-        
+
         layout = QVBoxLayout(self.container)
         layout.setContentsMargins(22, 22, 22, 22)
         layout.setSpacing(12)
-        
+
         # Header (Title + Waveform + Controls)
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0,0,0,5)
-        
+
         title = QLabel("FLEXIE")
         title.setObjectName("Title")
         header_layout.addWidget(title)
         header_layout.addStretch(1) # Expand
-        
+
         # New: Pin & Minimize Controls
         self.btn_pin = QPushButton("📌")
         self.btn_pin.setFixedSize(24, 24)
@@ -559,12 +601,12 @@ class ControlPopup(QWidget):
         self.btn_min.setFixedSize(24, 24)
         self.btn_min.setStyleSheet("padding: 2px; font-size: 14px; font-weight: bold; background: transparent; border: none;")
         header_layout.addWidget(self.btn_min)
-        
+
         self.status_indicator = QFrame()
         self.status_indicator.setFixedSize(8, 8)
         self.status_indicator.setStyleSheet("background-color: #00FF41; border-radius: 4px;")
         header_layout.addWidget(self.status_indicator)
-        
+
         self.header_container = QWidget() # WRAP HEADER IN WIDGET
         self.header_container.setLayout(header_layout)
         layout.addWidget(self.header_container)
@@ -612,17 +654,18 @@ class ControlPopup(QWidget):
                 self.provider_dots_widgets[_pid] = _lbl
                 self.provider_dots_row.addWidget(_lbl)
             self.provider_dots_row.addStretch()
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:653] Swallowed exception: %s: %s", type(_e).__name__, _e)
         self.dots_container = dots_container
         layout.addWidget(dots_container)
-        
+
         # System Metrics Panel
         self.metrics_frame = QFrame()
         self.metrics_frame.setStyleSheet("background: rgba(255,255,255,5); border-radius: 12px; border: 1px solid rgba(255,255,255,10);")
         metrics_layout = QVBoxLayout(self.metrics_frame)
         metrics_layout.setContentsMargins(14, 14, 14, 14)
         metrics_layout.setSpacing(10)
-        
+
         # Helper to create a stat row
         def create_stat(name, val="0%"):
             row = QHBoxLayout()
@@ -635,18 +678,18 @@ class ControlPopup(QWidget):
             row.addWidget(vlbl)
             bar = CustomProgressBar()
             return row, vlbl, bar
-            
+
         cpu_row, self.cpu_value, self.cpu_progress = create_stat("CPU")
         metrics_layout.addLayout(cpu_row); metrics_layout.addWidget(self.cpu_progress)
-        
+
         ram_row, self.ram_value, self.ram_progress = create_stat("RAM")
         metrics_layout.addLayout(ram_row); metrics_layout.addWidget(self.ram_progress)
-        
+
         batt_row, self.batt_value, self.batt_progress = create_stat("BATTERY")
         metrics_layout.addLayout(batt_row); metrics_layout.addWidget(self.batt_progress)
-        
+
         layout.addWidget(self.metrics_frame)
-        
+
         # Spotlight Input
         spotlight_layout = QHBoxLayout()
         self.spotlight = QLineEdit()
@@ -677,11 +720,11 @@ class ControlPopup(QWidget):
         self.result_area.setMaximumHeight(400) # Maximum reach
         self.result_area.setFixedHeight(0) # Initially collapsed
         layout.addWidget(self.result_area)
-        
+
         # Hardware section
         self.hardware_header = self._create_section("HARDWARE")
         layout.addWidget(self.hardware_header)
-        
+
         def create_slider_row(icon_text, init_val, mini, maxi):
             row = QHBoxLayout()
             icon = QLabel(icon_text)
@@ -692,22 +735,22 @@ class ControlPopup(QWidget):
             row.addWidget(icon)
             row.addWidget(slider)
             return row, slider
-            
+
         vol_row, self.vol_slider = create_slider_row("🔊", 50, 0, 100)
         bri_row, self.bri_slider = create_slider_row("☀️", 70, 0, 100)
-        
+
         self.vol_container = QWidget(); self.vol_container.setLayout(vol_row)
         self.bri_container = QWidget(); self.bri_container.setLayout(bri_row)
         layout.addWidget(self.vol_container)
         layout.addWidget(self.bri_container)
-        
+
         # AI Mode & Quick Actions
         self.ai_core_header = self._create_section("AI CORE")
         layout.addWidget(self.ai_core_header)
-        
+
         mode_layout = QHBoxLayout()
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Jarvis", "Cyberpunk", "Matrix", "Tron", "Space", "Neon"])
+        self.mode_combo.addItems(["Professional", "Developer", "Hacker", "Minimal", "Focus"])
         mode_layout.addWidget(QLabel("🧠"))
         mode_layout.addWidget(self.mode_combo, 1)
         self.mode_container = QWidget(); self.mode_container.setLayout(mode_layout)
@@ -755,7 +798,7 @@ class ControlPopup(QWidget):
         self.btn_keys = QPushButton("🔑 AI KEYS")
         self.btn_keys.setStyleSheet("background: rgba(255,215,0,15); color: #FFD700; border: 1px solid rgba(255,215,0,30);")
         layout.addWidget(self.btn_keys)
-        
+
         # Big Wake Button
         self.wake_btn = QPushButton("⚡ WAKE FLEXIE")
         self.wake_btn.setObjectName("WakeButton")
@@ -766,7 +809,7 @@ class ControlPopup(QWidget):
         self.ver_stamp.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.ver_stamp.setStyleSheet("color: rgba(255,255,255,60); font-size: 9px; letter-spacing: 2px; margin-top: 5px;")
         layout.addWidget(self.ver_stamp)
-        
+
         self._init_provider_quick_switch()
         self.refresh_provider_badge()
         self.container.adjustSize()
@@ -797,7 +840,8 @@ class ControlPopup(QWidget):
                         if cur and combo.findText(cur) == -1:
                             combo.addItem(cur)
                         combo.setCurrentText(cur)
-                    except: pass
+                    except Exception as _e:
+                        logging.debug("[interface/ui.py:838] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     combo.setEnabled(True)
             self.quick_provider_combo.currentTextChanged.connect(_on_provider_changed)
             # Init with current active
@@ -807,13 +851,16 @@ class ControlPopup(QWidget):
                 idx = self.quick_provider_combo.findText(active)
                 if idx >= 0: self.quick_provider_combo.setCurrentIndex(idx)
                 else: _on_provider_changed(active)
-            except: pass
-        except: pass
+            except Exception as _e:
+                logging.debug("[interface/ui.py:848] Swallowed exception: %s: %s", type(_e).__name__, _e)
+        except Exception as _e:
+            logging.debug("[interface/ui.py:849] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def refresh_provider_badge(self):
         """Update badge + dots from Config. Called on show and every _update_stats."""
         try:
-            from utils.config import Config as _C, SUPPORTED_PROVIDERS as _SP
+            from utils.config import SUPPORTED_PROVIDERS as _SP
+            from utils.config import Config as _C
             active = getattr(_C, 'ACTIVE_PROVIDER', 'auto')
             # Resolve display model
             if active == "auto":
@@ -842,7 +889,7 @@ class ControlPopup(QWidget):
                 # Highlight active with bold
                 if is_active:
                     lbl.setStyleSheet(lbl.styleSheet() + " font-weight: 700;")
-        except Exception as e:
+        except Exception:
             pass
         # Update quick combo current model display
         try:
@@ -850,8 +897,9 @@ class ControlPopup(QWidget):
             if hasattr(self, 'quick_provider_combo'):
                 # don't override if user is interacting
                 pass
-        except: pass
-    
+        except Exception as _e:
+            logging.debug("[interface/ui.py:892] Swallowed exception: %s: %s", type(_e).__name__, _e)
+
     def set_minimal_mode(self, minimal=True):
         """Toggles between full dashboard and minimal search popup."""
         self.header_container.setVisible(not minimal) # HIDE HEADER TOO
@@ -873,11 +921,11 @@ class ControlPopup(QWidget):
             self.btn_keys.setVisible(not minimal)
         self.wake_btn.setVisible(not minimal)
         self.ver_stamp.setVisible(not minimal)
-        
+
         # Adjust layout spacing
         self.container.layout().setSpacing(8 if minimal else 12) # Slightly more space
         self.container.layout().setContentsMargins(20, 20, 20, 20) # Restore breathing room
-        
+
         # Resize window for the new content
         self.container.adjustSize()
         self.setFixedHeight(self.container.sizeHint().height() + 20)
@@ -934,22 +982,23 @@ class ControlPopup(QWidget):
 
     def hide_animated(self):
         try: self.op_anim.finished.disconnect(self.hide)
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:976] Swallowed exception: %s: %s", type(_e).__name__, _e)
         self.op_anim.setDuration(250)
         self.op_anim.setEndValue(0.0)
         self.op_anim.finished.connect(self.hide)
         self.op_anim.start()
-        
+
     def paintEvent(self, event):
         # PERFORMANCE: Skip heavy grid rendering if CPU is pinned
         if hasattr(self, "_cpu_load") and self._cpu_load > 90:
             return
-            
+
         # Draw some subtle tech grid lines behind the glass container
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.container.geometry()
-        
+
         # Grid overlay on the frame
         painter.setClipRect(rect)
         painter.setPen(QPen(QColor(255,255,255,4), 1))
@@ -1050,7 +1099,7 @@ class EnhancedFlexieOrb(QWidget):
         super().__init__(parent)
         self.setFixedSize(300, 300)
         self.state = "SLEEP"
-        self.mode  = "jarvis"
+        self.mode  = "professional"
 
         # core animation state
         self._scale         = 1.0
@@ -1243,7 +1292,8 @@ class EnhancedFlexieOrb(QWidget):
         self.particles = [p for p in self.particles if p.life > 0]
 
         try: self.update()
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:1285] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     # ── state change ─────────────────────────────────────────────────────────
     def set_state(self, state):
@@ -1596,48 +1646,48 @@ class EnhancedFlexieOrb(QWidget):
 class FlexieUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | 
-                           Qt.WindowType.WindowStaysOnTopHint | 
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint |
+                           Qt.WindowType.WindowStaysOnTopHint |
                            Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
+
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(10)
-        
+
         self.orb = EnhancedFlexieOrb()
         self.layout.addWidget(self.orb)
         self.setFixedSize(300, 300)
-        
+
         self.drag_pos = QPoint()
         self._last_activity = time.time()
-        
+
         self.udp_sock = QUdpSocket(self)
         self.udp_sock.bind(QHostAddress.SpecialAddress.LocalHost, 9886)
         self.udp_sock.readyRead.connect(self._process_udp)
-        
+
         self.panel = ControlPopup()
         self._connect_signals()
-        
+
         # Center on screen
         screen = QApplication.primaryScreen().geometry()
         self.move(screen.center() - self.rect().center())
-        
+
         self.idle_timer = QTimer(self)
         self.idle_timer.timeout.connect(self._handle_idle)
         self.idle_timer.start(10000)
-        
+
         self.stats_timer = QTimer(self)
         self.stats_timer.timeout.connect(self._update_stats)
         self.stats_timer.start(2000)
-        
+
         self._setup_tray()
-        
+
         # Start global hotkey listener
         self.hotkey_thread = HotkeyListener(self)
         self.hotkey_thread.hotkey_signal.connect(self._handle_hotkey)
         self.hotkey_thread.start()
-        
+
         self.show()
 
     def _handle_hotkey(self):
@@ -1646,7 +1696,7 @@ class FlexieUI(QWidget):
             self.panel.hide_animated()
         else:
             self.panel.set_minimal_mode(True) # MINIMAL MODE ON HOTKEY
-            self.panel.result_area.hide() 
+            self.panel.result_area.hide()
             self.panel.result_area.setFixedHeight(0) # Collapse result area
             self._reflow_ui()
             self.panel.show_animated(self.pos() + QPoint(290, -100))
@@ -1689,7 +1739,7 @@ class FlexieUI(QWidget):
         p.drawText(QRect(4, 4, 24, 24), Qt.AlignmentFlag.AlignCenter, "F")
         p.end()
         self.tray.setIcon(QIcon(px))
-        
+
         menu = QMenu()
         show_action = menu.addAction("Show Controls")
         show_action.triggered.connect(lambda: self.panel.show_animated(self.pos() + QPoint(290, -100)))
@@ -1701,6 +1751,12 @@ class FlexieUI(QWidget):
         self.tray.show()
 
     def _send_udp(self, msg: str):
+        # Authenticate on the orchestrator control plane (utils/udp_auth.py).
+        try:
+            from utils.udp_auth import pack as _udp_pack
+            msg = _udp_pack(msg)
+        except Exception as _e:
+            logging.debug("[interface/ui.py:_send_udp] Swallowed exception: %s: %s", type(_e).__name__, _e)
         self.udp_sock.writeDatagram(msg.encode('utf-8'), QHostAddress.SpecialAddress.LocalHost, 9887)
 
     def _wake(self):
@@ -1758,7 +1814,7 @@ class FlexieUI(QWidget):
         self.panel.refresh_provider_badge()
         self.panel.status_label.setText("STATUS: KEYS UPDATED")
 
-    def _set_volume(self, val): 
+    def _set_volume(self, val):
         self._send_udp(f"SET_VOLUME:{val}")
         if val == 0: self.panel.btn_mute.setText("🔊 UNMUTE")
         else: self.panel.btn_mute.setText("🔇 MUTE")
@@ -1769,7 +1825,7 @@ class FlexieUI(QWidget):
         """Visual-only update (no UDP) — shared by local and remote mode changes."""
         mode_key = mode.lower().strip()
         self.orb.mode = mode_key
-        cfg = FlexieConfig.MODES.get(mode_key, FlexieConfig.MODES["jarvis"])
+        cfg = FlexieConfig.MODES.get(mode_key, FlexieConfig.MODES["professional"])
         accent = cfg["accent"]
         secondary = cfg.get("secondary", accent)
         bg_tint = cfg.get("bg_tint", (10, 15, 25, 235))
@@ -1787,12 +1843,14 @@ class FlexieUI(QWidget):
             """)
             self.panel.container.setObjectName("MainContainer")
             self.panel.container.style().unpolish(self.panel.container); self.panel.container.style().polish(self.panel.container)
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:1829] Swallowed exception: %s: %s", type(_e).__name__, _e)
         try:
             self.panel.status_indicator.setStyleSheet(f"background-color: {accent}; border-radius: 6px; border: 1px solid {secondary};")
             self.panel.provider_badge.setStyleSheet(f"background: rgba(255,255,255,6); border: 1px solid {accent}; border-radius: 10px;")
             self.panel.wake_btn.setStyleSheet(f"QPushButton#WakeButton {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {accent}, stop:1 {secondary}); border: none; padding: 12px; font-size: 13px; letter-spacing: 1px; border-radius: 10px; color: #FFFFFF; font-weight: 600; }}")
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:1834] Swallowed exception: %s: %s", type(_e).__name__, _e)
         try:
             if self.orb.state in ("IDLE","SLEEP","MINIMIZED"):
                 self.orb._accent_from = self.orb._accent_to
@@ -1800,20 +1858,22 @@ class FlexieUI(QWidget):
                 self.orb._accent_to = QColor(accent)
                 self.orb._secondary_to = QColor(secondary)
                 self.orb.color_anim.stop(); self.orb._color_blend = 0.0; self.orb.color_anim.start()
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:1842] Swallowed exception: %s: %s", type(_e).__name__, _e)
         self.orb.set_state(self.orb.state)
         try: self.panel.refresh_provider_badge()
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:1845] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def _change_mode(self, mode, send_udp=True):
         self._apply_mode_visuals(mode)
-        self.panel.status_label.setText(f"MODE → {mode.upper()}  •  {FlexieConfig.MODES.get(mode.lower().strip(), FlexieConfig.MODES['jarvis'])['accent']}")
+        self.panel.status_label.setText(f"MODE → {mode.upper()}  •  {FlexieConfig.MODES.get(mode.lower().strip(), FlexieConfig.MODES['professional'])['accent']}")
         if send_udp:
             self._send_udp(f"mode:{mode}")
 
     def _process_udp(self):
         while self.udp_sock.hasPendingDatagrams():
-            data, _, _ = self.udp_sock.readDatagram(1024)
+            data, _, _ = self.udp_sock.readDatagram(65535)
             if not data: continue
             msg = data.decode('utf-8')
             if ":" in msg:
@@ -1827,12 +1887,15 @@ class FlexieUI(QWidget):
                     self.panel.status_indicator.setStyleSheet(f"background-color: {accent}; border-radius: 6px;")
                 elif tag == "MODE":
                     try: self.panel.mode_combo.blockSignals(True)
-                    except: pass
+                    except Exception as _e:
+                        logging.debug("[interface/ui.py:1869] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.panel.mode_combo.setCurrentText(val.capitalize())
                     try: self.panel.mode_combo.blockSignals(False)
-                    except: pass
+                    except Exception as _e:
+                        logging.debug("[interface/ui.py:1872] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     try: self._apply_mode_visuals(val)
-                    except: pass
+                    except Exception as _e:
+                        logging.debug("[interface/ui.py:1874] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.panel.status_label.setText(f"MODE → {val.upper()}")
                 elif tag == "QUIT":
                     QApplication.quit()
@@ -1842,17 +1905,17 @@ class FlexieUI(QWidget):
                     self.panel.result_area.show()
                     # Pulse the orb to indicate info received
                     self.orb.set_state("SPEAKING")
-                    
+
                     # Force UI REFLOW (CRITICAL FOR MINIMAL MODE)
-                    QTimer.singleShot(50, lambda: self._reflow_ui()) 
-                    
+                    QTimer.singleShot(50, lambda: self._reflow_ui())
+
                     self._set_activity()
                     QTimer.singleShot(2000, lambda: self.orb.set_state("IDLE"))
 
     def _reflow_ui(self):
         """Forces the glass container to recalculate its dimensions based on content."""
         if not self.panel: return
-        
+
         # 1. Adjust the result area to its document content (adaptive width AND height)
         if self.panel.result_area.isVisible():
             doc = self.panel.result_area.document()
@@ -1860,7 +1923,7 @@ class FlexieUI(QWidget):
             doc.setTextWidth(550) # Max internal text width
             ideal_w = int(doc.idealWidth()) + 50
             h = int(doc.size().height()) + 30
-            
+
             self.panel.result_area.setFixedHeight(min(500, max(50, h)))
             self.panel.result_area.setMinimumWidth(min(600, max(300, ideal_w)))
         else:
@@ -1869,7 +1932,7 @@ class FlexieUI(QWidget):
         # 2. Reflow standard widgets
         self.panel.container.adjustSize()
         hint = self.panel.container.sizeHint()
-        
+
         # 3. Smooth resize the panel horizontally and vertically
         self.panel.setFixedHeight(hint.height() + 25)
         self.panel.setFixedWidth(max(340, hint.width() + 20))
@@ -1880,22 +1943,23 @@ class FlexieUI(QWidget):
                 cpu = psutil.cpu_percent()
                 ram = psutil.virtual_memory().percent
                 batt = psutil.sensors_battery().percent if psutil.sensors_battery() else 100
-                
+
                 self.panel.cpu_value.setText(f"{cpu}%")
                 self.panel.cpu_progress.setValue(int(cpu))
                 self.panel.cpu_progress.setStyleSheet(f"QProgressBar::chunk {{ background: {'#FF3B30' if cpu > 80 else '#FFD700' if cpu > 60 else '#00D2FF'}; }}")
-                
+
                 self.panel.ram_value.setText(f"{ram}%")
                 self.panel.ram_progress.setValue(int(ram))
                 self.panel.ram_progress.setStyleSheet(f"QProgressBar::chunk {{ background: {'#FF3B30' if ram > 80 else '#FFD700' if ram > 60 else '#00D2FF'}; }}")
-                
+
                 self.panel.batt_value.setText(f"{batt}%")
                 self.panel.batt_progress.setValue(int(batt))
                 self.panel.batt_progress.setStyleSheet(f"QProgressBar::chunk {{ background: {'#FF3B30' if batt < 20 else '#FFD700' if batt < 50 else '#00FF41'}; }}")
                 # Refresh provider badge every ~6s
                 if int(time.time()) % 3 == 0:
                     self.panel.refresh_provider_badge()
-            except: pass
+            except Exception as _e:
+                logging.debug("[interface/ui.py:1937] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def _scan_clipboard(self):
         """Action for the CLIP button."""
@@ -1928,7 +1992,7 @@ class FlexieUI(QWidget):
             self.drag_pos = event.globalPosition().toPoint() - self.pos()
         elif event.button() == Qt.MouseButton.RightButton:
             if self.panel.isVisible(): self.panel.hide_animated()
-            else: 
+            else:
                 self.panel.set_minimal_mode(False) # FULL MODE ON ORB CLICK
                 self.panel.show_animated(self.pos() + QPoint(290, -100))
                 self._reflow_ui()

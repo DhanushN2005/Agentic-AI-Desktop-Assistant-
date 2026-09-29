@@ -18,14 +18,14 @@ Provides commands:
   "Forget everything about X."
   "Why do you remember this?"
 """
-import time
 import json
 import logging
 import os
 import sqlite3
-from enum import Enum, auto
-from typing import Any, Dict, List, Optional
+import time
 from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import Any
 
 
 class MemoryCategory(Enum):
@@ -47,9 +47,9 @@ class MemoryEntry:
     source: str = "user"  # "user", "system", "inferred"
     confidence: float = 1.0  # 0.0 to 1.0
     importance: float = 0.5  # 0.0 to 1.0
-    expiration: Optional[float] = None  # Unix timestamp, None = never
-    tags: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    expiration: float | None = None  # Unix timestamp, None = never
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_expired(self) -> bool:
@@ -83,7 +83,7 @@ class MemoryManager:
 
     def __init__(self):
         self.logger = logging.getLogger("Flexie.MemoryManager")
-        self._entries: Dict[str, MemoryEntry] = {}
+        self._entries: dict[str, MemoryEntry] = {}
         self._ensure_db()
         self._load()
 
@@ -119,7 +119,8 @@ class MemoryManager:
                 key, value, cat_name, ts, src, conf, imp, exp, tags_json, meta_json = row
                 try:
                     category = MemoryCategory[cat_name]
-                except KeyError:
+                except KeyError as _e:
+                    logging.debug("[core/memory_manager.py:122] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     category = MemoryCategory.FACTS
                 entry = MemoryEntry(
                     key=key,
@@ -174,8 +175,8 @@ class MemoryManager:
         source: str = "user",
         confidence: float = 1.0,
         importance: float = 0.5,
-        expiration: Optional[float] = None,
-        tags: Optional[List[str]] = None,
+        expiration: float | None = None,
+        tags: list[str] | None = None,
     ) -> bool:
         """Store a memory entry."""
         entry = MemoryEntry(
@@ -193,14 +194,14 @@ class MemoryManager:
         self.logger.info(f"[MEMORY] Stored: {entry.key} ({category.name})")
         return True
 
-    def recall(self, key: str) -> Optional[MemoryEntry]:
+    def recall(self, key: str) -> MemoryEntry | None:
         """Recall a specific memory by key."""
         entry = self._entries.get(key.lower().strip())
         if entry and not entry.is_expired:
             return entry
         return None
 
-    def search(self, query: str, category: Optional[MemoryCategory] = None, limit: int = 10) -> List[MemoryEntry]:
+    def search(self, query: str, category: MemoryCategory | None = None, limit: int = 10) -> list[MemoryEntry]:
         """Search memories by query string."""
         query_lower = query.lower()
         results = []
@@ -236,24 +237,24 @@ class MemoryManager:
         self.logger.info(f"[MEMORY] Forgot {len(keys)} entries in {category.name}")
         return len(keys)
 
-    def get_by_category(self, category: MemoryCategory) -> List[MemoryEntry]:
+    def get_by_category(self, category: MemoryCategory) -> list[MemoryEntry]:
         """Get all memories in a category."""
         return [e for e in self._entries.values() if e.category == category and not e.is_expired]
 
-    def get_recent(self, limit: int = 10) -> List[MemoryEntry]:
+    def get_recent(self, limit: int = 10) -> list[MemoryEntry]:
         """Get most recent memories."""
         entries = [e for e in self._entries.values() if not e.is_expired]
         entries.sort(key=lambda e: e.timestamp, reverse=True)
         return entries[:limit]
 
-    def get_important(self, min_importance: float = 0.7, limit: int = 10) -> List[MemoryEntry]:
+    def get_important(self, min_importance: float = 0.7, limit: int = 10) -> list[MemoryEntry]:
         """Get high-importance memories."""
         entries = [e for e in self._entries.values()
                    if not e.is_expired and e.importance >= min_importance]
         entries.sort(key=lambda e: e.importance, reverse=True)
         return entries[:limit]
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get memory statistics."""
         active = [e for e in self._entries.values() if not e.is_expired]
         expired = [e for e in self._entries.values() if e.is_expired]

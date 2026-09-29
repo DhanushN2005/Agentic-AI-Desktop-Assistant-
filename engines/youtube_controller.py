@@ -1,8 +1,10 @@
-import time
-import threading
 import logging
+import threading
+import time
 import urllib.parse
+
 from engines.browser import BrowserEngine
+
 
 class YouTubeController(BrowserEngine):
     """Advanced YouTube Automation inheriting from BrowserEngine."""
@@ -14,25 +16,25 @@ class YouTubeController(BrowserEngine):
 
     def is_session_active(self) -> bool:
         """Checks if there is an active YouTube session running. Thread-safe."""
-        import threading
         if hasattr(self, "_thread_id") and self._thread_id != threading.get_ident():
             return False # Thread mismatch, session not 'active' for this caller
-            
+
         try:
             return self.page is not None and not self.page.is_closed() and "youtube.com" in self.page.url
-        except:
+        except Exception as _e:
+            logging.debug("[engines/youtube_controller.py:24] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return False
 
     def play_video(self, query: str) -> str:
         if not self._ensure_session(): return "Could not start browser."
         self.last_query = query
-        
+
         try:
             self.navigate(f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}")
-            
+
             # Selector for the first video title
             video_selector = "ytd-video-renderer a#video-title"
-            
+
             # Exponential Backoff Retry (Network Resilience)
             for attempt in range(3):
                 try:
@@ -43,7 +45,7 @@ class YouTubeController(BrowserEngine):
                         raise e
                     logging.warning(f"YouTube Timeout. Retrying ({attempt + 1}/3)...")
                     time.sleep(2)
-            
+
             video = self.page.query_selector(video_selector)
             if video:
                 full_title = video.inner_text().strip()
@@ -54,13 +56,14 @@ class YouTubeController(BrowserEngine):
                     short_title = short_title[:40].rsplit(" ", 1)[0]
                 self.last_video_title = short_title
                 video.click()
-                
+
                 return f"Now playing {short_title} on YouTube."
             return "Found the results but couldn't click the video."
         except Exception as e:
+            logging.debug("[engines/youtube_controller.py:62] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"YouTube play error: {e}"
 
-    # _ad_monitor_loop removed. 
+    # _ad_monitor_loop removed.
     # STABILITY NOTE: Handled by Orchestrator's Action Worker to prevent Playwright threading crashes.
 
     def skip_ad(self) -> str:
@@ -103,12 +106,13 @@ class YouTubeController(BrowserEngine):
                 
                 return "Monitoring...";
             }''')
-            
+
             if status in ["Button Clicked", "Ad Accelerated"]:
                 self.logger.info(f"YouTube Ad Action: {status}")
                 return f"YouTube {status}."
             return "No skippable ad detected."
         except Exception as e:
+            logging.debug("[engines/youtube_controller.py:113] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Ad action error: {e}"
 
     def control_player(self, action: str) -> str:
@@ -116,7 +120,7 @@ class YouTubeController(BrowserEngine):
         if not self._ensure_session(): return "No active YouTube session."
         try:
             self.page.focus("body")
-            
+
             if action in ["pause", "resume", "play", "stop"]:
                 self.page.keyboard.press("k"); return f"Video {action}ed."
             elif action == "next":
@@ -145,6 +149,7 @@ class YouTubeController(BrowserEngine):
                 self.page.keyboard.press("ArrowDown"); return "Decreased player volume."
             return "Unknown control."
         except Exception as e:
+            logging.debug("[engines/youtube_controller.py:149] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Control error: {e}"
 
     def get_video_info(self) -> str:
@@ -152,7 +157,8 @@ class YouTubeController(BrowserEngine):
         try:
             title = self.page.inner_text("h1.ytd-watch-metadata").strip()
             return f"You are watching {title}."
-        except:
+        except Exception as _e:
+            logging.debug("[engines/youtube_controller.py:156] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Could not retrieve video information."
 
     def play_again(self) -> str:

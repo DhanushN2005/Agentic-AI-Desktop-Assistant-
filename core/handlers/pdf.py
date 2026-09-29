@@ -1,5 +1,5 @@
-import re
 import os
+import re
 
 
 def handle_pdf(orch, c):

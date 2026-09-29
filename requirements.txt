@@ -4,14 +4,14 @@
 # Voice & Speech
 pyttsx3>=2.90
 SpeechRecognition>=3.10.0
+PyAudio>=0.2.13  # microphone backend required by speech_recognition.Microphone()
 vosk>=0.3.45
 
 # Browser Automation
 playwright>=1.52.0
 
 # AI / LLM Providers — all configurable via UI: 🔑 AI KEYS
-google-genai>=0.8.0
-google-generativeai>=0.3.0  # deprecated, kept for fallback
+google-genai>=1.0.0
 groq>=0.4.0
 openai>=1.30.0
 anthropic>=0.40.0
@@ -30,8 +30,7 @@ comtypes>=1.2.0
 # Web & HTTP
 requests>=2.32.0
 websockets>=12.0
-duckduckgo-search>=4.0
-ddgs>=8.0.0  # renamed from duckduckgo-search
+ddgs>=8.0.0  # successor of duckduckgo-search (renamed upstream)
 
 # Environment & Config
 python-dotenv>=1.0.0
@@ -46,15 +45,20 @@ pymupdf>=1.23.0
 # UI
 PyQt6>=6.5.0
 pygame>=2.5.0
+edge-tts>=7.0.0  # neural TTS voices (natural, Jarvis-style)
 
 # Async Support
 nest-asyncio>=1.5.8
 
-# Optional: Vector Store (for semantic memory)
-# chromadb>=0.4.0
+# Optional: Vector Store (for semantic memory) — enables ChromaDB in core/vector_store.py
+chromadb>=0.4.0
+onnxruntime>=1.17.0
 
-# Optional: Docker Sandbox
-# docker>=7.0.0
+# Agentic Framework
+langgraph>=0.0.299
 
-# Optional: Enhanced VAD
-# webrtcvad>=2.0.10
+# Optional: Docker Sandbox — enables isolated code exec in sandbox/executor.py
+docker>=7.0.0
+
+# Optional: Enhanced VAD — boosts speech detection in interface/voice.py
+webrtcvad>=2.0.10

@@ -1,7 +1,9 @@
 import logging
 import time
-from typing import Dict, Any, List
-from core.event_bus.bus import EventBus, Event
+from typing import Any
+
+from core.event_bus.bus import Event, EventBus
+
 
 class BaseAgent:
     """Standard base interface for autonomous agents executing via the async Event Bus."""
@@ -22,17 +24,17 @@ class BaseAgent:
         task_id = event.payload.get("task_id")
         prompt = event.payload.get("prompt")
         self.logger.info(f"Agent '{self.name}' received task {task_id}: '{prompt}'")
-        
+
         start_time = time.perf_counter()
         self.processed_events_count += 1
-        
+
         self.bus.publish(Event(f"agent.{self.name}.executing", {"task_id": task_id}))
-        
+
         try:
             result = self.execute_task(event.payload)
             latency = time.perf_counter() - start_time
             self.total_execution_time += latency
-            
+
             # Publish completion event
             self.bus.publish(Event(f"agent.{self.name}.completed", {
                 "task_id": task_id,
@@ -55,7 +57,7 @@ class BaseAgent:
         """Handles general system-wide broadcasts."""
         pass
 
-    def execute_task(self, payload: Dict[str, Any]) -> Any:
+    def execute_task(self, payload: dict[str, Any]) -> Any:
         """To be overridden by specific subclass agents."""
         raise NotImplementedError("Subclasses must implement execute_task.")
 

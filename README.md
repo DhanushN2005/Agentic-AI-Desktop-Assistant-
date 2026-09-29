@@ -5,7 +5,9 @@
 
 A **zero-config, Windows-native autonomous AI agent** with 30+ free plugins, self-awareness, persistent memory, hybrid agentic routing, browser automation, and automation scheduler — all running locally on Windows.
 
-**LLM Chain:** Groq `llama-3.1-8b-instant` → Gemini `1.5-flash` → Ollama → DuckDuckGo fallback. Streaming, VAD, desktop control, and self-correction included.
+**LLM Chain:** Groq → OpenAI → DeepSeek → Mistral → Gemini → Anthropic → Ollama (offline) → DuckDuckGo fallback. Streaming, VAD, desktop control, and self-correction included.
+
+**Voice:** Edge neural TTS (Jarvis-style, `en-GB-RyanNeural` default) with offline SAPI fallback, natural sentence-batched speech, and markdown/emoji-free spoken prose.
 
 ---
 
@@ -41,7 +43,7 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 
 **Not a cloud SaaS** — data stays on your machine. External calls only to free LLM APIs (Groq, Gemini) and free public APIs (weather, news, Wikipedia).
 
-**359 tests pass.**
+**385 tests pass** — CI runs pytest (blocking) + ruff on every push via `.github/workflows/ci.yml`.
 
 ---
 
@@ -89,7 +91,7 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 - `core/dag_planner.py` - ThreadPoolExecutor 4, blocking_execute
 - `core/workflow_executor.py` - sequential + verify_step + GoalEvaluator retry
 - `core/memory_manager.py` - 6 categories, SQLite, search
-- `core/brain.py` - Groq→Gemini→Ollama→DDG, ask_stream
+- `core/brain.py` - Groq→OpenAI→DeepSeek→Mistral→Gemini→Anthropic→Ollama→DDG, ask_stream
 - `interface/voice.py` - RMS VAD + webrtcvad, energy 150, threshold 80
 
 ---
@@ -98,14 +100,14 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 
 | Area | Features |
 |---|---|
-| **Voice** | VAD RMS+webrtcvad, barge-in, Indian English en-IN, PowerShell TTS, streaming, 8s stuck watchdog |
+| **Voice** | VAD RMS+webrtcvad, barge-in, Indian English en-IN, Edge neural TTS + SAPI fallback, sentence-batched speech, streaming, 8s stuck watchdog |
 | **Browser** | Playwright persistent context, navigate/click/fill/scroll, multi-tab research parallel (DAG), gmail_read, ad skip |
 | **Files** | create/rename/delete, organize desktop, Downloads/Desktop/Documents resolver `utils/path_resolver.py` |
 | **Code** | Local search `engines/code_search.py`, generation `handlers/code_gen.py` (python/java/js etc) → `Downloads/binary_search.py` |
 | **Research** | Web search DDG + LLM 300+ words summary `handlers/research.py` → save to file |
 | **Automation** | `engines/automation.py` daily/hourly/interval, built-in daily briefing 9am + auto organize 6pm |
 | **Memory** | VectorStore 5 + MemoryManager 5, auto-extract `my name is`/`i like` → PREFERENCES/FACTS |
-| **Safety** | SafetyGuard blacklist, DangerGate, PermissionSystem 5 levels, RotatingFileHandler 5MB×3 |
+| **Safety** | SafetyGuard (sanitize-don't-reject + destructive-pattern blocklist), DangerGate, PermissionSystem 5 levels, terminal binary allowlist, authenticated web bridge, RotatingFileHandler 5MB×3 |
 
 ---
 
@@ -161,8 +163,8 @@ tell me binary search code and save to downloads  # single code_gen, not split
 
 **All 90 intents `core/router.py:201` (unique):**
 
-|---:|---|---|---|---|
-|---|--------|---------|---------------|----------|
+| # | Intent | Trigger Example | Handler | Category |
+|---:|--------|---------|---------------|----------|
 | 1 | `undo` | `undo`, `revert` | `handlers/system.py:10` | System |
 | 2 | `voice_macro` | `start coding mode` | `handlers/system.py:178` | System |
 | 3 | `daily_briefing` | `good morning flexie` | `handlers/dev.py:handle_briefing` | System |
@@ -264,8 +266,8 @@ tell me binary search code and save to downloads  # single code_gen, not split
 
 | Engine | Tech | Free? |
 |---|---|-------|
-| Voice | SpeechRecognition, Vosk, PowerShell System.Speech, webrtcvad | Yes |
-| LLM | Groq llama-3.1-8b-instant, Gemini 1.5-flash, Ollama tinyllama, DDGS | Yes |
+| Voice | SpeechRecognition, Vosk, edge-tts (neural) + pygame, SAPI fallback, webrtcvad | Yes |
+| LLM | Groq (openai/gpt-oss-20b), OpenAI gpt-4o-mini, DeepSeek, Mistral, Gemini 1.5-flash, Claude, Ollama, DDGS fallback | Yes |
 | Browser | Playwright 1.52 chromium persistent `browser_session/` | Yes |
 | Files | FileManager, PathResolver | Yes |
 | Code | CodeSearchEngine, CodeGen, Research (DDG + LLM 618 words) | Yes |
@@ -333,21 +335,23 @@ Scheduler `engines/automation.py:54` checks every 60s, triggers `orch.cmd_queue.
 
 ## Voice & Streaming
 
-- **VAD** `interface/voice.py:12` `energy_threshold 150` (was 300), `vad_threshold max(noise*1.5,80)` (was 1.8/120), `webrtcvad.Vad(2)` boost `voice.py:310`, `is_speaking` 8s timeout `voice.py:295`.
-- **Mic** Persistent `sr.Microphone` `voice.py:47` `adjust_for_ambient_noise 1.5s`, `interrupt_monitor` disabled to avoid conflict `voice.py:137`.
-- **TTS** PowerShell `System.Speech` `voice.py:58` Rate/Volume, `is_speaking` flag mutes VAD, queue `_speech_queue` `orchestrator.py:101`.
-- **Streaming** `brain.py:157` `ask_stream(stream=True)` yields chunks, `orchestrator.py:308` `speak_stream` splits `(?<=[.!?])` sends `STREAM` UDP `9886` → `web_ui_bridge.py:39` WS `8765`.
+- **VAD** `interface/voice.py` `energy_threshold 150`, `vad_threshold max(noise*1.5,80)`, `webrtcvad.Vad(2)` boost, `is_speaking` 8s stuck watchdog.
+- **Mic** Persistent `sr.Microphone` context with `adjust_for_ambient_noise`, COM initialized on Windows.
+- **TTS (neural, default)** Edge neural voices via `edge-tts` → temp mp3 → pygame playback. Voice: `FLEXIE_VOICE` (default `en-GB-RyanNeural`, Jarvis-style British male). **Offline fallback**: Windows SAPI via PowerShell `System.Speech` (`_speak_sapi`). Mode switch: `FLEXIE_TTS_MODE=neural|sapi`.
+- **Natural pacing** `prepare_speech_text()` strips markdown/emojis/symbols from spoken text (`&`→"and", `%`→"percent", bullets→pauses); `speak()` batches ~2 sentences per clip to avoid choppy per-sentence playback.
+- **TTS guard** long replies (>300 chars) truncate at the last **sentence boundary** with "I've posted the full text to your screen." — never mid-word.
+- **Streaming** `brain.ask_stream(stream=True)` yields chunks, `orchestrator.speak_stream` splits `(?<=[.!?])` sends `STREAM` UDP `9886` → `web_ui_bridge` WS `8765`.
 
 ---
 
 ## Safety & Permissions
 
-- **SafetyGuard** `core/safety.py:6` blacklist `rm -rf`, `del /s`, `sudo`, `remove-item` → `validate()`.
-- **DangerGate** `core/danger_gate.py:14` confirms `delete`, `format`.
-- **PermissionSystem** `core/permission_system.py:26` 5 levels `READ_ONLY→DANGEROUS` used by `core/desktop_control.py:34` `DesktopControl` (pyautogui FAILSAFE).
-- **Shell** `engines/developer.py:23` `git` uses list form `["git","status"]` not `shell`, `files.py:69` prefers `os.startfile`.
-- **Log rotation** `core/orchestrator.py:254` `RotatingFileHandler 5MB×3`.
-- **Validation** `utils/config.py:5` `_validate_env()` warns if `GROQ_API_KEY` missing/invalid, `voice.py:46` mic permission.
+- **SafetyGuard** `core/safety.py` word-boundary destructive-pattern blocklist (`rm -rf`, `del /s`, `format c:`, `curl|sh`, PowerShell `-enc`) + **metachar sanitization**: `;`/`&&` in spoken queries are stripped instead of rejecting the whole command; raw pipes, backticks and `$(...)` substitution are always rejected. `check()` returns `(ok, sanitized_command)`.
+- **DangerGate** `core/danger_gate.py` requires spoken confirmation for `delete`, `format`, payments, sends; negation-aware ("not sure" ≠ "yes").
+- **PermissionSystem** `core/permission_system.py` 5 levels `READ_ONLY→DANGEROUS`; `terminal.run` enforces a **binary allowlist** (dev tools only — git/python/pytest/node/npm…), fails closed, hard 120s cap; `python.exec` requires user confirmation and runs through the Docker sandbox when available.
+- **Web bridge auth** `interface/web_ui_bridge.py` generates a per-run random token, serves the UI over localhost-only HTTP (no CORS) with the token embedded, and requires an `AUTH:<token>` WebSocket handshake before relaying anything to the orchestrator.
+- **Log rotation** `RotatingFileHandler 5MB×3`; all exception handlers log (`logging.debug("[file:line] Swallowed exception…")`) instead of silent `except: pass`.
+- **Validation** `utils/config.py` `_validate_env()` warns if `GROQ_API_KEY` missing/invalid; CI lint gate keeps safety modules warning-free.
 
 ---
 
@@ -386,8 +390,10 @@ python interface/web_ui_bridge.py  # ws://localhost:8765
 
 | Var | Default | Purpose |
 |---|---|---------|
-| `GROQ_API_KEY` | `""` | Groq `llama-3.1-8b-instant` `brain.py:94` |
-| `GEMINI_API_KEY` | `""` | Gemini `1.5-flash` `brain.py:106` |
+| `GROQ_API_KEY` | `""` | Groq `openai/gpt-oss-20b` (primary, `brain.py`) |
+| `GEMINI_API_KEY` | `""` | Gemini `1.5-flash` `brain.py` (vision + chat fallback) |
+| `FLEXIE_VOICE` | `en-GB-RyanNeural` | Edge neural voice for TTS (e.g. `en-US-GuyNeural`, `en-IN-PrabhatNeural`) |
+| `FLEXIE_TTS_MODE` | `neural` | `neural` (Edge TTS) or `sapi` (offline Windows SAPI fallback) |
 | `FLEXIE_EMAIL`/`FLEXIE_PASS` | `""` | EmailEngine IMAP/SMTP `engines/email_engine.py:8` |
 | `OLLAMA_URL` | `http://localhost:11434` | Local fallback `brain.py:150` |
 | `LOG_FILE` | `flexie_activity.log` | Rotating 5MB×3 `orchestrator.py:254` |
@@ -402,7 +408,7 @@ flexie_v2/
 │   ├── router.py (TYPO_MAP, NL_OVERRIDES 40+, route)
 │   ├── hybrid_router.py (ALWAYS_SIMPLE, COMPLEX_PATTERNS)
 │   ├── orchestrator.py (handle_command, run, speak_stream)
-│   ├── brain.py (Groq→Gemini→Ollama→DDG, ask_stream)
+│   ├── brain.py (Groq→OpenAI→DeepSeek→Mistral→Gemini→Anthropic→Ollama→DDG, ask_stream)
 │   ├── memory_manager.py (6 categories)
 │   ├── workflow_executor.py (verify_step, self-correction)
 │   ├── dag_planner.py (ThreadPool 4)
@@ -424,7 +430,7 @@ flexie_v2/
 │   ├── config.py (_validate_env)
 │   ├── path_resolver.py (Downloads/Desktop)
 │   └── installer.py (no --upgrade on every start)
-├── tests/ (359 tests)
+├── tests/ (385 tests)
 ├── requirements.txt (playwright>=1.52, google-genai>=0.8.0, ddgs>=8)
 └── main.py (install_missing + orchestrator.run)
 ```
@@ -435,7 +441,7 @@ flexie_v2/
 
 ```bash
 python -m pytest tests/ -v
-# 359 passed in ~32s
+# 385 passed in ~32s
 
 # Feature routing check (75 commands)
 python -c "from core.router import IntentRouter; r=IntentRouter(); print(r.route('tell me binary search code and save to downloads'))"
@@ -474,4 +480,4 @@ python -c "from core.workflow_parser import WorkflowParser; print(WorkflowParser
 
 ---
 
-*Flexie 2.0 — Built for Dhanush. 359 tests. Voice → Router → Hybrid → Planner → DAG → Verify → Memory → Stream.*
+*Flexie 2.0 — Built for Dhanush. 385 tests. Voice → Router → Hybrid → Planner → DAG → Verify → Memory → Stream.*

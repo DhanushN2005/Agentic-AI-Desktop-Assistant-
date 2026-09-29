@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
+import { useGestureControl } from './lib/useGestureControl'
+import { GestureMapper, type GestureCommand } from './lib/gestureMapper'
+import { type GestureType } from './lib/handTracker'
 
 type Provider = {
   id: string
@@ -23,6 +26,18 @@ const PROVIDERS: Provider[] = [
 
 const ICONS: Record<string,string> = { groq:'⚡', openai:'🤖', deepseek:'🧠', gemini:'✦', anthropic:'◆', mistral:'🌬️', ollama:'💻' }
 
+const GESTURE_LABELS: Record<GestureType, string> = {
+  pinch_left: '👈 Swipe Left',
+  pinch_right: '👉 Swipe Right',
+  pinch_up: '👆 Swipe Up',
+  pinch_down: '👇 Swipe Down',
+  open_palm: '🖐️ Open Palm',
+  fist: '✊ Fist',
+  wave: '👋 Wave',
+  point: '☝️ Point',
+  none: '—',
+}
+
 export default function App() {
   const [active, setActive] = useState('auto')
   const [keys, setKeys] = useState<Record<string,string>>({})
@@ -31,7 +46,22 @@ export default function App() {
   const [filter, setFilter] = useState('')
   const [status, setStatus] = useState('')
   const [wsStatus, setWsStatus] = useState('◯ connecting…')
+  const [showGesturePanel, setShowGesturePanel] = useState(false)
+  const [gestureMappings, setGestureMappings] = useState<GestureCommand[]>([] as GestureCommand[])
+  const [editGesture, setEditGesture] = useState<GestureType | null>(null)
+  const [editCommand, setEditCommand] = useState('')
   const wsRef = useRef<WebSocket|null>(null)
+
+  const {
+    isActive: gestureActive,
+    handCount,
+    lastGesture,
+    status: gestureStatus,
+    error: gestureError,
+    toggle: toggleGesture,
+    updateGestureMapping,
+    resetMappings,
+  } = useGestureControl({ wsRef, cooldownMs: 1500 })
 
   useEffect(() => {
     const saved = localStorage.getItem('flexie_keys')
@@ -40,7 +70,6 @@ export default function App() {
     if (savedModels) try { setModels(JSON.parse(savedModels)) } catch {}
     const savedActive = localStorage.getItem('flexie_active')
     if (savedActive) setActive(savedActive)
-    // WebSocket to bridge
     try {
       const ws = new WebSocket('ws://localhost:8765')
       ws.onopen = () => setWsStatus('● live')
@@ -50,6 +79,11 @@ export default function App() {
       wsRef.current = ws
     } catch { setWsStatus('○ offline') }
     return () => wsRef.current?.close()
+  }, [])
+
+  useEffect(() => {
+    const mapper = new GestureMapper()
+    setGestureMappings(mapper.getMappings())
   }, [])
 
   const send = (msg: string) => {
@@ -69,7 +103,6 @@ export default function App() {
     localStorage.setItem('flexie_keys', JSON.stringify(keys))
     localStorage.setItem('flexie_models', JSON.stringify(models))
     localStorage.setItem('flexie_active', active)
-    // Send via WS → UDP → orchestrator
     Object.entries(updates).forEach(([env, val]) => {
       const prov = PROVIDERS.find(p => p.env===env || p.modelEnv===env)
       if (!prov) return
@@ -82,6 +115,25 @@ export default function App() {
     setTimeout(()=> setStatus('✅ Brain reloaded'), 1500)
   }
 
+  const saveGestureMapping = () => {
+    if (editGesture && editCommand) {
+      updateGestureMapping(editGesture, editCommand)
+      setGestureMappings(prev =>
+        prev.map(m => m.gesture === editGesture ? { ...m, command: editCommand } : m)
+      )
+      setEditGesture(null)
+      setEditCommand('')
+      setStatus(`Updated ${GESTURE_LABELS[editGesture]} → ${editCommand}`)
+    }
+  }
+
+  const resetGestureMappings = () => {
+    resetMappings()
+    const mapper = new GestureMapper()
+    setGestureMappings(mapper.getMappings())
+    setStatus('Gesture mappings reset to defaults')
+  }
+
   const filtered = PROVIDERS.filter(p => !filter || p.id.includes(filter.toLowerCase()) || p.label.toLowerCase().includes(filter.toLowerCase()))
 
   return (
@@ -91,6 +143,18 @@ export default function App() {
         <div style={{marginLeft:'auto', display:'flex', gap:8, alignItems:'center', fontSize:12, opacity:0.8}}>
           <span style={{padding:'4px 10px', borderRadius:20, background:'rgba(0,210,255,0.12)', border:'1px solid rgba(0,210,255,0.25)'}}>{wsStatus}</span>
           <span style={{padding:'4px 10px', borderRadius:20, background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)'}}>⚡ {active.toUpperCase()}</span>
+          <button
+            onClick={() => setShowGesturePanel(!showGesturePanel)}
+            style={{
+              padding:'4px 10px', borderRadius:20, cursor:'pointer',
+              background: gestureActive ? 'rgba(0,255,136,0.15)' : 'rgba(255,255,255,0.06)',
+              border: `1px solid ${gestureActive ? 'rgba(0,255,136,0.4)' : 'rgba(255,255,255,0.1)'}`,
+              color: gestureActive ? '#00ff88' : '#fff',
+              transition: 'all 0.2s',
+            }}
+          >
+            {gestureActive ? '✋ Gestures ON' : '✋ Gestures'}
+          </button>
         </div>
       </header>
 
@@ -153,6 +217,115 @@ export default function App() {
         </div>
         {status && <div style={{marginTop:14, textAlign:'center', padding:'10px', borderRadius:10, background:'rgba(0,210,255,0.08)', border:'1px solid rgba(0,210,255,0.2)', fontSize:12, color:'#00D2FF'}}>{status}</div>}
       </main>
+
+      {/* Gesture Control Panel */}
+      {showGesturePanel && (
+        <div style={{
+          position: 'fixed', bottom: 80, right: 20, width: 320,
+          background: 'rgba(10,15,25,0.95)', backdropFilter: 'blur(16px)',
+          border: '1px solid rgba(0,255,136,0.2)', borderRadius: 16,
+          padding: 16, zIndex: 100, boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        }}>
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:12}}>
+            <span style={{fontSize:16}}>✋</span>
+            <span style={{fontWeight:700, fontSize:14}}>Gesture Controls</span>
+            <button
+              onClick={() => setShowGesturePanel(false)}
+              style={{marginLeft:'auto', background:'none', border:'none', color:'#fff', cursor:'pointer', fontSize:16}}
+            >×</button>
+          </div>
+
+          {/* Status */}
+          <div style={{
+            padding: 10, borderRadius: 10, marginBottom: 12,
+            background: gestureActive ? 'rgba(0,255,136,0.08)' : 'rgba(255,255,255,0.04)',
+            border: `1px solid ${gestureActive ? 'rgba(0,255,136,0.25)' : 'rgba(255,255,255,0.08)'}`,
+          }}>
+            <div style={{fontSize:11, opacity:0.7, marginBottom:4}}>Status</div>
+            <div style={{fontSize:13, color: gestureActive ? '#00ff88' : '#fff'}}>{gestureStatus}</div>
+            {handCount > 0 && (
+              <div style={{fontSize:11, opacity:0.6, marginTop:4}}>Hands: {handCount}</div>
+            )}
+            {lastGesture && (
+              <div style={{fontSize:11, opacity:0.6, marginTop:2}}>
+                Last: {GESTURE_LABELS[lastGesture]}
+              </div>
+            )}
+            {gestureError && (
+              <div style={{fontSize:11, color:'#ff6b6b', marginTop:4}}>{gestureError}</div>
+            )}
+          </div>
+
+          {/* Toggle */}
+          <button
+            onClick={toggleGesture}
+            style={{
+              width: '100%', padding: '10px 16px', borderRadius: 10, border: 'none',
+              background: gestureActive
+                ? 'linear-gradient(90deg, #ff4444, #cc0000)'
+                : 'linear-gradient(90deg, #00ff88, #00cc66)',
+              color: gestureActive ? '#fff' : '#000',
+              fontWeight: 700, cursor: 'pointer', marginBottom: 12,
+              fontSize: 13,
+            }}
+          >
+            {gestureActive ? '⏹ Stop Tracking' : '▶ Start Tracking'}
+          </button>
+
+          {/* Gesture Mappings */}
+          <div style={{fontSize:12, fontWeight:600, opacity:0.8, marginBottom:8}}>Gesture → Command</div>
+          <div style={{maxHeight:200, overflowY:'auto'}}>
+            {gestureMappings.map((m) => (
+              <div
+                key={m.gesture}
+                style={{
+                  display:'flex', gap:6, alignItems:'center',
+                  padding:'6px 8px', borderRadius:6, marginBottom:4,
+                  background: lastGesture === m.gesture ? 'rgba(0,255,136,0.1)' : 'transparent',
+                  fontSize: 11,
+                }}
+              >
+                <span style={{width:90, opacity:0.8}}>{GESTURE_LABELS[m.gesture]}</span>
+                <span style={{opacity:0.4}}>:</span>
+                {editGesture === m.gesture ? (
+                  <>
+                    <input
+                      value={editCommand}
+                      onChange={e => setEditCommand(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && saveGestureMapping()}
+                      autoFocus
+                      style={{
+                        flex:1, background:'rgba(0,0,0,0.5)', color:'#fff',
+                        border:'1px solid rgba(0,255,136,0.3)', borderRadius:4,
+                        padding:'3px 6px', fontSize:11,
+                      }}
+                    />
+                    <button onClick={saveGestureMapping} style={{fontSize:10, cursor:'pointer', background:'rgba(0,255,136,0.2)', border:'none', color:'#00ff88', borderRadius:4, padding:'2px 6px'}}>✓</button>
+                    <button onClick={() => { setEditGesture(null); setEditCommand('') }} style={{fontSize:10, cursor:'pointer', background:'rgba(255,255,255,0.1)', border:'none', color:'#fff', borderRadius:4, padding:'2px 6px'}}>×</button>
+                  </>
+                ) : (
+                  <>
+                    <span style={{flex:1, opacity:0.9}}>{m.command}</span>
+                    <button
+                      onClick={() => { setEditGesture(m.gesture); setEditCommand(m.command) }}
+                      style={{fontSize:10, cursor:'pointer', background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)', color:'#fff', borderRadius:4, padding:'2px 6px'}}
+                    >Edit</button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={resetGestureMappings}
+            style={{
+              width:'100%', marginTop:8, padding:'6px', borderRadius:8,
+              border:'1px solid rgba(255,255,255,0.12)', background:'rgba(255,255,255,0.04)',
+              color:'rgba(255,255,255,0.6)', cursor:'pointer', fontSize:11,
+            }}
+          >↺ Reset to Defaults</button>
+        </div>
+      )}
     </div>
   )
 }

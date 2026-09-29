@@ -18,9 +18,9 @@ Complex/ambiguous goals get escalated to the GoalPlanner.
 import json
 import logging
 import uuid
-from enum import Enum, auto
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import Any
 
 from core.action_result import ActionResult
 
@@ -51,15 +51,15 @@ class TaskStep:
     task_id: str
     description: str
     tool: str  # tool name from ToolRegistry, or "" for conversational steps
-    arguments: Dict[str, Any] = field(default_factory=dict)
-    depends_on: List[str] = field(default_factory=list)  # task_ids this step depends on
+    arguments: dict[str, Any] = field(default_factory=dict)
+    depends_on: list[str] = field(default_factory=list)  # task_ids this step depends on
     status: StepStatus = StepStatus.PENDING
-    result: Optional[ActionResult] = None
-    error: Optional[str] = None
+    result: ActionResult | None = None
+    error: str | None = None
     retry_count: int = 0
     max_retries: int = 2
     verification: VerificationStrategy = VerificationStrategy.NONE
-    verification_args: Dict[str, Any] = field(default_factory=dict)
+    verification_args: dict[str, Any] = field(default_factory=dict)
     timeout: float = 15.0
     permission_level: str = "SAFE_ACTION"
     requires_confirmation: bool = False
@@ -110,20 +110,20 @@ class TaskGraph:
     """A complete decomposed goal plan."""
     goal_id: str
     original_goal: str
-    steps: List[TaskStep] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    steps: list[TaskStep] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     cancelled: bool = False
 
     def add_step(self, step: TaskStep):
         self.steps.append(step)
 
-    def get_step(self, task_id: str) -> Optional[TaskStep]:
+    def get_step(self, task_id: str) -> TaskStep | None:
         for s in self.steps:
             if s.task_id == task_id:
                 return s
         return None
 
-    def get_ready_steps(self) -> List[TaskStep]:
+    def get_ready_steps(self) -> list[TaskStep]:
         """Get steps whose dependencies are all completed."""
         completed = {
             s.task_id for s in self.steps
@@ -305,7 +305,8 @@ Rules:
                     verification_str = step_data.get("verification", "NONE")
                     try:
                         verification = VerificationStrategy[verification_str]
-                    except KeyError:
+                    except KeyError as _e:
+                        logging.debug("[core/goal_planner.py:308] Swallowed exception: %s: %s", type(_e).__name__, _e)
                         verification = VerificationStrategy.NONE
 
                     step = TaskStep(

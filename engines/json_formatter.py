@@ -1,4 +1,5 @@
 import json
+import logging
 
 
 class JSONFormatterEngine:
@@ -10,6 +11,7 @@ class JSONFormatterEngine:
             formatted = json.dumps(data, indent=indent, ensure_ascii=False)
             return formatted
         except json.JSONDecodeError as e:
+            logging.debug("[engines/json_formatter.py:12] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Invalid JSON: {e}"
 
     def minify_json(self, text: str) -> str:
@@ -17,6 +19,7 @@ class JSONFormatterEngine:
             data = json.loads(text)
             return json.dumps(data, separators=(',', ':'), ensure_ascii=False)
         except json.JSONDecodeError as e:
+            logging.debug("[engines/json_formatter.py:19] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Invalid JSON: {e}"
 
     def validate_json(self, text: str) -> str:
@@ -26,6 +29,7 @@ class JSONFormatterEngine:
             types = self._detect_types(data)
             return f"Valid JSON. Keys: {keys}. Types: {types}"
         except json.JSONDecodeError as e:
+            logging.debug("[engines/json_formatter.py:28] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Invalid JSON at position {e.pos}: {e.msg}"
 
     def json_info(self, text: str) -> str:
@@ -43,6 +47,7 @@ class JSONFormatterEngine:
             info.append(f"Size: {len(text)} bytes")
             return ". ".join(info)
         except json.JSONDecodeError as e:
+            logging.debug("[engines/json_formatter.py:45] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Invalid JSON: {e}"
 
     def extract_keys(self, text: str) -> str:
@@ -51,7 +56,8 @@ class JSONFormatterEngine:
             if isinstance(data, dict):
                 return "Keys: " + ", ".join(data.keys())
             return "Not a JSON object."
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as _e:
+            logging.debug("[engines/json_formatter.py:54] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Invalid JSON."
 
     def flatten_json(self, text: str) -> str:
@@ -60,6 +66,7 @@ class JSONFormatterEngine:
             flat = self._flatten(data)
             return json.dumps(flat, indent=2)
         except json.JSONDecodeError as e:
+            logging.debug("[engines/json_formatter.py:62] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Invalid JSON: {e}"
 
     def _count_keys(self, obj, count=0):

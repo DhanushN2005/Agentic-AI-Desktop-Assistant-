@@ -30,13 +30,15 @@ class KnowledgeEngine:
                     data = json.load(f)
                     self.index = data.get("index", {})
                     self.file_cache = data.get("cache", {})
-            except: pass
+            except Exception as _e:
+                logging.debug("[engines/knowledge.py:33] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def _save_index(self):
         try:
             with open(Config.VECTOR_DB_PATH, 'w') as f:
                 json.dump({"index": self.index, "cache": self.file_cache}, f)
-        except: pass
+        except Exception as _e:
+            logging.debug("[engines/knowledge.py:39] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def background_indexer(self):
         """Periodically scans and indexes local files into the vector-lite store."""
@@ -69,7 +71,8 @@ class KnowledgeEngine:
                 if path not in self.index[word]: self.index[word].append(path)
             
             self.file_cache[path] = content[:2000] # Store preview
-        except: pass
+        except Exception as _e:
+            logging.debug("[engines/knowledge.py:72] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def search_my_files(self, query: str) -> str:
         """High-speed semantic search using the pre-built index."""
@@ -108,6 +111,9 @@ class KnowledgeEngine:
                     import pypdf
                     reader = pypdf.PdfReader(path)
                     return "".join([p.extract_text() for p in reader.pages[:3]])
-                except: return None
-        except: pass
+                except Exception as _e:
+                    logging.debug("[engines/knowledge.py:111] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                    return None
+        except Exception as _e:
+            logging.debug("[engines/knowledge.py:112] Swallowed exception: %s: %s", type(_e).__name__, _e)
         return None

@@ -1,6 +1,7 @@
 import json
 import requests
 from typing import Optional
+import logging
 
 
 class WeatherEngine:
@@ -36,7 +37,8 @@ class WeatherEngine:
                 result = {"lat": loc["latitude"], "lon": loc["longitude"], "name": loc.get("name", city)}
                 self._cache[city] = result
                 return result
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/weather.py:39] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
         return None
 
@@ -63,6 +65,7 @@ class WeatherEngine:
                 f"humidity {humidity}%, wind {wind} km/h."
             )
         except Exception as e:
+            logging.debug("[engines/weather.py:65] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Weather service error: {e}"
 
     def get_forecast(self, city: str = "Coimbatore", days: int = 3) -> str:
@@ -86,4 +89,5 @@ class WeatherEngine:
                 lines.append(f"{dates[i]}: {cond}, {mintemps[i]}°C to {maxtemps[i]}°C")
             return f"Forecast for {geo['name']}: " + "; ".join(lines) + "."
         except Exception as e:
+            logging.debug("[engines/weather.py:88] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Forecast error: {e}"

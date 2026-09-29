@@ -1,7 +1,6 @@
 import sqlite3
 import threading
-import json
-import os
+
 
 class GlobalMemory:
     """Sidecar module for Long-Term User Profiling (Production Tier)."""

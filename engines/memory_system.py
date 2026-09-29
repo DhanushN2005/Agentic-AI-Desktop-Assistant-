@@ -1,10 +1,6 @@
-import os
-import json
 import sqlite3
 import threading
 import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
 
 
 class MemorySystem:
@@ -106,7 +102,7 @@ class MemorySystem:
             conn.close()
         return row[0] if row else default
 
-    def get_recent_conversations(self, limit: int = 5) -> List[Dict]:
+    def get_recent_conversations(self, limit: int = 5) -> list[dict]:
         """Get recent conversation history."""
         with self._lock:
             conn = sqlite3.connect(self._db_path)
@@ -117,7 +113,7 @@ class MemorySystem:
             conn.close()
         return [{"user": r[0], "assistant": r[1], "intent": r[2], "time": r[3]} for r in rows]
 
-    def get_popular_topics(self, limit: int = 5) -> List[Dict]:
+    def get_popular_topics(self, limit: int = 5) -> list[dict]:
         """Get most discussed topics."""
         with self._lock:
             conn = sqlite3.connect(self._db_path)
@@ -137,7 +133,7 @@ class MemorySystem:
         topics_str = ", ".join(t["topic"] for t in topics) if topics else "various topics"
         return f"Recent topics: {topics_str}. Last thing we discussed: {recent[0]['user'][:50]}..."
 
-    def search_memory(self, query: str) -> List[str]:
+    def search_memory(self, query: str) -> list[str]:
         """Search memory for relevant information."""
         with self._lock:
             conn = sqlite3.connect(self._db_path)

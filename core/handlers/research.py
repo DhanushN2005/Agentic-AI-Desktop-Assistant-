@@ -1,8 +1,8 @@
 import re
 import urllib.parse
-import webbrowser
+
 from utils.path_resolver import PathResolver
-from utils.config import Config
+import logging
 
 
 def handle_research(orch, c):
@@ -80,11 +80,12 @@ Write in a clear, informative style. Use headings and bullet points for readabil
             orch.speak(f"Research saved to {full_path}")
             orch.ctx.update(last_path=full_path, last_response=summary)
         except Exception as e:
+            logging.debug("[core/handlers/research.py:81] Swallowed exception: %s: %s", type(e).__name__, e)
             orch.speak(f"Error saving file: {str(e)}")
     else:
         # Just display/speak the result
         orch.speak(summary)
-        orch.ctx.update(last_response=summary, last_query=query)
+        orch.ctx.update(last_response=summary, query=query)
 
     return True
 
@@ -151,7 +152,8 @@ def _web_search(query):
             # Fallback: Use LLM to generate information
             return _fallback_search(query)
 
-    except Exception:
+    except Exception as _e:
+        logging.debug("[core/handlers/research.py:153] Swallowed exception: %s: %s", type(_e).__name__, _e)
         return _fallback_search(query)
 
 
@@ -161,7 +163,8 @@ def _fallback_search(query):
         from core.brain import Brain
         brain = Brain()
         return brain.ask(f"Provide key facts and information about: {query}. Be concise but comprehensive.")
-    except Exception:
+    except Exception as _e:
+        logging.debug("[core/handlers/research.py:163] Swallowed exception: %s: %s", type(_e).__name__, _e)
         return f"Information about {query} (web search unavailable)"
 
 

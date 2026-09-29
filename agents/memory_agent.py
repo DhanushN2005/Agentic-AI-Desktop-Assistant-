@@ -1,6 +1,8 @@
-from typing import Dict, Any, List
-from agents.base import BaseAgent
+from typing import Any
+
 from adapters.memory_adapter import LegacyMemoryAdapter
+from agents.base import BaseAgent
+
 
 class MemoryAgent(BaseAgent):
     """Memory agent managing standard SQL profiles and semantic memory ranking requests."""
@@ -8,7 +10,7 @@ class MemoryAgent(BaseAgent):
         super().__init__("memory_agent", "Stateful & Episodic Memory Agent")
         self.adapter = memory_adapter
 
-    def execute_task(self, payload: Dict[str, Any]) -> Any:
+    def execute_task(self, payload: dict[str, Any]) -> Any:
         action = payload.get("action", "").lower().strip()
         key = payload.get("key", "").strip()
         value = payload.get("value", "").strip()
@@ -29,7 +31,7 @@ class MemoryAgent(BaseAgent):
                 vector_store.add_episode(query, value)
                 return "Episode stored in semantic vector database."
             return "Failed to store episode: Vector store unavailable."
-            
+
         elif action == "recall_episodic" and query:
             if vector_store:
                 results = vector_store.search_episodes(query, limit=3)
@@ -40,7 +42,7 @@ class MemoryAgent(BaseAgent):
             if self.adapter:
                 self.adapter.set_preference(key, value)
                 return f"Preference '{key}' updated."
-                
+
         elif action == "get_preference" and key:
             if self.adapter:
                 return self.adapter.get_preference(key, value) # value is default here

@@ -1,10 +1,17 @@
 import os
 import re
 import time
+import logging
+import webbrowser
+import subprocess
+import sys
+
+from engines.self_awareness import MODE_MAP
 
 from engines.system import SystemCtrl
 from utils.config import Config
 from utils.helpers import get_numbers
+import logging
 
 
 def handle_undo(orch, c):
@@ -23,18 +30,21 @@ def handle_undo(orch, c):
     return True
 
 
+def _mode_speech():
+    return "; ".join(f"{n} — {d}" for n, d in MODE_MAP.items())
+
+
 def handle_mode(orch, c, silent):
     mode = re.sub(r"(set mode to|set mode|switch mode to|switch mode|change mode to|change mode|mode to| flexie| mode)", "", c).strip()
     if not mode:
-        modes_str = ", ".join(Config.MODES)
-        orch.speak(f"Available modes: {modes_str}. Which mode would you like?")
+        orch.speak(f"There are {len(Config.MODES)} modes: {_mode_speech()}. Which one would you like?")
         return True
     if mode in Config.MODES:
         orch.current_mode = mode  # UPDATE INTERNAL MODE
         orch.send_to_ui("MODE", mode)
-        orch.speak(f"System Optimized for {mode}.")
+        orch.speak(f"System optimized for {mode} mode, {MODE_MAP[mode]}")
     else:
-        orch.speak(f"Unknown mode '{mode}'. Available modes: {', '.join(Config.MODES)}.")
+        orch.speak(f"Unknown mode '{mode}'. There are {len(Config.MODES)} modes: {_mode_speech()}.")
     return True
 
 
@@ -94,7 +104,15 @@ def handle_snap(orch, c):
 
 
 def handle_volume(orch, c, silent):
-    v = get_numbers(c)[0] if get_numbers(c) else 50
+    nums = get_numbers(c)
+    if nums:
+        v = nums[0]
+    elif any(x in c for x in ["up", "raise", "increase", "louder", "higher", "max"]):
+        v = min(100, SystemCtrl.get_volume() + 5)
+    elif any(x in c for x in ["down", "lower", "decrease", "quieter", "reduce", "min"]):
+        v = max(0, SystemCtrl.get_volume() - 5)
+    else:
+        v = 50
     SystemCtrl.set_volume(v)
     if not silent:
         orch.speak(f"Volume set to {v} percent.")
@@ -111,9 +129,13 @@ def handle_brightness(orch, c, silent):
 
 def handle_mode_prefix(orch, c, silent):
     mode = c.replace("mode ", "").strip()
-    orch.current_mode = mode
-    if not silent:
-        orch.speak(f"Switched to {mode} mode.")
+    if mode in Config.MODES:
+        orch.current_mode = mode
+        orch.send_to_ui("MODE", mode)
+        if not silent:
+            orch.speak(f"Switched to {mode} mode.")
+    else:
+        orch.speak(f"Unknown mode '{mode}'. There are {len(Config.MODES)} modes: {_mode_speech()}.")
     return True
 
 
@@ -196,7 +218,8 @@ def handle_comm(orch, c):
                 for e in emails:
                     orch.speak(e)
                 return True
-        except: pass
+        except Exception as _e:
+            logging.debug("[core/handlers/system.py:199] Swallowed exception: %s: %s", type(_e).__name__, _e)
         orch.speak("Opening your email composer.")
         orch.files.open_item("gmail")
     return True
@@ -220,6 +243,7 @@ def handle_voice(orch, c):
                 test_engine.runAndWait()
             orch.speak("Diagnostic complete. Check the terminal for voice details.")
         except Exception as e:
+            logging.debug("[core/handlers/system.py:222] Swallowed exception: %s: %s", type(e).__name__, e)
             orch.speak(f"Diagnostic failed: {e}")
     elif "hindi" in c:
         orch.voice.lang = "hi-IN"
@@ -229,4 +253,72 @@ def handle_voice(orch, c):
         orch.speak("Language switched to English.")
     elif "faster" in c:
         orch.speak("Speaking faster now.")
+    elif "run command" in c or "execute" in c:
+        return handle_run_cmd(orch, c)
+    elif "open web ui" in c or "start web ui" in c or "activate web" in c:
+        return handle_open_web_ui(orch, c)
     return True
+
+
+def handle_run_cmd(orch, c):
+    """Handle voice commands to run CMD commands."""
+    # Extract the command after "run command" or "execute"
+    trigger_words = ["run command", "execute", "run cmd"]
+    for word in trigger_words:
+        c = c.replace(word, "").strip()
+    
+    # Get the CMD command
+    cmd = c.strip()
+    if not cmd:
+        orch.speak("Please specify a command to run. Examples: dir, cd, type filename.")
+        return True
+    
+    # Execute the command
+    result = SystemCtrl.run_cmd(cmd)
+    orch.speak(result)
+    return True
+
+
+def handle_open_web_ui(orch, c):
+    """Open the web UI dashboard, auto-starting the bridge if it isn't running.
+
+    Whatever you type (or speak) in the dashboard is relayed verbatim to the
+    orchestrator and handled exactly like a normal command.
+    """
+    try:
+        import socket
+
+        url = "http://localhost:8766"
+
+        def _bridge_alive() -> bool:
+            # Probe the WebSocket port the bridge listens on (8765).
+            try:
+                with socket.create_connection(("127.0.0.1", 8765), timeout=0.5):
+                    return True
+            except OSError:
+                return False
+
+        if not _bridge_alive():
+            orch.speak("Starting the web UI bridge.")
+            bridge_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "interface",
+                "web_ui_bridge.py",
+            )
+            subprocess.Popen(
+                [sys.executable, bridge_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            # Wait up to ~5s for the bridge's HTTP/WS server to come up.
+            for _ in range(25):
+                if _bridge_alive():
+                    break
+                time.sleep(0.2)
+
+        webbrowser.open(url)
+        orch.speak("Web UI opened. Type or speak anything in the dashboard and I will handle it.")
+        return True
+    except Exception as e:
+        orch.speak(f"Failed to open web UI: {str(e)[:100]}")
+        return True

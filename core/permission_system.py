@@ -6,11 +6,11 @@ Upgrades the existing DangerGate into a proper permission model with levels:
 
 Every action must pass through this system. The LLM cannot bypass it.
 """
-import re
 import logging
-from typing import Optional
-from core.tool_registry import PermissionLevel, ToolSpec
+import re
+
 from core.danger_gate import DangerGate
+from core.tool_registry import PermissionLevel
 
 
 class PermissionSystem:
@@ -108,8 +108,8 @@ class PermissionSystem:
         self,
         tool,
         command_context: str = "",
-        current_level: Optional[PermissionLevel] = None,
-    ) -> tuple[bool, str, Optional[PermissionLevel]]:
+        current_level: PermissionLevel | None = None,
+    ) -> tuple[bool, str, PermissionLevel | None]:
         """
         Check if a tool can be executed given the current permission level.
         

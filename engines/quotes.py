@@ -1,5 +1,6 @@
 import urllib.request
 import json
+import logging
 
 
 class QuotesEngine:
@@ -17,7 +18,8 @@ class QuotesEngine:
                 if data and len(data) > 0:
                     q = data[0]
                     return f'"{q.get("q", "")}" — {q.get("a", "Unknown")}'
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/quotes.py:20] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
         # Tryquotable
@@ -29,7 +31,8 @@ class QuotesEngine:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
                 return f'"{data.get("content", "")}" — {data.get("author", "Unknown")}'
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/quotes.py:32] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
         return "Couldn't fetch a quote right now."
@@ -44,7 +47,8 @@ class QuotesEngine:
                 if results:
                     q = results[0]
                     return f'"{q.get("content", "")}" — {q.get("author", "Unknown")}'
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/quotes.py:47] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
         return self.get_random()
 
@@ -58,6 +62,7 @@ class QuotesEngine:
                 if results:
                     q = results[0]
                     return f'"{q.get("content", "")}" — {q.get("author", "Unknown")}'
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/quotes.py:61] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
         return self.get_random()

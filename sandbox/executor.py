@@ -1,8 +1,8 @@
+import logging
 import os
 import subprocess
-import logging
 import time
-from typing import Dict, Any
+
 
 class SandboxExecutor:
     """Executes code scripts inside isolated environments (Docker containers or resource-restricted sub-processes).
@@ -115,7 +115,9 @@ class SandboxExecutor:
             if proc.returncode != 0:
                 return f"Execution Failure (Exit Code {proc.returncode}):\n{proc.stderr}"
             return proc.stdout
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as _e:
+            logging.debug("[sandbox/executor.py:118] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Execution Error: Code exceeded timeout threshold of {self.timeout} seconds on host."
         except Exception as e:
+            logging.debug("[sandbox/executor.py:120] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Host execution crash: {e}"

@@ -1,9 +1,11 @@
-import smtplib
-import imaplib
 import email
+import imaplib
+import smtplib
 from email.mime.text import MIMEText
-from typing import List
+
 from utils.config import Config
+import logging
+
 
 class EmailEngine:
     def __init__(self):
@@ -26,9 +28,10 @@ class EmailEngine:
                 srv.send_message(msg)
             return f"Successfully sent email to {to}."
         except Exception as e:
+            logging.debug("[engines/email_engine.py:29] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Failed to send email: {e}"
 
-    def get_unread_emails(self, count: int = 3) -> List[str]:
+    def get_unread_emails(self, count: int = 3) -> list[str]:
         if not self._is_configured():
             return ["Email credentials are missing."]
         try:
@@ -47,4 +50,5 @@ class EmailEngine:
             m.logout()
             return msgs if msgs else ["You have no unread emails."]
         except Exception as e:
+            logging.debug("[engines/email_engine.py:50] Swallowed exception: %s: %s", type(e).__name__, e)
             return [f"Could not read inbox: {e}"]

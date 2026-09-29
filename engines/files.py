@@ -5,9 +5,11 @@ import re
 import webbrowser
 import shutil
 import subprocess
+import time
 from typing import Dict, List
 from utils.config import Config
 from utils.helpers import get_numbers, is_online, find_executable
+import logging
 
 class FileManager:
     def __init__(self):
@@ -33,6 +35,7 @@ class FileManager:
         return difflib.get_close_matches(q.lower(), self._all_names, n=n, cutoff=0.4)
 
     def open_item(self, query: str, target_path: str = None) -> str:
+        is_run = "run" in query.lower()
         q = re.sub(r"\b(open|run|launch|start|the|folder|app|application)\b", "", query).strip().lower()
         if not q:
             return "I heard you say open, but I didn't catch what you want me to open. Could you repeat that?"
@@ -45,7 +48,8 @@ class FileManager:
                 else:
                     os.startfile(path)
                 return f"Opening {q}."
-            except:
+            except Exception as _e:
+                logging.debug("[engines/files.py:48] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 del self._cache[q]
 
         # App lookup
@@ -70,14 +74,44 @@ class FileManager:
                                     os.startfile(target_path)
                                 else:
                                     os.startfile(path)
-                            except:
-                                cmd = f'start {app}'
-                                if target_path: cmd += f' "{target_path}"'
-                                subprocess.Popen(cmd, shell=True)
+                            except Exception as _e:
+                                logging.debug("[engines/files.py:73] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                                # Fail closed: 'start' is a cmd.exe builtin and
+                                # would require shell=True — do not shell out.
+                                return f"Error opening {app}: {type(_e).__name__}"
                             self._cache[q] = path
                     return f"Opening {app}."
                 except Exception as e:
+                    logging.debug("[engines/files.py:79] Swallowed exception: %s: %s", type(e).__name__, e)
                     return f"Error opening {app}: {e}"
+
+        file_tokens = [token for token in q.split() if "." in token and not token.endswith(".")]
+        file_name = max(file_tokens, key=len) if file_tokens else None
+        if file_name:
+            for folder_name, folder_path in Config.FOLDER_SHORTCUTS.items():
+                if folder_name in q and os.path.isdir(folder_path):
+                    candidate = os.path.join(folder_path, file_name)
+                    if os.path.isfile(candidate):
+                        try:
+                            self._launch_path(candidate, is_run)
+                            self._cache[q] = candidate
+                            self.last_opened_path = candidate
+                            return f"{'Ran' if is_run else 'Found and opened'} {os.path.basename(candidate)}."
+                        except Exception as e:
+                            logging.debug("[engines/files.py:87] Swallowed exception: %s: %s", type(e).__name__, e)
+                            return f"I found it, but couldn't open it: {e}"
+
+            path = self._find_item_path(q) or self._find_item_path(file_name)
+            if path:
+                try:
+                    self._launch_path(path, is_run)
+                    self._cache[q] = path
+                    self.last_opened_path = path
+                    return f"{'Ran' if is_run else 'Found and opened'} {os.path.basename(path)}."
+                except Exception as e:
+                    logging.debug("[engines/files.py:104] Swallowed exception: %s: %s", type(e).__name__, e)
+                    return f"I found it, but couldn't open it: {e}"
+            return f"I couldn't find '{file_name}' on your system."
 
         # Folder lookup
         for name, path in Config.FOLDER_SHORTCUTS.items():
@@ -108,11 +142,13 @@ class FileManager:
             
         if path:
             try:
-                os.startfile(path)
+                self._launch_path(path, is_run)
                 self._cache[q] = path
                 self.last_opened_path = path
-                return f"Found and opened {os.path.basename(path)}."
+                verb = "Ran" if is_run else "Found and opened"
+                return f"{verb} {os.path.basename(path)}."
             except Exception as e:
+                logging.debug("[engines/files.py:115] Swallowed exception: %s: %s", type(e).__name__, e)
                 self.last_opened_path = None
                 return f"I found it, but couldn't open it: {e}"
 
@@ -165,6 +201,7 @@ class FileManager:
                 if os.path.isdir(path):
                     return path
             except Exception as e:
+                logging.debug("[engines/files.py:167] Swallowed exception: %s: %s", type(e).__name__, e)
                 if attempt == retries - 1:
                     raise e
                 time.sleep(0.2)
@@ -172,6 +209,9 @@ class FileManager:
 
     def _create_absolute(self, path: str) -> str:
         import time
+        from utils.path_jail import is_system_location
+        if is_system_location(path):
+            raise ValueError(f"Refusing to create system location: {path}")
         retries = 2
         for attempt in range(retries):
             try:
@@ -179,6 +219,7 @@ class FileManager:
                 if os.path.isdir(path):
                     return path
             except Exception as e:
+                logging.debug("[engines/files.py:181] Swallowed exception: %s: %s", type(e).__name__, e)
                 if attempt == retries - 1:
                     raise e
                 time.sleep(0.2)
@@ -211,11 +252,20 @@ class FileManager:
             loc = absolute_match.group(1)
             os.makedirs(loc, exist_ok=True)
             
-        # 1. Determine Extension
-        ext = ".txt"
-        if any(x in cmd.lower() for x in ["python", "py file", "script", "code", "program"]):
+        # 1. Determine Extension (aware of all common file types)
+        ext = ".txt"  # default
+        cmd_l = cmd.lower()
+        if any(x in cmd_l for x in ["html", "web page", "webpage", "landing page", "login page", "website", "homepage", "home page"]):
+            ext = ".html"
+        elif any(x in cmd_l for x in ["css", "style sheet", "stylesheet"]):
+            ext = ".css"
+        elif "python" in cmd_l or "py file" in cmd_l or "py script" in cmd_l:
             ext = ".py"
-        elif "markdown" in cmd.lower() or " md " in cmd.lower():
+        elif any(x in cmd_l for x in ["javascript", "js file"]):
+            ext = ".js"
+        elif "json" in cmd_l or "json file" in cmd_l:
+            ext = ".json"
+        elif any(x in cmd_l for x in ["markdown", "md file", " md ", " readme"]):
             ext = ".md"
 
         # 2. Extract Name
@@ -256,6 +306,7 @@ class FileManager:
                         success = True
                         break
             except Exception as write_err:
+                logging.debug("[engines/files.py:258] Swallowed exception: %s: %s", type(write_err).__name__, write_err)
                 err_msg = str(write_err)
                 time.sleep(0.3)
         
@@ -268,6 +319,7 @@ class FileManager:
             try:
                 os.startfile(path)
             except Exception as open_err:
+                logging.debug("[engines/files.py:270] Swallowed exception: %s: %s", type(open_err).__name__, open_err)
                 pass
                 
             return f"Created document '{name}' at {os.path.basename(loc)}."
@@ -278,7 +330,8 @@ class FileManager:
                 import pyperclip
                 pyperclip.copy(content)
                 return f"Verification Alert: Failed to write file due to permissions or disk error. However, self-healing has saved the content to your clipboard. You can press Ctrl+V to paste it manually. Details: {err_msg}"
-            except:
+            except Exception as _e:
+                logging.debug("[engines/files.py:281] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 return f"Failed to create document: {err_msg}"
 
     def find_files(self, name: str) -> List[str]:
@@ -332,9 +385,14 @@ class FileManager:
         
         old_name = re.sub(r"^(rename|folder|file|the)\s+", "", parts[0]).strip()
         new_name = parts[1].strip()
-        
+        from utils.path_jail import is_basename_safe, is_system_location
+        if not is_basename_safe(new_name):
+            return f"Rename failed: '{new_name}' is not a plain file/folder name."
+
         path = self._find_item_path(old_name)
         if not path: return f"I couldn't find '{old_name}' on your system."
+        if is_system_location(path):
+            return f"Rename failed: '{old_name}' is a protected system location."
         
         parent = os.path.dirname(path)
         # If renaming a file, try to keep the extension if the user didn't provide one
@@ -348,6 +406,7 @@ class FileManager:
             os.rename(path, new_path)
             return f"Successfully renamed '{old_name}' to '{new_name}'."
         except Exception as e:
+            logging.debug("[engines/files.py:350] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Rename failed: {e}"
 
     def delete_item(self, query: str) -> str:
@@ -355,6 +414,9 @@ class FileManager:
         name = re.sub(r"^(delete|remove|erase|the)\s+", "", query.lower()).strip()
         path = self._find_item_path(name)
         if not path: return f"I couldn't find '{name}' to delete."
+        from utils.path_jail import is_system_location
+        if is_system_location(path):
+            return f"Delete failed: '{name}' is a protected system location."
         
         try:
             if os.path.isdir(path):
@@ -363,6 +425,7 @@ class FileManager:
                 os.remove(path)
             return f"Successfully deleted '{name}'."
         except Exception as e:
+            logging.debug("[engines/files.py:365] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Delete failed: {e}"
 
     def save_file(self, content: str, filename: str) -> str:
@@ -384,6 +447,7 @@ class FileManager:
                     success = True
                     break
             except Exception as e:
+                logging.debug("[engines/files.py:386] Swallowed exception: %s: %s", type(e).__name__, e)
                 err_msg = str(e)
                 time.sleep(0.2)
                 
@@ -395,7 +459,8 @@ class FileManager:
                 import pyperclip
                 pyperclip.copy(content)
                 return f"Verification Alert: Failed to save file '{filename}'. Stored content on clipboard as fallback. Details: {err_msg}"
-            except:
+            except Exception as _e:
+                logging.debug("[engines/files.py:398] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 return f"Failed to save file: {err_msg}"
 
     def _find_item_path(self, name: str) -> str:
@@ -423,7 +488,9 @@ class FileManager:
                             p = os.path.join(d, item)
                             self._cache[name] = p
                             return p
-                except: continue
+                except Exception as _e:
+                    logging.debug("[engines/files.py:426] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                    continue
                 
         # Substring match second
         for d in search_dirs:
@@ -434,7 +501,9 @@ class FileManager:
                             p = os.path.join(d, item)
                             self._cache[name] = p
                             return p
-                except: continue
+                except Exception as _e:
+                    logging.debug("[engines/files.py:437] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                    continue
 
         # Tier 3: Limited Deep Search (Moderate)
         # Exact match first

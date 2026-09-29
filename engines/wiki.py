@@ -1,5 +1,6 @@
-import urllib.request
 import json
+import urllib.request
+import logging
 
 
 class WikiEngine:
@@ -18,7 +19,8 @@ class WikiEngine:
                 if page_url:
                     result += f"\nRead more: {page_url}"
                 return result
-        except Exception as e:
+        except Exception as _e:
+            logging.debug("[engines/wiki.py:21] Swallowed exception: %s: %s", type(_e).__name__, _e)
             # Try search fallback
             try:
                 search_api = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(query)}&format=json&srlimit=1"
@@ -29,7 +31,8 @@ class WikiEngine:
                     if results:
                         return f"Found: {results[0]['title']} — {results[0].get('snippet', '')}"
                     return f"No Wikipedia article found for '{query}'."
-            except Exception:
+            except Exception as _e:
+                logging.debug("[engines/wiki.py:32] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 return f"Could not search Wikipedia for '{query}'."
 
     def get_page(self, title: str) -> str:
@@ -40,5 +43,6 @@ class WikiEngine:
                 data = json.loads(resp.read().decode())
                 extract = data.get("extract", "No content found.")
                 return extract
-        except Exception as e:
+        except Exception as _e:
+            logging.debug("[engines/wiki.py:43] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Could not fetch Wikipedia page for '{title}'."

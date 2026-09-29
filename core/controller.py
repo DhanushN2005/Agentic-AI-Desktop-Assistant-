@@ -49,7 +49,8 @@ class FlexieController:
             if os.path.exists("macros.json"):
                 with open("macros.json") as f:
                     return json.load(f)
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/controller.py:52] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
         return {
             "start coding mode": ["open vscode", "open browser"],
@@ -132,7 +133,14 @@ class FlexieController:
                 self.meeting_active = False
                 self.orch.speak("Meeting ended. Generating summary and action items...")
                 # Pseudo-logic to compile the transcript stored in memory
-                transcript = "\n".join(self.orch.memory.get_context(limit=20))
+                context_getter = getattr(self.orch.memory, "get_conversation_messages", None)
+                if callable(context_getter):
+                    transcript = "\n".join(
+                        f"{item.get('role', 'user')}: {item.get('content', '')}"
+                        for item in context_getter(limit=20)
+                    )
+                else:
+                    transcript = self.orch.memory.get_context(limit=20)
                 summary = self.orch.brain.ask(f"Summarize this meeting transcript and extract tasks:\n{transcript}")
                 with open("flexie_meeting_summary.md", "w") as f:
                     f.write(summary)
@@ -241,15 +249,24 @@ class FlexieController:
         """Runs the wrapped orchestrator logic and records a telemetry trace."""
         trace = trace or self.telemetry.start_trace(command)
         try:
-            # Invoke Existing Logic (UNTOUCHED)
-            self.original_handle(command)
+            result = self.original_handle(command)
+            if result is False:
+                self.telemetry.end_trace(trace, status="failed", error="Handler returned failure")
+                return "failed"
 
-            # End Trace
             self.telemetry.end_trace(trace, status="success")
 
-            # Background Learning
-            context_list = self.orch.memory.get_context(limit=3)
-            context_str = "\n".join([str(c) for c in context_list])
+            context_getter = getattr(self.orch.memory, "get_conversation_messages", None)
+            if callable(context_getter):
+                context_list = context_getter(limit=3)
+                context_str = "\n".join(
+                    f"{item.get('role', 'user')}: {item.get('content', '')}"
+                    for item in context_list
+                )
+            else:
+                context_str = self.orch.memory.get_context(limit=3)
+                if not isinstance(context_str, str):
+                    context_str = "\n".join(str(item) for item in context_str)
             self.long_term.learn_from_history(context_str)
             return "executed"
 

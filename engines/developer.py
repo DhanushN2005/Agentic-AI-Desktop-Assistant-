@@ -1,5 +1,6 @@
 import os
 import sys
+import shlex
 import subprocess
 import re
 from utils.config import Config
@@ -32,8 +33,18 @@ class DeveloperEngine:
             if not self.flexie.voice.confirm(f"The command '{cmd}' might be dangerous. Do you still want to run it?"):
                 return "Command execution cancelled for safety."
 
+        # No shell: reject chaining/substitution, run a single argv without shell.
+        if re.search(r"&&|\|\||;|\||`|[$][(]", cmd):
+            return "Blocked: chained commands, pipes and command substitution are not allowed here. Use one simple command."
         try:
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+            argv = shlex.split(cmd, posix=(os.name != "nt"))
+        except ValueError as _e:
+            logging.debug("[engines/developer.py:shlex] Swallowed exception: %s: %s", type(_e).__name__, _e)
+            return f"Could not parse the command: {_e}"
+        if not argv:
+            return "No command to run."
+        try:
+            result = subprocess.run(argv, shell=False, capture_output=True, text=True, timeout=15)
             if result.returncode == 0:
                 output = result.stdout.strip()
                 if not output:
@@ -117,7 +128,9 @@ class DeveloperEngine:
         for root, dirs, filenames in os.walk(cwd):
             dirs[:] = [d for d in dirs if d not in ['.git', '__pycache__', 'venv', 'node_modules', 'browser_session']]
             for f in filenames[:10]:
-                if f.endswith(('.py', '.js', '.html', '.css', '.md', '.env', '.json', '.ts', '.jsx', '.tsx')):
+                if f.startswith("."):
+                    continue  # never leak dotfiles (.env) into LLM prompts
+                if f.endswith(('.py', '.js', '.html', '.css', '.md', '.json', '.ts', '.jsx', '.tsx')):
                     files.append(os.path.join(os.path.relpath(root, cwd), f))
             if len(files) > max_files: break
         return os.path.basename(cwd), "\n".join(files)

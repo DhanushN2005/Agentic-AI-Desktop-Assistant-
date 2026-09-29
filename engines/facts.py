@@ -1,5 +1,6 @@
 import urllib.request
 import json
+import logging
 
 
 class FactsEngine:
@@ -17,7 +18,8 @@ class FactsEngine:
                 text = data.get("text", "")
                 if text:
                     return f"Fun fact: {text}"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/facts.py:20] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
         # Try new API
@@ -31,7 +33,8 @@ class FactsEngine:
                 fact = data.get("fact", "")
                 if fact:
                     return f"Fun fact: {fact}"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/facts.py:34] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
         return "Couldn't fetch a fact right now."
@@ -45,6 +48,7 @@ class FactsEngine:
                 text = data.get("text", "")
                 if text:
                     return f"Fact about {category}: {text}"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/facts.py:48] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
         return self.get_random()

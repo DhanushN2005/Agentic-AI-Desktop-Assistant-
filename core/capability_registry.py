@@ -1,11 +1,10 @@
-from typing import List, Dict, Callable, Any
 
 class Capability:
-    def __init__(self, name: str, intents: List[str]):
+    def __init__(self, name: str, intents: list[str]):
         self.name = name
         self.intents = intents
-        
-    def get_intents(self) -> List[str]:
+
+    def get_intents(self) -> list[str]:
         return self.intents
 
 class CapabilityRegistry:
@@ -14,10 +13,10 @@ class CapabilityRegistry:
     Each capability groups related intents.
     """
     def __init__(self):
-        self._capabilities: Dict[str, Capability] = {}
-        self._intent_to_capability: Dict[str, str] = {}
+        self._capabilities: dict[str, Capability] = {}
+        self._intent_to_capability: dict[str, str] = {}
         self._register_defaults()
-        
+
     def _register_defaults(self):
         self.register(Capability("camera", ["camera_capture", "take_picture", "open_camera", "save_picture"]))
         self.register(Capability("browser", ["browser_op", "browser_navigate", "browser_control", "multi_tab_research"]))
@@ -30,12 +29,12 @@ class CapabilityRegistry:
         self.register(Capability("media", ["media"]))
         self.register(Capability("application", ["click_element", "type_text"]))
         self.register(Capability("sdd", ["sdd_build", "dev_explain"]))
-        
+
     def register(self, capability: Capability):
         self._capabilities[capability.name] = capability
         for intent in capability.get_intents():
             self._intent_to_capability[intent] = capability.name
-            
+
     def get_all_atomic_intents(self) -> set:
         """Returns all atomic intents across all registered capabilities."""
         return set(self._intent_to_capability.keys())

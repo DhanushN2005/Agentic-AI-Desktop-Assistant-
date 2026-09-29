@@ -1,7 +1,9 @@
-from typing import Dict, Any
-from agents.base import BaseAgent
+from typing import Any
+
 from adapters.browser_adapter import LegacyBrowserAdapter
+from agents.base import BaseAgent
 from engines.browser import BrowserEngine
+
 
 class BrowserAgent(BaseAgent):
     """Browser agent receiving browser-automation task events and orchestrating through legacy adapters."""
@@ -9,7 +11,7 @@ class BrowserAgent(BaseAgent):
         super().__init__("browser", "Browser Automation Agent")
         self.adapter = browser_adapter or LegacyBrowserAdapter(BrowserEngine())
 
-    def execute_task(self, payload: Dict[str, Any]) -> str:
+    def execute_task(self, payload: dict[str, Any]) -> str:
         action = payload.get("action", "").lower().strip()
         target = payload.get("target", "").strip()
         value = payload.get("value", "").strip()

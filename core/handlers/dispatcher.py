@@ -1,8 +1,9 @@
 import re
 
-from core.handlers.agents import handle_capability_delegation
 from core.handlers.age import handle_age
+from core.handlers.agents import handle_capability_delegation
 from core.handlers.alarm import handle_alarm
+from core.handlers.automation import handle_automation
 from core.handlers.awareness import handle_awareness
 from core.handlers.body_metrics import handle_body_metrics
 from core.handlers.browser import (
@@ -12,9 +13,8 @@ from core.handlers.browser import (
     handle_browser_tabs,
     handle_gmail,
 )
-from core.handlers.automation import handle_automation
 from core.handlers.clipboard_mgr import handle_clipboard_mgr
-from core.handlers.code_gen import handle_code_gen
+from core.handlers.code_gen import handle_artifact_command, handle_code_gen
 from core.handlers.code_search import handle_local_code_search
 from core.handlers.color_info import handle_color
 from core.handlers.converter import handle_convert
@@ -97,25 +97,96 @@ def handle_social(orch, c):
     for trigger, response in SOCIAL_RESPONSES.items():
         if cmd == trigger or cmd.startswith(trigger):
             orch.ctx.update(last_response=response, query=c)
-            orch.speak(response)
+            recorder = getattr(orch, "record_response", None)
+            if callable(recorder):
+                recorder(response)
+            orch.speak(response, record_chat=False)
             return True
     return handle_conversational(orch, c)
 
 
+def _record_conversation_response(orch, response):
+    recorder = getattr(orch, "record_response", None)
+    if callable(recorder):
+        recorder(response)
+        return
+    add_chat = getattr(getattr(orch, "memory", None), "add_chat", None)
+    if callable(add_chat) and response:
+        add_chat("Flexie", response)
+
+
+def _conversation_history(orch, current_query):
+    getter = getattr(orch, "get_conversation_history", None)
+    if callable(getter):
+        return getter(current_query=current_query, limit=Config.CONVERSATION_HISTORY_TURNS) or []
+    return []
+
+
 def handle_conversational(orch, c):
+    router = getattr(orch, "router", None)
+    route = getattr(router, "route", None)
+    if callable(route):
+        routed_intent, _ = route(c)
+        if routed_intent == "code_gen":
+            return handle_code_gen(orch, c)
     orch.send_to_ui("STATE", "PROCESSING")
-    sys_p = Config.SYSTEM_PROMPT_HACKER if orch.current_mode == "hacker" else Config.SYSTEM_PROMPT_STANDARD
-    response = orch.brain.ask(c, system_override=sys_p)
+    MODE_PROMPTS = {
+        "professional": Config.SYSTEM_PROMPT_STANDARD,
+        "developer": Config.SYSTEM_PROMPT_DEVELOPER,
+        "hacker": Config.SYSTEM_PROMPT_HACKER,
+        "minimal": Config.SYSTEM_PROMPT_MINIMAL,
+        "focus": Config.SYSTEM_PROMPT_FOCUS,
+    }
+    MODE_MAX_TOKENS = {
+        "professional": None,
+        "developer": 1024,
+        "hacker": 512,
+        "minimal": 64,
+        "focus": 64,
+    }
+    sys_p = MODE_PROMPTS.get(orch.current_mode, Config.SYSTEM_PROMPT_STANDARD)
+    max_tokens = MODE_MAX_TOKENS.get(orch.current_mode)
+    history = _conversation_history(orch, c)
+    chunks = []
+    buffer = ""
+    flush_count = 0
+    for chunk in orch.brain.ask_stream(
+        c,
+        system_override=sys_p,
+        use_rag=False,
+        max_tokens=max_tokens,
+        history=history,
+    ):
+        chunks.append(chunk)
+        buffer += chunk
+        orch.send_to_ui("PARTIAL", buffer)
+        flush_count += 1
+        should_flush = bool(re.search(r'[.!?]\s', buffer)) or flush_count >= 4
+        if should_flush:
+            m = re.search(r'[.!?]\s', buffer)
+            if m:
+                orch.speak(buffer[:m.end()].strip(), record_chat=False)
+                buffer = buffer[m.end():]
+            else:
+                orch.speak(buffer.strip(), record_chat=False)
+                buffer = ""
+            flush_count = 0
+    response = "".join(chunks)
+    if buffer.strip():
+        orch.speak(buffer.strip(), record_chat=False)
     if orch.current_mode == "hacker" and orch._parse_tool_call(response):
+        _record_conversation_response(orch, response)
         return True
+    _record_conversation_response(orch, response)
     orch.ctx.update(last_response=response, query=c)
-    orch.speak(response)
     return True
 
 
 def dispatch_intent(orch, intent, c, silent):
     """Runs the intent execution chain. Preserves the historical elif dispatch order."""
     try:
+        if intent in ("artifact_open", "artifact_run", "artifact_edit", "artifact_extend"):
+            return handle_artifact_command(orch, f"{intent}:{c}")
         # --- PHASE 1 & 3: Capability Registry & Agent Delegation ---
         if handle_capability_delegation(orch, intent, c, silent):
             return True
@@ -274,5 +345,8 @@ def dispatch_intent(orch, intent, c, silent):
             return handle_translate(orch, c)
         return handle_conversational(orch, c)
     except Exception as e:
-        orch.logger.error(f"Error in {intent}: {e}")
-        return True
+        if hasattr(orch.logger, "exception"):
+            orch.logger.exception(f"Error in {intent}: {e}")
+        else:
+            orch.logger.error(f"Error in {intent}: {e}")
+        return False

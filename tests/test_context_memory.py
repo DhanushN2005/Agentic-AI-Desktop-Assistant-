@@ -36,6 +36,12 @@ def test_update_persists_registers(ctx):
     assert ctx.mem.recall("ctx_last_app") == "notepad"
 
 
+def test_update_accepts_sdd_state(ctx):
+    ctx.update(last_sdd={"title": "Login page"})
+    assert ctx.last_sdd == {"title": "Login page"}
+    assert ctx.mem.recall("ctx_last_sdd") == "{'title': 'Login page'}"
+
+
 def test_sync_system_state_captures_focus(ctx):
     assert ctx.focused_app == "Visual Studio Code"
     assert ctx.clipboard_state == "clip text"
@@ -55,6 +61,25 @@ def test_resolve_open_file(tmp_path, ctx):
     ctx.last_path = str(target)
     resolved = ctx.resolve("open it")
     assert resolved == f"open {target}"
+
+
+def test_resolve_open_file_with_polite_prefix(tmp_path, ctx):
+    target = tmp_path / "login.html"
+    target.write_text("login")
+    ctx.last_path = str(target)
+    resolved = ctx.resolve("can you open that for me")
+    assert resolved == f"open {target}"
+
+
+def test_resolve_generated_artifact_followups(tmp_path, ctx):
+    target = tmp_path / "login_page.html"
+    target.write_text("<html></html>")
+    ctx.set_artifact(str(target), language="html", query="login page", request="create a login page")
+    assert ctx.resolve("can you run that html code,") == "artifact_run:can you run that html code,"
+    assert ctx.resolve("add a forgot password link to that page") == "artifact_edit:add a forgot password link to that page"
+    assert ctx.resolve("generate another html when i login redirect to that page") == "artifact_extend:generate another html when i login redirect to that page"
+    assert ctx.resolve("make it responsive") == "artifact_edit:make it responsive"
+    assert ctx.resolve("open report.txt") == "open report.txt"
 
 
 def test_resolve_paste_response(ctx):

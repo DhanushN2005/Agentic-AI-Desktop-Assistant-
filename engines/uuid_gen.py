@@ -1,5 +1,5 @@
 import uuid
-import time
+import logging
 
 
 class UUIDEngine:
@@ -25,7 +25,8 @@ class UUIDEngine:
         try:
             u = uuid.UUID(text)
             return f"Valid UUID: {u} (version {u.version}, variant {u.variant})"
-        except ValueError:
+        except ValueError as _e:
+            logging.debug("[engines/uuid_gen.py:27] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Invalid UUID: '{text}'"
 
     def timestamp(self, text: str) -> str:
@@ -39,5 +40,6 @@ class UUIDEngine:
                 dt = datetime.datetime.fromtimestamp(timestamp)
                 return f"UUID v1 timestamp: {dt.strftime('%Y-%m-%d %H:%M:%S')}"
             return "Timestamp only available for UUID v1."
-        except ValueError:
+        except ValueError as _e:
+            logging.debug("[engines/uuid_gen.py:41] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Invalid UUID."

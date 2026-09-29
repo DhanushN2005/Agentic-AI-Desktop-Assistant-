@@ -165,7 +165,8 @@ class AgentExecutor:
                 import pyperclip
                 state["clipboard"] = pyperclip.paste()
                 state["window"] = getattr(self.orch, '_get_active_window_title', lambda: "")()
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/agent_executor.py:168] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
         return state
 
@@ -178,6 +179,7 @@ class AgentExecutor:
                     self.orch.handle_command(step.description, is_subcommand=True, silent=True)
                     return ActionResult.ok(message="Executed via handler", intent=step.description)
                 except Exception as e:
+                    logging.debug("[core/agent_executor.py:180] Swallowed exception: %s: %s", type(e).__name__, e)
                     return ActionResult.fail(message=str(e), intent=step.description)
 
             return ActionResult.fail(message="No tool and no orchestrator", intent=step.description)
@@ -237,7 +239,8 @@ class AgentExecutor:
             try:
                 from engines.system import SystemCtrl
                 curr_window = SystemCtrl.get_active_window_title()
-            except Exception:
+            except Exception as _e:
+                logging.debug("[core/agent_executor.py:240] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 pass
             return self.orch.validator.is_app_running(app_name, curr_window)
         return True  # Can't verify without orchestrator
@@ -259,7 +262,8 @@ class AgentExecutor:
             import pyperclip
             curr = pyperclip.paste()
             return curr != pre_state.get("clipboard", "")
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/agent_executor.py:262] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return True
 
     def _handle_verification_failure(self, step: TaskStep, result: ActionResult):

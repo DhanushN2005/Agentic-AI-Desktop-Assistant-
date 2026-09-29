@@ -6,7 +6,7 @@ typed object. Only used internally by the DAG planner; always converted to
 natural language via natural_language() before reaching the intent router,
 preserving full backward compatibility with existing routing logic.
 """
-from typing import Any, Optional
+from typing import Any
 
 
 class ActionCommand:

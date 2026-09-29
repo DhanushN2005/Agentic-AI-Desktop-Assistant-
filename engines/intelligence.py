@@ -1,8 +1,8 @@
-import time
 import logging
-from typing import List, Dict
-from utils.config import Config
+import time
+
 from engines.system import SystemCtrl
+
 
 class IntelligenceEngine:
     """Proactive suggestion engine for Flexie 2.0."""
@@ -11,8 +11,8 @@ class IntelligenceEngine:
         self.logger = logging.getLogger("FlexieIntelligence")
         self.last_suggestion_time = 0
         self.suggestion_cooldown = 300 # 5 minutes
-        self.context_history: List[str] = []
-        
+        self.context_history: list[str] = []
+
         # Knowledge of features for the AI to suggest
         self.features_map = {
             "developer_mode": "Advanced debugging, project explanation, and terminal execution.",
@@ -29,10 +29,10 @@ class IntelligenceEngine:
         now = time.time()
         if now - self.last_suggestion_time < self.suggestion_cooldown:
             return None
-            
+
         active_window = SystemCtrl.get_active_window_title()
         system_stats = SystemCtrl.cpu_ram()
-        
+
         # Build a prompt for the AI to decide if a suggestion is needed
         prompt = f"""
         User Context:
@@ -48,12 +48,12 @@ class IntelligenceEngine:
         If no, respond with 'NONE'.
         Example: auto_save | I noticed you're working in Word, would you like me to enable auto-save for you?
         """
-        
+
         try:
             decision = self.flexie.brain.ask(prompt, system_override="You are Flexie's Proactive Intelligence. Be helpful but not annoying.")
             if "NONE" in decision.upper() or "|" not in decision:
                 return None
-                
+
             key, suggestion = decision.split("|", 1)
             self.last_suggestion_time = now
             return suggestion.strip()

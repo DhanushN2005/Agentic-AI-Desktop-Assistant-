@@ -1,11 +1,14 @@
-import threading
 import queue
+import threading
 import time
-from typing import Callable, Dict, List, Any
+from collections.abc import Callable
+from typing import Any
+import logging
+
 
 class Event:
     """Represents a standard event passing through the system."""
-    def __init__(self, name: str, payload: Dict[str, Any] = None, priority: int = 2):
+    def __init__(self, name: str, payload: dict[str, Any] = None, priority: int = 2):
         self.name = name
         self.payload = payload or {}
         self.priority = priority  # Lower is higher priority (0 = urgent, 3 = trace)
@@ -28,13 +31,13 @@ class EventBus:
             return cls._instance
 
     def _init_bus(self):
-        self.subscribers: Dict[str, List[Callable[[Event], None]]] = {}
-        self.event_history: List[Event] = []
+        self.subscribers: dict[str, list[Callable[[Event], None]]] = {}
+        self.event_history: list[Event] = []
         self.history_lock = threading.Lock()
         self.sub_lock = threading.Lock()
         self.queue = queue.PriorityQueue()
         self.stop_event = threading.Event()
-        
+
         # Start async worker thread
         self.worker_thread = threading.Thread(target=self._worker, daemon=True)
         self.worker_thread.start()
@@ -70,10 +73,14 @@ class EventBus:
                 event = self.queue.get(timeout=0.1)
                 self._dispatch(event)
                 self.queue.task_done()
-            except queue.Empty:
+            except queue.Empty as _e:
+                logging.debug("[core/event_bus/bus.py:75] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 continue
             except Exception as e:
-                import logging
+                # NOTE: do NOT `import logging` here — that would shadow the
+                # module-level import and make `logging` a local variable,
+                # causing UnboundLocalError in the Empty handler above and
+                # killing this worker thread on the first idle timeout.
                 logging.getLogger("EventBus").error(f"Error in EventBus worker: {e}")
 
     def _dispatch(self, event: Event):
@@ -90,10 +97,9 @@ class EventBus:
             try:
                 callback(event)
             except Exception as ce:
-                import logging
                 logging.getLogger("EventBus").error(f"Callback failure on event {event.name}: {ce}")
 
-    def replay_events(self, count: int = 50) -> List[Event]:
+    def replay_events(self, count: int = 50) -> list[Event]:
         """Returns the last N events for auditing or debugging."""
         with self.history_lock:
             return list(self.event_history[-count:])

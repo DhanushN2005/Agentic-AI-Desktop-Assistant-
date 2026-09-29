@@ -20,12 +20,17 @@ def handle_dev_explain(orch):
 
 
 def handle_briefing(orch):
+    if orch.current_mode in ("focus", "minimal"):
+        orch.speak("Standby.")
+        return True
     orch.speak("Getting your daily briefing ready, Dhanush...")
     orch.speak(orch._get_briefing())
     return True
 
 
 def handle_clipboard(orch):
+    if orch.current_mode in ("focus", "minimal"):
+        return True
     text = SystemCtrl.get_clipboard()
     if not text:
         orch.speak("Your clipboard is empty.")
@@ -37,6 +42,8 @@ def handle_clipboard(orch):
 
 
 def handle_intel(orch, c):
+    if orch.current_mode in ("focus", "minimal"):
+        return True
     suggestion = orch.intel.analyze_context(c)
     if suggestion:
         orch.speak(suggestion)

@@ -2,11 +2,13 @@ import glob
 import os
 
 from utils.config import Config
+import logging
 
 try:
     import pygame
     _PYGAME_OK = True
-except Exception:
+except Exception as _e:
+    logging.debug("[engines/music.py:9] Swallowed exception: %s: %s", type(_e).__name__, _e)
     pygame = None
     _PYGAME_OK = False
 
@@ -17,7 +19,8 @@ class MusicEngine:
         if _PYGAME_OK:
             try:
                 pygame.mixer.init()
-            except Exception:
+            except Exception as _e:
+                logging.debug("[engines/music.py:20] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 pass
 
     def _unavailable(self) -> str:
@@ -49,6 +52,7 @@ class MusicEngine:
             self._is_playing = True
             return f"Playing: {os.path.basename(matches[0])}"
         except Exception as e:
+            logging.debug("[engines/music.py:51] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Error playing music: {e}"
 
     def stop(self):

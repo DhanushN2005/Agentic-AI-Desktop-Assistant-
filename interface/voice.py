@@ -1,10 +1,55 @@
-import pyttsx3
-import speech_recognition as sr
-import threading
 import logging
-import time
+import os
 import queue
-import pythoncom
+import tempfile
+import re
+import threading
+import time
+
+import speech_recognition as sr
+
+from utils.config import Config
+from utils.helpers import is_online
+
+# ---------------------------------------------------------------------------
+# Speech text preparation — turns LLM/UI text into natural spoken prose.
+# ---------------------------------------------------------------------------
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002B00-\U00002BFF\U0001F900-\U0001F9FF\U0000FE0F\U0000200D]+",
+    flags=re.UNICODE,
+)
+
+
+def prepare_speech_text(text: str) -> str:
+    """Clean markdown/code/emoji noise into natural, speakable prose."""
+    if not text:
+        return ""
+    t = text
+    # Code fences: keep the code content, drop the fence + language tag
+    t = re.sub(r"```[\w-]*\n(.*?)```", r"\1", t, flags=re.DOTALL)
+    # Inline code spans
+    t = re.sub(r"`([^`]+)`", r"\1", t)
+    # Links/images -> just the label
+    t = re.sub(r"!?\[([^\]]+)\]\([^)]*\)", r"\1", t)
+    # Headers
+    t = re.sub(r"^\s{0,3}#{1,6}\s+", "", t, flags=re.MULTILINE)
+    # Bold/italic/strikethrough markers
+    t = re.sub(r"(\*\*\*|\*\*|\*|__|~~)(?=\S)(.+?)(?<=\S)\1", r"\2", t)
+    # List markers -> spoken prose (numbers often read better than '1 point')
+    t = re.sub(r"^\s*[-*+]\s+", "", t, flags=re.MULTILINE)
+    t = re.sub(r"^\s*\d+[.)]\s+", "", t, flags=re.MULTILINE)
+    # Table pipes and bullet glyphs -> spoken pause
+    t = t.replace("|", " ")
+    t = t.replace("\u2022", ",")
+    # Emojis and decorative symbols
+    t = _EMOJI_RE.sub("", t)
+    # Symbols a person would speak as words
+    t = t.replace("&", " and ").replace("%", " percent")
+    # Ellipses read as pauses
+    t = re.sub(r"\.{3,}", ".", t)
+    # Any leftover markdown punctuation that TTS would mangle
+    t = re.sub(r"[*_#~<>{}\[\]\\]+", " ", t)
+    return re.sub(r"\s{2,}", " ", t).strip()
 
 class VoiceInterface:
     def __init__(self):
@@ -22,22 +67,45 @@ class VoiceInterface:
         self.last_spoken_text = None
         self.last_spoken_time = 0
         self.lang = "en-IN" # Default to Indian English
+        # Serializes Google ASR calls so the live partial recognizer and the
+        # final recognizer never hit the API at once (that caused dropped words).
+        self._asr_lock = threading.Lock()
         
         # TTS dynamic parameters (modulatable by orchestrator commands)
-        self.speech_rate = 1 
+        self.speech_rate = 1
         self.speech_volume = 100
-        
+
+        # Speech buffering for natural chunked playback
+        self._speech_buffer = ""
+
+        # TTS engine selection: neural (Edge, natural) vs sapi (offline SAPI).
+        self.speech_mode = os.getenv("FLEXIE_TTS_MODE", "neural").lower()
+        import importlib.util
+        has_edge = importlib.util.find_spec("edge_tts") is not None
+        if self.speech_mode == "neural" and not has_edge:
+            logging.warning("FLEXIE_TTS_MODE=neural but edge-tts not installed — using SAPI")
+            self.speech_mode = "sapi"
+
         # Shared TTS Engine
         self.engine_lock = threading.Lock()
         self._engine = None
-        
-        # Test engine and list voices
+
+        # Report TTS configuration
         try:
+            import pyttsx3
             temp = pyttsx3.init()
-            print("\n[Voice Setup] Available Voices:")
-            for i, v in enumerate(temp.getProperty('voices')):
-                print(f" - Voice {i}: {v.name}")
-        except: pass
+            sapi_voices = [v.name for v in temp.getProperty('voices')]
+            temp.stop()
+        except Exception as _e:
+            logging.debug("[interface/voice.py:52] Swallowed exception: %s: %s", type(_e).__name__, _e)
+            sapi_voices = []
+        print("\n[Voice Setup]")
+        if self.speech_mode == "neural":
+            print(f" - TTS: Edge neural (natural) | voice: {self.EDGE_VOICE}")
+        else:
+            print(" - TTS: Windows SAPI (offline fallback)")
+        for i, v in enumerate(sapi_voices):
+            print(f" - SAPI Voice {i}: {v}")
         
         # Start speech thread
         self.speech_thread = threading.Thread(target=self._speech_worker, daemon=True)
@@ -53,16 +121,82 @@ class VoiceInterface:
             self.recognizer.adjust_for_ambient_noise(self._mic, duration=1.5)
             logging.info(f"Voice: Calibration complete. Dynamic threshold baseline set to {self.recognizer.energy_threshold:.1f}")
         except Exception as ce:
-            logging.error(f"Voice: Persistent mic initialization/calibration failed: {ce}")
+            logging.error(f"Voice: Persistent mic initialization/calibration failed: {ce}")    # ------------------------------------------------------------------
+    # TTS engines
+    # ------------------------------------------------------------------
+    # Voice selection (env-overridable):
+    #   FLEXIE_VOICE   — Edge neural voice name. Defaults to a warm British
+    #                    male, the closest free match to a Jarvis-style butler.
+    #   FLEXIE_TTS_MODE — "neural" (default) | "sapi" (offline robotic fallback)
+    EDGE_VOICE = os.getenv("FLEXIE_VOICE", "en-GB-RyanNeural")
 
-    def _speak_powershell(self, text: str) -> bool:
-        """Speaks text out-of-process via PowerShell System.Speech, supporting instant interruption."""
-        logging.info(f"TTS [PowerShell]: Speaking: '{text}'")
+    def _speak_neural(self, text: str) -> bool:
+        """Speak via Edge neural TTS (natural, Jarvis-grade) into a temp mp3,
+        then play it. Returns False so caller can fall back to SAPI on failure."""
+        try:
+            import edge_tts
+            import pygame
+        except Exception as e:
+            logging.info(f"TTS [Neural]: unavailable ({e}); will use SAPI fallback")
+        else:
+            fd, tmp_path = tempfile.mkstemp(prefix="flexie_tts_", suffix=".mp3")
+            os.close(fd)
+            try:
+                async def _synth():
+                    communicate = edge_tts.Communicate(text, self.EDGE_VOICE)
+                    await communicate.save(tmp_path)
+
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_closed():
+                        raise RuntimeError
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                loop.run_until_complete(_synth())
+
+                if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+                    raise RuntimeError("edge-tts produced no audio")
+
+                import pygame
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init()
+                pygame.mixer.music.load(tmp_path)
+                pygame.mixer.music.play()
+
+                self._active_music_channel = True
+                while pygame.mixer.music.get_busy():
+                    if self.interrupt_speech:
+                        logging.info("TTS [Neural]: interruption detected — stopping playback")
+                        pygame.mixer.music.stop()
+                        self.interrupt_speech = False
+                        return False
+                    time.sleep(0.02)
+
+                self._active_music_channel = False
+                return True
+            except Exception as e:
+                logging.warning(f"TTS [Neural]: synthesis/playback failed: {e}")
+                self._active_music_channel = False
+                try:
+                    pygame.mixer.music.stop()
+                except Exception:
+                    pass
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+        return False
+
+    def _speak_sapi(self, text: str) -> bool:
+        """Offline SAPI fallback via PowerShell System.Speech (robotic but reliable)."""
+        logging.info(f"TTS [SAPI]: Speaking: '{text}'")
         try:
             import subprocess
             clean_text = text.replace("'", "''")
-            
-            # PowerShell command: Set rate and volume dynamically and speak
+
             cmd = (
                 "Add-Type -AssemblyName System.Speech; "
                 "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
@@ -70,39 +204,39 @@ class VoiceInterface:
                 f"$synth.Volume = {self.speech_volume}; "
                 f"$synth.Speak('{clean_text}')"
             )
-            
-            # Launch hidden PowerShell process
+
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            
+
             self._active_speech_proc = subprocess.Popen(
                 ["powershell", "-NoProfile", "-Command", cmd],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                startupinfo=startupinfo
+                startupinfo=startupinfo,
             )
-            
-            # Wait for execution to finish, checking for interruption in a loop
+
             while self._active_speech_proc.poll() is None:
                 if self.interrupt_speech:
-                    logging.info("TTS [PowerShell]: Interruption detected. Terminating speech process.")
+                    logging.info("TTS [SAPI]: interruption detected. Terminating speech process.")
                     try:
                         self._active_speech_proc.terminate()
                         self._active_speech_proc.wait(timeout=1.0)
-                    except: pass
+                    except Exception as _e:
+                        logging.debug("[interface/voice.py:292] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.interrupt_speech = False
                     self._active_speech_proc = None
                     return False
                 time.sleep(0.02)
-                
+
             self._active_speech_proc = None
             return True
         except Exception as e:
-            logging.error(f"PowerShell TTS Exception: {e}")
+            logging.error(f"SAPI TTS Exception: {e}")
             self._active_speech_proc = None
             return False
- 
+
     def _speech_worker(self):
+
         """Dedicated thread for TTS that uses highly robust, out-of-process speech."""
         self.interrupt_speech = False
         self._active_speech_proc = None
@@ -122,28 +256,28 @@ class VoiceInterface:
                     self.speech_queue.task_done()
                     continue
 
-                print(f"\n[Voice Output]: {text}") 
+                print(f"\n[Voice Output]: {text}")
                 logging.info(f"TTS Start: {text}")
-                
-                # Physical Heartbeat Beep
-                try:
-                    import winsound
-                    winsound.Beep(600, 50) # Subtle start beep
-                except: pass
 
                 self.is_speaking = True
                 self._speak_start_time = time.time()
-                
-                # P0 Feature 4: Voice Interrupt System - disabled to avoid mic conflict with persistent stream
-                # The persistent VAD stream (listen_adaptive) already handles barge-in via is_speaking flag
-                pass
 
-                self._speak_powershell(text)
+                # Neural-first with automatic offline fallback. The persistent
+                # VAD stream handles barge-in via the is_speaking flag.
+                spoke = False
+                if self.speech_mode == "neural" and is_online():
+                    spoke = self._speak_neural(text) or self._speak_sapi(text)
+                else:
+                    spoke = self._speak_sapi(text)
+                if not spoke:
+                    logging.warning("TTS: all engines failed for this utterance")
+
                 self.is_speaking = False
                 
                 self.speech_queue.task_done()
                 logging.info("TTS End.")
-            except queue.Empty:
+            except queue.Empty as _e:
+                logging.debug("[interface/voice.py:146] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 continue
             except Exception as e:
                 self.is_speaking = False
@@ -168,43 +302,57 @@ class VoiceInterface:
             try:
                 self.speech_queue.get_nowait()
                 self.speech_queue.task_done()
-            except queue.Empty:
+            except queue.Empty as _e:
+                logging.debug("[interface/voice.py:171] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 break
 
     def speak(self, text: str, interrupt: bool = False):
-        """Splits long text into sentences for streaming playback (Latency Optimization)."""
-        if not text: return
-        
+        """Queues speech after cleanup. Sentences batch into ~2-sentence chunks
+        so neural playback flows naturally instead of choppy per-sentence clips."""
+        if not text:
+            return
+
+        text = prepare_speech_text(text)
+        if not text:
+            return
+
         # Suppression filter for duplicate announcements within 4 seconds
-        if text == self.last_spoken_text and (time.time() - self.last_spoken_time < 4.0):
-            logging.info(f"TTS [Repetition Suppressed]: '{text}'")
+        now = time.time()
+        if text == self.last_spoken_text and (now - self.last_spoken_time < 4.0):
+            logging.info("TTS [Repetition Suppressed]: identical text within 4s")
             return
         self.last_spoken_text = text
-        self.last_spoken_time = time.time()
-        
+        self.last_spoken_time = now
+
         if interrupt:
             self.stop()
-        
-        # Regex to split by punctuation followed by space
-        import re
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        
+
+        # Batch sentences: flush when the pending chunk reaches 2 sentences
+        # (or 200 chars), giving natural pacing with low latency.
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
         for sentence in sentences:
-            if sentence.strip():
-                self.speech_queue.put(sentence.strip())
-        
-        # Give the thread a tiny moment to pick it up and set is_speaking=True
+            self._speech_buffer = (self._speech_buffer + " " + sentence).strip() if self._speech_buffer else sentence
+            n_sentences = len(re.findall(r"[.!?]", self._speech_buffer))
+            if n_sentences >= 2 or len(self._speech_buffer) >= 200:
+                self.speech_queue.put(self._speech_buffer)
+                self._speech_buffer = ""
+        # Flush any remainder so nothing is ever silently withheld.
+        if self._speech_buffer:
+            self.speech_queue.put(self._speech_buffer)
+            self._speech_buffer = ""
         time.sleep(0.05)
 
     def _get_adaptive_mode(self, timeout=None, phrase_time_limit=None) -> str:
         """Dynamically infers the best listening mode (fast, normal, conversation) based on interaction context."""
-        if timeout is not None and timeout <= 5:
+        # "fast" is reserved for short yes/no replies (timeout<=3). Anything
+        # longer gets a tolerant mode so Flexie never cuts off a partial command.
+        if timeout is not None and timeout <= 3:
             return "fast"
-        
+
         last_length = getattr(self, "_last_transcript_len", 0)
         if last_length > 6:
             return "conversation"
-            
+
         return "normal"
 
     def send_to_ui(self, tag: str, value: str):
@@ -215,9 +363,10 @@ class VoiceInterface:
             msg = f"{tag}:{value}"
             # Port 9886 is Config.UDP_PORT_UI
             udp_out.sendto(msg.encode('utf-8'), ('127.0.0.1', 9886))
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/voice.py:218] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
-    def listen_adaptive(self, mode="normal") -> str:
+    def listen_adaptive(self, mode="normal", timeout=None) -> str:
         """Adaptive real-time listening featuring persistent mic streaming, RMS VAD, and echo-safe endpoints."""
         start_time = time.time()
         
@@ -231,13 +380,14 @@ class VoiceInterface:
                 logging.error(f"VAD Persistent Mic stream lazy init failed: {e}")
                 return ""
 
-        # 1. Target speech timeouts (FAST: 0.5s, NORMAL: 0.7s, CONVERSATION: 1.0s base)
+        # 1. Target speech timeouts. Generous intra-phrase pauses so commands
+        # are never finalized mid-sentence (user keeps talking after a short pause).
         if mode == "fast":
-            silence_timeout = 0.5
-        elif mode == "conversation":
-            silence_timeout = 1.0  # Base conversation timeout, scales dynamically
-        else:
             silence_timeout = 0.7
+        elif mode == "conversation":
+            silence_timeout = 1.2  # Longer commands tolerate natural thinking pauses
+        else:
+            silence_timeout = 0.9
 
         logging.info(f"VAD [Listening]: Mode={mode.upper()}, SilenceTimeout={silence_timeout}s")
         
@@ -269,7 +419,7 @@ class VoiceInterface:
             last_partial_time = time.time()
             
             # Timeout for starting to speak (7.0 seconds total wait window)
-            max_wait_time = 7.0
+            max_wait_time = max(0.1, float(timeout)) if timeout is not None else Config.VOICE_LISTEN_TIMEOUT
             wait_elapsed = 0.0
             err_count = 0
             
@@ -314,7 +464,8 @@ class VoiceInterface:
                             vad_obj = webrtcvad.Vad(2)
                             self._webrtc_vad = vad_obj
                         is_webrtc_speech = vad_obj.is_speech(raw_chunk, sample_rate)
-                    except:
+                    except Exception as _e:
+                        logging.debug("[interface/voice.py:317] Swallowed exception: %s: %s", type(_e).__name__, _e)
                         is_webrtc_speech = None
                     
                     # Adapt ambient noise floor during silent gaps (and only when AI is NOT speaking)
@@ -345,11 +496,13 @@ class VoiceInterface:
                             def run_partial_asr(buf_slice):
                                 try:
                                     partial_audio = sr.AudioData(buf_slice, sample_rate, sample_width)
-                                    partial_text = self.recognizer.recognize_google(partial_audio, language=self.lang).lower().strip()
+                                    with self._asr_lock:
+                                        partial_text = self.recognizer.recognize_google(partial_audio, language=self.lang).lower().strip()
                                     if partial_text:
                                         logging.info(f"VAD [Partial ASR]: \"{partial_text}...\"")
                                         self.send_to_ui("PARTIAL", partial_text + "...")
-                                except:
+                                except Exception as _e:
+                                    logging.debug("[interface/voice.py:352] Swallowed exception: %s: %s", type(_e).__name__, _e)
                                     pass
                             threading.Thread(target=run_partial_asr, args=(bytes(audio_buffer),), daemon=True).start()
                         else:
@@ -360,13 +513,15 @@ class VoiceInterface:
                                 silence_start_time = time.time()
                             else:
                                 elapsed_silence = time.time() - silence_start_time
-                                
-                                # Adapt timeout based on mode, but STRICTLY cap to reduce lag
-                                if mode == "fast":
-                                    current_timeout = 0.5
-                                else:
-                                    current_timeout = 0.7
-                                    
+
+                                # Base tolerance from mode, scaled up for sustained speech:
+                                # a longer command means the user tends to pause mid-thought
+                                # (e.g. "open chrome and ... open notepad"). Endpoint only
+                                # fires after a genuinely long gap so we never cut them off.
+                                current_timeout = silence_timeout
+                                if active_speech_duration > 1.5:
+                                    current_timeout = max(current_timeout, 1.1)
+
                                 if elapsed_silence >= current_timeout:
                                     logging.info(f"VAD [Speech Ended]: Paused {elapsed_silence:.1f}s >= {current_timeout:.1f}s. Finalizing.")
                                     break
@@ -375,11 +530,12 @@ class VoiceInterface:
                             if wait_elapsed >= max_wait_time:
                                 logging.info("VAD [Timeout]: No human voice detected.")
                                 return ""
-                                
-                    # Safety loop cap
-                    if total_duration >= 12.0:
-                        logging.info("VAD [Safety Cap]: Utterance cap reached.")
-                        break
+
+                        # Safety loop cap — generous so longer commands are never truncated
+                        # mid-word. Endpoint detection already handles finishing.
+                        if total_duration >= 20.0:
+                            logging.info("VAD [Safety Cap]: Utterance cap reached.")
+                            break
                         
                 except Exception as stream_err:
                     err_count += 1
@@ -389,7 +545,8 @@ class VoiceInterface:
                         try:
                             if hasattr(self, '_mic_context') and self._mic_context:
                                 try: self._mic.__exit__(None, None, None)
-                                except: pass
+                                except Exception as _e:
+                                    logging.debug("[interface/voice.py:392] Swallowed exception: %s: %s", type(_e).__name__, _e)
                             self._mic = sr.Microphone()
                             self._mic_context = self._mic.__enter__()
                             stream = self._mic.stream
@@ -407,13 +564,13 @@ class VoiceInterface:
             self.send_to_ui("STATE", "THINKING")
             
             # ASR recognition call
-            from utils.helpers import is_online
             audio_data = sr.AudioData(bytes(audio_buffer), sample_rate, sample_width)
             
             recognized_text = ""
             if is_online():
                 try:
-                    text = self.recognizer.recognize_google(audio_data, language=self.lang)
+                    with self._asr_lock:
+                        text = self.recognizer.recognize_google(audio_data, language=self.lang)
                     recognized_text = text.lower().strip()
                     logging.info(f"VAD [Recognized Online]: \"{recognized_text}\"")
                 except Exception as online_err:
@@ -488,17 +645,21 @@ class VoiceInterface:
         """Listens for speech with dynamic VAD, yielding fully sanitized transcripts."""
         mode = self._get_adaptive_mode(timeout, phrase_time_limit)
         try:
-            recognized_text = self.listen_adaptive(mode=mode)
+            recognized_text = self.listen_adaptive(mode=mode, timeout=timeout)
             
             # 7. Transcript Sanitization & Noise Token Filtering
+            # NOTE: "yes"/"no"/"okay" are deliberately NOT in this list — they are
+            # meaningful confirmation replies, and voice.confirm() depends on
+            # hearing "yes" pass through listen().
             cleaned_text = recognized_text.strip().lower()
-            if cleaned_text in ["user", "null", "dhanush", "okay", "yes", "no"]:
+            if cleaned_text in ["user", "null", "dhanush"]:
                 logging.info(f"VAD [Sanitizer]: Discarded static/noise token: '{recognized_text}'")
                 return ""
                 
             self._last_transcript_len = len(cleaned_text.split())
             return recognized_text
-        except sr.UnknownValueError:
+        except sr.UnknownValueError as _e:
+            logging.debug("[interface/voice.py:501] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return ""
         except sr.RequestError:
             logging.error("Google Speech service offline.")

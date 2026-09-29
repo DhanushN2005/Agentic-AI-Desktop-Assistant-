@@ -16,7 +16,7 @@ def handle_memory_system(orch, c):
         else:
             response = "What would you like me to remember?"
     elif any(w in cmd for w in ["what do you remember", "what have you learned", "recall"]):
-        facts = orch.awareness.recall_facts(5)
+        facts = orch.awareness.recall_facts(limit=5)
         response = "I remember: " + "; ".join(facts) if facts else "I'm still learning about you."
     elif any(w in cmd for w in ["memory stats", "memory status", "how much do you remember"]):
         response = orch.memory_system.get_memory_stats()

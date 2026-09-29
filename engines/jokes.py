@@ -1,5 +1,6 @@
 import urllib.request
 import json
+import logging
 
 
 class JokesEngine:
@@ -15,7 +16,8 @@ class JokesEngine:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
                 return data.get("joke", "No joke found.")
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/jokes.py:18] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
         # Try JokeAPI
@@ -28,7 +30,8 @@ class JokesEngine:
                     return data.get("joke", "No joke found.")
                 elif data.get("type") == "twopart":
                     return f"{data.get('setup', '')}\n{data.get('delivery', '')}"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/jokes.py:31] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
         return "Couldn't fetch a joke right now. Try again later."
@@ -43,5 +46,6 @@ class JokesEngine:
                     return data.get("joke", "No joke found.")
                 elif data.get("type") == "twopart":
                     return f"{data.get('setup', '')}\n{data.get('delivery', '')}"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/jokes.py:46] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return self.get_joke()

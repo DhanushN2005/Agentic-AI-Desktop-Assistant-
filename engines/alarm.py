@@ -1,17 +1,17 @@
-import time
 import threading
-import logging
+import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Callable
+import logging
 
 
 class AlarmEngine:
     """Local alarm and timer system using threading with voice alerts."""
 
-    def __init__(self, speak_callback: Optional[Callable] = None):
-        self._alarms: Dict[str, threading.Timer] = {}
-        self._timers: Dict[str, threading.Timer] = {}
-        self._active_countdowns: List[dict] = []
+    def __init__(self, speak_callback: Callable | None = None):
+        self._alarms: dict[str, threading.Timer] = {}
+        self._timers: dict[str, threading.Timer] = {}
+        self._active_countdowns: list[dict] = []
         self._lock = threading.Lock()
         self._speak = speak_callback or self._default_speak
 
@@ -22,7 +22,8 @@ class AlarmEngine:
             for _ in range(3):
                 winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
                 time.sleep(0.3)
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/alarm.py:24] Swallowed exception: %s: %s", type(_e).__name__, _e)
             print(f"[ALERT] {text}")
 
     def set_speak_callback(self, callback: Callable):
@@ -40,7 +41,8 @@ class AlarmEngine:
                         year=now.year, month=now.month, day=now.day
                     )
                     break
-                except ValueError:
+                except ValueError as _e:
+                    logging.debug("[engines/alarm.py:42] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     continue
             if target is None:
                 return f"Could not understand time format: {time_str}"
@@ -65,6 +67,7 @@ class AlarmEngine:
             self._alarms[alarm_id] = timer
             return f"Alarm set for {time_str} ({label})."
         except Exception as e:
+            logging.debug("[engines/alarm.py:66] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Could not set alarm: {e}"
 
     def set_timer(self, seconds: int, label: str = "Timer") -> str:
@@ -121,7 +124,7 @@ class AlarmEngine:
             return "No active timers."
         return f"{len(self._timers)} timer(s) active."
 
-    def get_triggered(self) -> List[dict]:
+    def get_triggered(self) -> list[dict]:
         """Get list of triggered alarms/timers."""
         triggered = [d for d in self._active_countdowns if d.get("triggered")]
         self._active_countdowns = [d for d in self._active_countdowns if not d.get("triggered")]
