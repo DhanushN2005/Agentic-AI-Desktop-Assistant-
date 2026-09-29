@@ -31,6 +31,8 @@ class YouTubeController(BrowserEngine):
 
         try:
             self.navigate(f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}")
+            if not self.page:
+                return "Browser page is closed or not available."
 
             # Selector for the first video title
             video_selector = "ytd-video-renderer a#video-title"

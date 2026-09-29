@@ -62,14 +62,25 @@ class BrowserEngine:
         self._thread_id = curr_thread
 
         # Browser heartbeat check for existing session
-        if self.playwright and self.context and self.page:
-            if not self.is_healthy():
-                self.logger.warning("Browser session is unhealthy or crashed. Triggering safe auto-recovery...")
-                self.page = None
-                self.context = None
-                self.browser = None
+        if self.playwright and self.context:
+            if self.page and not self.page.is_closed():
+                if self.is_healthy():
+                    return True
+            else:
+                # Page was closed, re-attach or open a new page in active context
+                try:
+                    self.page = self.context.pages[-1] if self.context.pages else self.context.new_page()
+                    if self.is_healthy():
+                        return True
+                except Exception as _pe:
+                    logging.debug("Error recovering page in context: %s", _pe)
 
-        if not self.browser or not self.context:
+            self.logger.warning("Browser session is unhealthy or closed. Triggering safe auto-recovery...")
+            self.page = None
+            self.context = None
+            self.browser = None
+
+        if not self.context:
             try:
                 # Check for existing lock file in session dir and force clear it if recovering
                 lock_file = os.path.join(self.user_data_dir, "SingletonLock")
