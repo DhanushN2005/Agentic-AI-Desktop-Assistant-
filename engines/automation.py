@@ -2,7 +2,7 @@
 import time
 import threading
 import logging
-from typing import Dict, List, Callable
+from typing import Dict, List
 from datetime import datetime
 
 # ---- Compatibility shims for orchestrator (fixes ImportError: cannot import name 'GoalExecutor') ----

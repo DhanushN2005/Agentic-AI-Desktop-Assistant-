@@ -18,7 +18,7 @@ import time
 import threading
 from typing import Optional, Callable
 from core.goal_planner import TaskGraph, TaskStep, StepStatus, VerificationStrategy
-from core.tool_registry import ToolRegistry, PermissionLevel
+from core.tool_registry import ToolRegistry
 from core.permission_system import PermissionSystem
 from core.action_result import ActionResult
 from core.execution_graph import ExecutionGraph, ExecutionNode

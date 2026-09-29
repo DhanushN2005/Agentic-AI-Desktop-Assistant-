@@ -1,9 +1,10 @@
 import warnings
+# Suppress FutureWarning from google.generativeai before any google imports
+warnings.filterwarnings("ignore", category=FutureWarning)
 import logging
 import json
 from collections import OrderedDict
 from urllib.request import urlopen, Request
-warnings.filterwarnings("ignore", category=FutureWarning)
 
 # google-genai (new SDK) is the only supported Gemini path.
 # Legacy google-generativeai was removed from requirements; kept as
@@ -22,7 +23,6 @@ except ImportError as _e:
     genai_legacy = None
 # Back-compat alias: code below prefers genai_new, falls back to genai_legacy.
 genai = genai_legacy
-warnings.filterwarnings("ignore", category=FutureWarning)
 try:
     from groq import Groq
 except ImportError as e:

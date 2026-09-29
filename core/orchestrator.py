@@ -2,19 +2,13 @@ import logging
 import threading
 import time
 import socket
-import datetime
-import os
-import sys
 import re
-import subprocess
-import webbrowser
 import atexit
 import queue
-from typing import Dict, Optional, List
-import urllib.parse
+from typing import List
 import json
 from core.capability_registry import CapabilityRegistry
-from core.task_classifier import TaskClassifier, TaskType, TaskState
+from core.task_classifier import TaskClassifier, TaskType
 from core.workflow_parser import WorkflowParser
 from core.workflow_gatekeeper import WorkflowGatekeeper, ClassificationType
 from voice.tts_guard import TTSGuard
@@ -22,16 +16,15 @@ from verification.strict_validator import StrictValidator
 from verification.capability_validator import CapabilityValidator
 from core.task_critic import TaskCritic
 from core.agent_arbitrator import AgentArbitrator
-from core.dag_planner import DAGPlanner, DAGTask
+from core.dag_planner import DAGPlanner
 from verification.semantic_validator import SemanticValidator
 from core.capability_provider import PluginDiscovery
-from core.execution_graph import ExecutionGraph, ExecutionNode
+from core.execution_graph import ExecutionGraph
 from core.adaptive_router import AdaptiveRouter
 from core.action_result import ActionResult
 from core.context_memory import ContextMemory
 from core.workflow_executor import WorkflowExecutor
 from core.handlers import dispatch_intent, handle_context_command
-import uuid
 
 MAX_PLANNING_DEPTH = 2
 
@@ -44,7 +37,7 @@ except ImportError as _e:
 
 # Engine Imports
 from utils.config import Config
-from utils.helpers import get_numbers, is_online
+from utils.helpers import is_online
 from core.brain import Brain
 from core.router import IntentRouter
 from engines.memory import MemoryEngine
@@ -102,6 +95,10 @@ class FlexieOrchestrator:
         self.execution_graph = ExecutionGraph()
         self.adaptive_router = AdaptiveRouter()
         self.workflow = WorkflowExecutor(self)
+        # LRU route cache: skips regex+LLM routing for recently-seen commands.
+        # Key: normalised command string. Value: (intent, confidence).
+        self._route_cache: dict[str, tuple[str, float]] = {}
+        self._route_cache_max = 64
         # Hybrid routing + Goal planning (deferred wiring until ToolRegistry is ready)
         self.hybrid_router = None
         self.goal_planner = None
@@ -324,7 +321,7 @@ class FlexieOrchestrator:
             if item.get("content")
         )
 
-    def _record_text(self, text: str, conversation=False):
+    def _record_text(self, text: str, conversation=True):
         if not text:
             return
         self.memory.add_chat("Flexie", text)
@@ -341,6 +338,29 @@ class FlexieOrchestrator:
 
     def record_response(self, text: str):
         self._record_text(text, conversation=True)
+
+    def _async_memory_write(self, c: str):
+        """Fire-and-forget background writer for structured memory and vector store.
+
+        Runs in a daemon thread so it never blocks the routing hot path (Fix #4).
+        """
+        if not (hasattr(self, 'memory_manager') and self.memory_manager):
+            return
+        try:
+            from core.memory_manager import MemoryCategory
+            self.memory_manager.remember(c[:80], c, MemoryCategory.CONVERSATION, importance=0.3, tags=["voice"])
+            low = c.lower()
+            if any(p in low for p in ["my name is", "i like", "i love", "my favorite", "remember that", "i prefer"]):
+                key = c[:40].strip()
+                importance = 0.8 if "remember that" in low else 0.6
+                cat = MemoryCategory.FACTS if "remember" in low else MemoryCategory.PREFERENCES
+                self.memory_manager.remember(f"fact:{key}", c, cat, importance=importance, tags=["auto"])
+                try:
+                    self.brain.vector_store.add_episode(f"fact_{int(time.time())}", c, {"source": "auto-extract"})
+                except Exception as _e:
+                    logging.debug("[core/orchestrator.py:async_memory] vector_store failed: %s: %s", type(_e).__name__, _e)
+        except Exception as _e:
+            logging.debug("[core/orchestrator.py:async_memory] Swallowed: %s: %s", type(_e).__name__, _e)
 
     def speak(self, text: str, silent: bool = False, record_chat: bool = True):
         if not text: return
@@ -525,36 +545,23 @@ class FlexieOrchestrator:
         add_turn = getattr(self.memory, "add_conversation_turn", None)
         if callable(add_turn):
             add_turn("user", c)
-        # Persistent structured memory with auto-extract
-        if hasattr(self, 'memory_manager') and self.memory_manager:
-            try:
-                from core.memory_manager import MemoryCategory
-                self.memory_manager.remember(c[:80], c, MemoryCategory.CONVERSATION, importance=0.3, tags=["voice"])
-                # Auto-extract preferences/facts: "my X is Y", "I like X", "remember that"
-                low = c.lower()
-                if any(p in low for p in ["my name is", "i like", "i love", "my favorite", "remember that", "i prefer"]):
-                    # Extract key: after "my " or "i like "
-                    key = c[:40].strip()
-                    # Short-term for "remember this" without importance
-                    if "remember that" in low:
-                        importance = 0.8
-                    else:
-                        importance = 0.6
-                    self.memory_manager.remember(f"fact:{key}", c, MemoryCategory.FACTS if "remember" in low else MemoryCategory.PREFERENCES, importance=importance, tags=["auto"])
-                    # Also add to VectorStore for semantic search
-                    try:
-                        self.brain.vector_store.add_episode(f"fact_{int(time.time())}", c, {"source": "auto-extract"})
-                    except Exception as _e:
-                        logging.debug("[core/orchestrator.py:486] Swallowed exception: %s: %s", type(_e).__name__, _e)
-            except Exception as _e:
-                logging.debug("[core/orchestrator.py:487] Swallowed exception: %s: %s", type(_e).__name__, _e)
+        # Persistent structured memory — fire-and-forget background thread so
+        # SQLite + vector writes never block the routing hot path (Fix #4).
+        threading.Thread(target=self._async_memory_write, args=(c,), daemon=True).start()
         
-        # Check Adaptive Router cache first
-        intent = self.adaptive_router.get_cached_route(c)
-        if intent:
+        # Check LRU route cache first (Fix #9) then adaptive router then Tier-1 regex.
+        if c in self._route_cache:
+            intent, confidence = self._route_cache[c]
+            self.logger.debug(f"[ROUTE CACHE HIT] '{c}' -> {intent} ({confidence:.2f})")
+        elif self.adaptive_router.get_cached_route(c):
+            intent = self.adaptive_router.get_cached_route(c)
             confidence = 1.0
         else:
             intent, confidence = self.router.route(c)
+            # Populate LRU cache (evict oldest when full)
+            if len(self._route_cache) >= self._route_cache_max:
+                self._route_cache.pop(next(iter(self._route_cache)))
+            self._route_cache[c] = (intent, confidence)
         params = {}
 
         # 1b. CONTEXT OVERRIDE: If YouTube is active, redirect ambiguous commands to YouTube control
@@ -568,10 +575,11 @@ class FlexieOrchestrator:
         # Invoke AI reasoning for low confidence OR complex multi-step prompts
         # Skip length check if it is already a generated subcommand, or if confidence is extremely high (Tier 1 match)
         
-        # HybridRouter escalation: check if command is complex via deterministic patterns
+        # HybridRouter escalation: classify ONCE and cache for reuse at line 591 (Fix #5)
+        hr_mode = None
         if hasattr(self, 'hybrid_router') and self.hybrid_router and not is_subcommand and depth < MAX_PLANNING_DEPTH:
             try:
-                hr_mode = self.hybrid_router.classify(c)
+                hr_mode = self.hybrid_router.classify(c)  # single call — reused below
                 if hr_mode == "complex":
                     # Try GoalPlanner decomposition for richer task graph
                     if hasattr(self, 'goal_planner') and self.goal_planner:
@@ -593,14 +601,15 @@ class FlexieOrchestrator:
             if callable(artifact_getter) and artifact_getter():
                 if re.search(r"\b(add|change|update|modify|edit|fix|improve|enhance|insert|append)\b", c):
                     artifact_followup = True
-        # Hybrid escalation: confidence<0.7 or len>8 -> planner
-        if hasattr(self, 'hybrid_router') and self.hybrid_router and not is_subcommand:
-            if (confidence < 0.7 or len(c.split()) > 8) and self.hybrid_router.classify(c) == "complex":
+        # Hybrid escalation: reuse hr_mode from above — no second classify() call (Fix #5)
+        # Threshold raised: >10 words + confidence<0.75 (was >7/<0.9) — Fix #6
+        if hr_mode is not None and not is_subcommand:
+            if (confidence < 0.7 or len(c.split()) > 10) and hr_mode == "complex" and confidence < 0.75:
                 needs_dynamic = True
         # FIX: Never re-plan subcommands — they are already planned steps
         if is_subcommand:
             needs_dynamic = False
-        elif len(c.split()) > 7 and confidence < 0.9:
+        elif len(c.split()) > 10 and confidence < 0.75:  # was >7 / <0.9 — Fix #6
             needs_dynamic = True
             
         # Block planner if it's not a GOAL
@@ -998,6 +1007,24 @@ class FlexieOrchestrator:
                 self.logger.error(f"Monitor loop error: {e}")
             time.sleep(6) # Optimized: Increased sleep to 6s to reduce idle CPU consumption
 
+    def _note_auth_rejection(self):
+        """Log a dropped datagram and surface it to the UI (rate-limited).
+
+        A token mismatch used to be completely invisible from the user's side —
+        typing into the assistant simply did nothing. Telling them makes the
+        failure diagnosable ("restart Flexie") instead of silent.
+        """
+        self.logger.warning("UDP: rejected message without valid token")
+        now = time.time()
+        if now - getattr(self, "_last_auth_notice", 0.0) < 30:
+            return
+        self._last_auth_notice = now
+        self.send_to_ui(
+            "SAY",
+            "⚠ Ignored a UI command: authentication token mismatch. Restart Flexie "
+            "so the UI/bridge and the orchestrator share this run's token.",
+        )
+
     def _network_loop(self):
         """Handle incoming commands from UDP (Legacy/Simple) or WebUI."""
         import select
@@ -1013,7 +1040,7 @@ class FlexieOrchestrator:
                     from utils.udp_auth import unpack as _udp_unpack
                     msg = _udp_unpack(raw)
                     if msg is None:
-                        self.logger.warning("UDP: rejected message without valid token")
+                        self._note_auth_rejection()
                         continue
                     msg = msg.strip()
                     if not msg: continue
@@ -1096,6 +1123,13 @@ class FlexieOrchestrator:
                             SystemCtrl.set_brightness(v)
                         except Exception as _e:
                             logging.debug("[core/orchestrator.py:1006] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                    elif msg.startswith("DEEP_SEARCH:"):
+                        # PyQt spotlight "?query" → full web research (the UI used
+                        # to send this prefix verbatim, so the LLM received the
+                        # literal string "DEEP_SEARCH:…" instead of researching).
+                        query = msg.split(":", 1)[1].strip()
+                        if query:
+                            self.cmd_queue.put(f"research {query}")
                     elif msg in ("STOP", "CANCEL", "stop", "cancel"):
                         self.stop_event.set()
                         self.speak("Task cancelled from UI.")

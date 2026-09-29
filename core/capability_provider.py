@@ -25,7 +25,7 @@ class PluginDiscovery:
             self.logger.warning(f"[PLUGIN] Directory '{self.plugins_dir}' does not exist.")
             return
 
-        for root, dirs, files in os.walk(self.plugins_dir):
+        for _root, _dirs, files in os.walk(self.plugins_dir):
             for file in files:
                 if file.endswith(".py") and file != "__init__.py":
                     module_name = f"{self.plugins_dir}.{file[:-3]}"

@@ -4,7 +4,7 @@ logging.disable(logging.CRITICAL)
 print("=" * 60)
 print("FIX 1: EventBus worker survives idle timeouts")
 print("=" * 60)
-import threading, time
+import time
 from core.event_bus.bus import EventBus, Event
 bus = EventBus()
 got = []
@@ -43,7 +43,7 @@ req = open("requirements.txt", encoding="utf-8").read()
 print("requirements.txt has PyAudio:", "PyAudio" in req)
 import importlib.util
 print("PyAudio importable on this machine:", importlib.util.find_spec("pyaudio") is not None)
-from utils.installer import REQUIRED_PACKAGES, install_missing
+from utils.installer import REQUIRED_PACKAGES
 print("installer REQUIRED_PACKAGES has PyAudio:", "PyAudio" in REQUIRED_PACKAGES)
 m = {"PyAudio": "pyaudio"}
 print("installer maps PyAudio -> pyaudio:", m.get("PyAudio"))
@@ -76,7 +76,7 @@ FlexieOrchestrator.speak(d, short)
 long_text = ("Here is a very detailed explanation. " * 20)  # ~900 chars
 FlexieOrchestrator.speak(d, long_text)
 
-for tag, val in sent:
+for _tag, val in sent:
     print(f"SAY len={len(val):4} | {val[:70]!r}...")
 say_full = [v for t, v in sent if t == "SAY"]
 assert say_full[0] == short, "short text unchanged"
@@ -90,8 +90,6 @@ print()
 print("=" * 60)
 print("FIX 5: awareness handler — who am I / limitations / recall")
 print("=" * 60)
-import re
-from utils.config import Config
 
 class FakeAwareness:
     def __init__(self, facts):

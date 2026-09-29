@@ -191,7 +191,9 @@ class CodeSearchEngine:
                                 return result
                 except Exception as e:
                     self.logger.debug(f"[CODE_SEARCH] Error reading {filepath}: {e}")
+                searched += 1
 
+        self.logger.debug(f"[CODE_SEARCH] Searched {searched} files, found {result.total_matches} matches for '{query}'")
         return result
 
     def find_function(

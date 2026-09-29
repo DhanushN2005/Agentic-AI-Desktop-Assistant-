@@ -44,8 +44,8 @@ class DesktopControl:
                 pyautogui.FAILSAFE = True
                 pyautogui.PAUSE = 0.1
                 self._pyautogui = pyautogui
-            except ImportError:
-                raise RuntimeError("pyautogui not installed")
+            except ImportError as err:
+                raise RuntimeError("pyautogui not installed") from err
         return self._pyautogui
 
     def _get_pyperclip(self):
@@ -53,8 +53,8 @@ class DesktopControl:
             try:
                 import pyperclip
                 self._pyperclip = pyperclip
-            except ImportError:
-                raise RuntimeError("pyperclip not installed")
+            except ImportError as err:
+                raise RuntimeError("pyperclip not installed") from err
         return self._pyperclip
 
     # --- SCREEN OPERATIONS ---

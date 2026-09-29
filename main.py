@@ -52,9 +52,15 @@ def run_ui():
 def main():
     check_single_instance()
     # Per-run UDP control-plane token shared with child UI/bridge processes
-    # (they inherit os.environ). See utils/udp_auth.py.
+    # (they inherit os.environ) and published to .flexie_udp_token so a bridge
+    # started by hand authenticates too. See utils/udp_auth.py.
     import secrets as _secrets
     os.environ.setdefault("FLEXIE_UDP_TOKEN", _secrets.token_urlsafe(24))
+    try:
+        from utils.udp_auth import publish_token as _publish_token
+        _publish_token(os.environ["FLEXIE_UDP_TOKEN"])
+    except Exception as _e:
+        logging.debug("[main.py:61] Swallowed exception: %s: %s", type(_e).__name__, _e)
     print("\n" + "="*40)
     print("      F L E X I E   2 . 0   C O R E      ")
     print("="*40)

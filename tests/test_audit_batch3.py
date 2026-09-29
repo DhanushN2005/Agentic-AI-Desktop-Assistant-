@@ -1,10 +1,7 @@
 """Batch 3 audit fixes: validator defaults, verify_step, vector backoff, WAL, TTL."""
-import os
 import sqlite3
 import time
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from verification.capability_validator import CapabilityValidator
 

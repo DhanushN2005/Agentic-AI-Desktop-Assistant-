@@ -8,7 +8,7 @@ import subprocess
 import time
 from typing import Dict, List
 from utils.config import Config
-from utils.helpers import get_numbers, is_online, find_executable
+from utils.helpers import find_executable
 import logging
 
 class FileManager:
@@ -34,6 +34,17 @@ class FileManager:
     def _suggest(self, q, n=3):
         return difflib.get_close_matches(q.lower(), self._all_names, n=n, cutoff=0.4)
 
+    def _launch_path(self, path: str, is_run: bool = False):
+        """Helper to run or open a file/application path safely."""
+        if not path or not os.path.exists(path):
+            raise FileNotFoundError(f"Path does not exist: {path}")
+        if is_run and path.lower().endswith((".exe", ".bat", ".cmd", ".ps1")):
+            subprocess.Popen([path], shell=False)
+        elif is_run and path.lower().endswith(".py"):
+            subprocess.Popen(["python", path], shell=False)
+        else:
+            os.startfile(path)
+
     def open_item(self, query: str, target_path: str = None) -> str:
         is_run = "run" in query.lower()
         q = re.sub(r"\b(open|run|launch|start|the|folder|app|application)\b", "", query).strip().lower()
@@ -52,9 +63,30 @@ class FileManager:
                 logging.debug("[engines/files.py:48] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 del self._cache[q]
 
-        # App lookup
+        # Check if q corresponds to a directory or project on desktop or search roots
+        clean_q = re.sub(r"\b(created|my|the|new|project)\b", "", q).strip()
+        desktop = Config.FOLDER_SHORTCUTS.get("desktop", "")
+        if desktop and os.path.isdir(desktop):
+            for entry in os.listdir(desktop):
+                entry_path = os.path.join(desktop, entry)
+                if os.path.isdir(entry_path):
+                    entry_clean = entry.lower().replace("_", "").replace(" ", "").replace("-", "")
+                    q_clean = clean_q.replace("_", "").replace(" ", "").replace("-", "")
+                    if q_clean and (q_clean in entry_clean or entry_clean in q_clean):
+                        try:
+                            if target_path:
+                                self._launch_path(entry_path, is_run)
+                            else:
+                                os.startfile(entry_path)
+                            self._cache[q] = entry_path
+                            self.last_opened_path = entry_path
+                            return f"Opening project folder {entry}."
+                        except Exception as _e:
+                            logging.debug("Could not open desktop folder %s: %s", entry, _e)
+
+        # App lookup (exact match first, then whole-word match)
         for app, path in Config.APPS.items():
-            if app in q:
+            if re.search(r"\b" + re.escape(app) + r"\b", q):
                 try:
                     if path.startswith("http"):
                         webbrowser.open(path)
@@ -160,8 +192,9 @@ class FileManager:
 
     def create_folder(self, cmd: str) -> str:
         loc = Config.FOLDER_SHORTCUTS.get("desktop", Config.USER_HOME)
+        cmd_lower = cmd.lower()
         for n, p in Config.FOLDER_SHORTCUTS.items():
-            if f"in {n}" in cmd:
+            if f"in {n}" in cmd_lower or f"on {n}" in cmd_lower or f"at {n}" in cmd_lower or f"inside {n}" in cmd_lower or n in cmd_lower:
                 loc = p
                 break
         
@@ -185,11 +218,17 @@ class FileManager:
             name = cmd.split("named")[-1].strip()
         elif "called" in cmd:
             name = cmd.split("called")[-1].strip()
+        else:
+            # Try to extract name from command if user says "create a folder in desktop notes" or "create folder test"
+            rem = re.sub(r"\b(create|make|new|a|the|folder|directory|in|on|at|inside|desktop|downloads|documents)\b", "", cmd, flags=re.IGNORECASE).strip()
+            if rem:
+                name = rem.split()[0].strip()
             
         # Clean up name: stop at prepositions (e.g., "dhanush on desktop" -> "dhanush")
-        for stop in [" on ", " at ", " in "]:
+        for stop in [" on ", " at ", " in ", " inside "]:
             if stop in f" {name} ":
                 name = name.split(stop.strip())[0].strip()
+        name = re.sub(r'[\\/*?:"<>|]', "", name).strip() or "Flexie_Folder"
         path = os.path.join(loc, name)
         
         # Priority 1 & 6: Execute with focus and verification loop
@@ -230,8 +269,9 @@ class FileManager:
         loc = target_dir or Config.FOLDER_SHORTCUTS.get("desktop", Config.USER_HOME)
         
         # 3. Handle Location
+        cmd_l_loc = cmd.lower()
         for n, p in Config.FOLDER_SHORTCUTS.items():
-            if f"in {n}" in cmd.lower() or f"on {n}" in cmd.lower():
+            if f"in {n}" in cmd_l_loc or f"on {n}" in cmd_l_loc or f"at {n}" in cmd_l_loc or f"inside {n}" in cmd_l_loc or n in cmd_l_loc:
                 loc = p
                 break
                 
@@ -295,7 +335,7 @@ class FileManager:
         # Priority 1: Execution verification and self-healing loop
         success = False
         err_msg = ""
-        for attempt in range(2):
+        for _ in range(2):
             try:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(content)
@@ -438,7 +478,7 @@ class FileManager:
         
         success = False
         err_msg = ""
-        for attempt in range(2):
+        for _ in range(2):
             try:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(content)

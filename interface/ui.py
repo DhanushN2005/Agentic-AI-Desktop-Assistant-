@@ -13,6 +13,19 @@ import webbrowser
 from ctypes import wintypes
 
 import psutil
+
+# ── Project root on sys.path ────────────────────────────────────────────────
+# This file is launched AS A SCRIPT (``python interface/ui.py``, spawned by
+# main.py), so Python puts ``interface/`` on sys.path — not the project root.
+# Without this bootstrap every in-function ``from utils...`` import below would
+# raise ModuleNotFoundError. That is fatal for connectivity: utils.udp_auth
+# would be unavailable, so commands would be sent to the orchestrator WITHOUT
+# the per-run token and silently rejected ("UDP: rejected message without valid
+# token") — i.e. typing into the assistant appeared to do nothing.
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT_DIR not in sys.path:
+    sys.path.insert(0, _ROOT_DIR)
+
 from PyQt6.QtCore import (
     QEasingCurve,
     QParallelAnimationGroup,
@@ -1217,7 +1230,6 @@ class EnhancedFlexieOrb(QWidget):
         if not self.isVisible(): return
 
         t = time.time()
-        v  = self._view_scale
         st = self.state
 
         # ring rotation speed per state
@@ -1750,14 +1762,40 @@ class FlexieUI(QWidget):
         self.tray.setContextMenu(menu)
         self.tray.show()
 
-    def _send_udp(self, msg: str):
-        # Authenticate on the orchestrator control plane (utils/udp_auth.py).
+    def _send_udp(self, msg: str) -> bool:
+        """Send a command to the orchestrator on 127.0.0.1:9887.
+
+        FAIL CLOSED: the orchestrator rejects any datagram that is not
+        token-signed, so sending it anyway only makes the UI look dead. When the
+        auth helper is unavailable we report the failure and send nothing.
+        """
         try:
             from utils.udp_auth import pack as _udp_pack
-            msg = _udp_pack(msg)
+        except Exception as e:
+            logging.error("[interface/ui.py:_send_udp] UDP auth unavailable: %s: %s", type(e).__name__, e)
+            self._show_link_error("AUTH UNAVAILABLE")
+            return False
+        try:
+            self.udp_sock.writeDatagram(
+                _udp_pack(msg).encode('utf-8'),
+                QHostAddress.SpecialAddress.LocalHost,
+                9887,
+            )
+            return True
+        except Exception as e:
+            logging.error("[interface/ui.py:_send_udp] UDP send failed: %s: %s", type(e).__name__, e)
+            self._show_link_error("SEND FAILED")
+            return False
+
+    def _show_link_error(self, detail: str = ""):
+        """Surface a connectivity problem on the panel instead of failing silently."""
+        try:
+            label = getattr(self.panel, "status_label", None)
+            if label is not None:
+                label.setText(f"STATUS: ⚠ LINK ERROR ({detail})" if detail else "STATUS: ⚠ LINK ERROR")
         except Exception as _e:
-            logging.debug("[interface/ui.py:_send_udp] Swallowed exception: %s: %s", type(_e).__name__, _e)
-        self.udp_sock.writeDatagram(msg.encode('utf-8'), QHostAddress.SpecialAddress.LocalHost, 9887)
+            logging.debug("[interface/ui.py:_show_link_error] Swallowed exception: %s: %s", type(_e).__name__, _e)
+
 
     def _wake(self):
         self._send_udp("wake up")
@@ -1765,24 +1803,65 @@ class FlexieUI(QWidget):
         self.orb.set_state("WAKE")
 
     def _open_dashboard(self):
+        """Open the web dashboard, auto-starting the bridge if it is not running.
+
+        The page MUST be fetched from the bridge's own HTTP server: that is the
+        only place where the per-run WebSocket auth token is injected into
+        ``web_ui.html``. Opening the file (or the wrong port) yields an
+        un-substituted token, so every command typed there is dropped.
+        """
         bridge_path = os.path.join(os.path.dirname(__file__), "web_ui_bridge.py")
-        dashboard_url = "http://localhost:7860/web_ui.html"
-        def _start():
+        # Keep in sync with web_ui_bridge.HTTP_PORT.
+        dashboard_url = "http://localhost:8766/"
+
+        def _http_alive() -> bool:
             try:
                 import socket
-                s = socket.create_connection(("127.0.0.1", 8765), timeout=0.5)
-                s.close(); webbrowser.open(dashboard_url)
-            except Exception:
-                subprocess.Popen([sys.executable, bridge_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                time.sleep(1.5); webbrowser.open(dashboard_url)
+                s = socket.create_connection(("127.0.0.1", 8766), timeout=0.5)
+                s.close()
+                return True
+            except OSError:
+                return False
+
+        def _start():
+            try:
+                if not _http_alive():
+                    env = os.environ.copy()
+                    if not env.get("FLEXIE_UDP_TOKEN"):
+                        # Hand the bridge the same token the orchestrator uses,
+                        # otherwise it generates its own and every relayed
+                        # command is rejected. See utils/udp_auth.py.
+                        try:
+                            from utils.udp_auth import get_token
+                            env["FLEXIE_UDP_TOKEN"] = get_token()
+                        except Exception as _e:
+                            logging.error("[interface/ui.py:_open_dashboard] token unavailable: %s: %s",
+                                          type(_e).__name__, _e)
+                    subprocess.Popen([sys.executable, bridge_path],
+                                     stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL,
+                                     env=env)
+                    # Wait up to ~5s for the bridge HTTP server before opening.
+                    for _ in range(25):
+                        if _http_alive():
+                            break
+                        time.sleep(0.2)
+                webbrowser.open(dashboard_url)
+            except Exception as e:
+                logging.error("[interface/ui.py:_open_dashboard] %s: %s", type(e).__name__, e)
+
         threading.Thread(target=_start, daemon=True).start()
         self.panel.btn_dash.setText("⏳ LOADING...")
         QTimer.singleShot(2500, lambda: self.panel.btn_dash.setText("🌐 DASHBOARD"))
 
     def _send_spotlight(self):
-        txt = self.panel.spotlight.text()
-        if txt:
-            self._send_udp(f"DEEP_SEARCH:{txt[1:].strip()}" if txt.startswith("?") else txt)
+        txt = self.panel.spotlight.text().strip()
+        if not txt:
+            return
+        payload = f"DEEP_SEARCH:{txt[1:].strip()}" if txt.startswith("?") else txt
+        # Only clear the input when the command actually reached the wire, so a
+        # connectivity failure can never silently eat what the user typed.
+        if self._send_udp(payload):
             self.panel.spotlight.clear()
             self.orb.set_state("PROCESSING")
             self._set_activity()

@@ -161,15 +161,12 @@ def handle_conversational(orch, c):
         buffer += chunk
         orch.send_to_ui("PARTIAL", buffer)
         flush_count += 1
-        should_flush = bool(re.search(r'[.!?]\s', buffer)) or flush_count >= 4
-        if should_flush:
-            m = re.search(r'[.!?]\s', buffer)
-            if m:
-                orch.speak(buffer[:m.end()].strip(), record_chat=False)
-                buffer = buffer[m.end():]
-            else:
-                orch.speak(buffer.strip(), record_chat=False)
-                buffer = ""
+        m = re.search(r'[.!?](\s+|$)', buffer)
+        if m and (len(buffer[:m.end()].strip().split()) >= 3 or flush_count >= 6):
+            sentence = buffer[:m.end()].strip()
+            if sentence:
+                orch.speak(sentence, record_chat=False)
+            buffer = buffer[m.end():]
             flush_count = 0
     response = "".join(chunks)
     if buffer.strip():

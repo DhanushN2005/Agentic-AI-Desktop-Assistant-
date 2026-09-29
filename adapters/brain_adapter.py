@@ -18,7 +18,7 @@ class LegacyBrainAdapter:
             "has_image": img_path is not None
         }))
 
-        start_time = time.perf_counter() if 'time' in globals() else 0
+        start_time = time.perf_counter()
         try:
             res = self.brain.ask(
                 prompt,
@@ -28,7 +28,10 @@ class LegacyBrainAdapter:
                 max_tokens=max_tokens,
                 history=history,
             )
-            self.bus.publish(Event("brain.ask.success", {"result_len": len(res)}))
+            self.bus.publish(Event("brain.ask.success", {
+                "result_len": len(res),
+                "latency_ms": round((time.perf_counter() - start_time) * 1000, 1),
+            }))
             return res
         except Exception as e:
             self.bus.publish(Event("brain.ask.failed", {"error": str(e)}, priority=0))

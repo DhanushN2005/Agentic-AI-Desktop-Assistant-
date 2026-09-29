@@ -4,13 +4,19 @@ from engines.system import SystemCtrl
 
 
 def handle_dev_build(orch, c):
-    desc = re.sub(r"^(create a project for|build a project for|start a new project for|generate code for|code a project for|autonomous build for|create a project|build a project|start a new project)\s+", "", c).strip()
+    desc = re.sub(
+        r"^(create a project for|build a project for|start a new project for|generate code for|code a project for|autonomous build for|create a project|build a project|start a new project|create an app for|build an app for|create a web app for|build a web app for)\s+",
+        "",
+        c,
+        flags=re.IGNORECASE,
+    ).strip()
     if not desc:
         orch.speak("What kind of project should I build for you?")
         desc = orch.voice.listen(timeout=10)
 
     if desc:
-        orch.speak(orch.dev.autonomous_build(desc))
+        res = orch.dev.autonomous_build(desc)
+        orch.speak(res)
     return True
 
 

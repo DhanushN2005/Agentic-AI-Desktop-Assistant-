@@ -24,6 +24,7 @@ flexie_durable_workflows.json
 
 # Secrets
 .env
+.flexie_udp_token
 
 # Browser / Playwright session artifacts
 browser_session/

@@ -26,6 +26,16 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import logging
 
+# ── Project root on sys.path ────────────────────────────────────────────────
+# This file is launched AS A SCRIPT (``python interface/web_ui_bridge.py``), so
+# Python puts ``interface/`` on sys.path instead of the project root. Without
+# this bootstrap the ``utils.udp_auth`` import in _send_udp below fails, every
+# command relayed from the browser would go out WITHOUT the per-run token, and
+# the orchestrator would reject it — i.e. typing in the dashboard did nothing.
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT_DIR not in sys.path:
+    sys.path.insert(0, _ROOT_DIR)
+
 try:
     import websockets
 except ImportError as _e:
@@ -153,7 +163,16 @@ async def ws_handler(websocket):
     print(f"[Bridge] Authenticated browser connected. Total clients: {len(connected_clients)}")
     try:
         async for message in websocket:
-            _send_udp(message)
+            if not _send_udp(message):
+                # Tell the browser instead of dropping the command silently.
+                try:
+                    await websocket.send(
+                        "SAY:⚠ Bridge could not reach the orchestrator "
+                        "(command not sent) — check the bridge console and that Flexie is running."
+                    )
+                except Exception as _e:
+                    logging.debug("[interface/web_ui_bridge.py:ws_handler] Swallowed exception: %s: %s",
+                                  type(_e).__name__, _e)
     except Exception as _e:
         logging.debug("[interface/web_ui_bridge.py:149] Swallowed exception: %s: %s", type(_e).__name__, _e)
         pass
@@ -162,20 +181,38 @@ async def ws_handler(websocket):
         print(f"[Bridge] Browser disconnected. Total clients: {len(connected_clients)}")
 
 
-def _send_udp(msg: str):
-    # Authenticate on the orchestrator control plane. The token is shared
-    # via FLEXIE_UDP_TOKEN (set by main.py); without it the orchestrator
-    # rejects the datagram. See utils/udp_auth.py.
+def _send_udp(msg: str) -> bool:
+    """Relay one command to the orchestrator.
+
+    Returns False when the datagram was NOT sent. FAIL CLOSED: the orchestrator
+    rejects any message that does not carry this run's token, so sending an
+    unsigned one only produces a silent dead UI — we refuse and tell the browser.
+    """
+    # Authenticate on the orchestrator control plane (utils/udp_auth.py). The
+    # token comes from FLEXIE_UDP_TOKEN (inherited from main.py) or from the
+    # per-run .flexie_udp_token file when the bridge is started by hand.
     try:
         from utils.udp_auth import pack as _udp_pack
-        msg = _udp_pack(msg)
-    except Exception as _e:
-        logging.debug("[interface/web_ui_bridge.py:_send_udp] Swallowed exception: %s: %s", type(_e).__name__, _e)
+    except Exception as e:
+        print(f"[Bridge] ERROR: utils.udp_auth unavailable ({type(e).__name__}: {e}) — "
+              "cannot authenticate, command NOT sent.")
+        return False
+    try:
+        payload = _udp_pack(msg)
+    except Exception as e:
+        print(f"[Bridge] ERROR: cannot sign command ({type(e).__name__}: {e}) — command NOT sent.")
+        return False
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        sock.sendto(msg.encode("utf-8"), ("127.0.0.1", ORCHESTRATOR_UDP_IN))
+        sock.sendto(payload.encode("utf-8"), ("127.0.0.1", ORCHESTRATOR_UDP_IN))
+        return True
+    except OSError as e:
+        print(f"[Bridge] ERROR: UDP send failed ({type(e).__name__}: {e}) — is the orchestrator running?")
+        return False
     finally:
         sock.close()
+
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -186,9 +223,18 @@ async def main():
     threading.Thread(target=udp_listener, daemon=True).start()
     start_http_server()
 
-    if not os.getenv("FLEXIE_UDP_TOKEN"):
-        print("[Bridge] WARNING: FLEXIE_UDP_TOKEN not set — start the bridge from "
-              "main.py, or orchestrator UDP commands will be rejected.")
+    if os.getenv("FLEXIE_UDP_TOKEN"):
+        print("[Bridge] UDP token: inherited from FLEXIE_UDP_TOKEN (spawned by main.py).")
+    else:
+        # Started by hand: fall back to the per-run token file published by
+        # main.py so relayed commands are authenticated instead of rejected.
+        try:
+            from utils.udp_auth import get_token
+            get_token()
+            print("[Bridge] UDP token: read from .flexie_udp_token (no env var set).")
+        except Exception as e:
+            print(f"[Bridge] WARNING: no UDP token available ({type(e).__name__}: {e}) — "
+                  "the orchestrator will reject relayed commands.")
 
     webbrowser.open(f"http://localhost:{HTTP_PORT}/")
     print(f"[Bridge] Opened browser at: http://localhost:{HTTP_PORT}/")

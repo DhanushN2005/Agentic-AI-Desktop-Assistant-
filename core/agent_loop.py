@@ -7,9 +7,8 @@ Uses a local Ollama deepseek-r1 model for reasoning by default.
 """
 import logging
 import json
-from typing import TypedDict, List, Optional, Callable
+from typing import TypedDict, List, Optional
 from urllib.request import urlopen, Request
-from functools import wraps
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -166,9 +165,10 @@ class ReActAgent:
             reasoning=None,
         )
         try:
-            for event in self.graph.stream(initial_state, config={"configurable": {"thread_id": "flexie"}}):
+            _event = None
+            for _event in self.graph.stream(initial_state, config={"configurable": {"thread_id": "flexie"}}):
                 pass
-            final_messages = event.get("messages", []) if isinstance(event, dict) else []
+            final_messages = _event.get("messages", []) if isinstance(_event, dict) else []
             for msg in reversed(final_messages):
                 if msg.get("role") == "assistant" and "tool_calls" not in str(msg):
                     return msg.get("content", "")

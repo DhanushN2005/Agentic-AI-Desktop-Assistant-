@@ -54,15 +54,14 @@ class DAGPlanner:
                 for task_id, task in task_dict.items():
                     if task.status == "PENDING":
                         # Check dependencies
-                        if all(dep in completed for dep in task.dependencies):
-                            if any(dep in failed for dep in task.dependencies):
-                                task.status = "CANCELLED"
-                                failed.add(task_id)
-                                self.logger.warning(f"[DAG] Task {task_id} cancelled due to failed dependency.")
-                            else:
-                                task.status = "RUNNING"
-                                self.logger.info(f"[DAG] Scheduling {task_id}: {task.command}")
-                                futures[executor.submit(self._run_task, task)] = task_id
+                        if any(dep in failed for dep in task.dependencies):
+                            task.status = "CANCELLED"
+                            failed.add(task_id)
+                            self.logger.warning(f"[DAG] Task {task_id} cancelled due to failed dependency.")
+                        elif all(dep in completed for dep in task.dependencies):
+                            task.status = "RUNNING"
+                            self.logger.info(f"[DAG] Scheduling {task_id}: {task.command}")
+                            futures[executor.submit(self._run_task, task)] = task_id
 
                 # Wait for at least one to finish
                 if futures:

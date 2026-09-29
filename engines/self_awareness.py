@@ -1,10 +1,8 @@
-import os
-import json
 import time
 import sqlite3
 import threading
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from datetime import datetime
+from typing import Dict, List, Optional
 import logging
 
 

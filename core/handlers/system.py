@@ -11,7 +11,6 @@ from engines.self_awareness import MODE_MAP
 from engines.system import SystemCtrl
 from utils.config import Config
 from utils.helpers import get_numbers
-import logging
 
 
 def handle_undo(orch, c):

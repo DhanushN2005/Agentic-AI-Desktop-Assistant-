@@ -1,7 +1,6 @@
 import time
 import sqlite3
 import threading
-from typing import List, Optional
 import logging
 
 try:

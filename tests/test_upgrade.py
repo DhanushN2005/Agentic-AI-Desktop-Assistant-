@@ -393,7 +393,7 @@ class TestDesktopControl:
 
     def test_permission_check(self):
         ps = PermissionSystem()
-        dc = DesktopControl(permission_system=ps)
+        DesktopControl(permission_system=ps)
         # Read-only should be allowed
         allowed, _, _ = ps.check_permission("vision.screenshot", "screenshot")
         # This depends on default permission level

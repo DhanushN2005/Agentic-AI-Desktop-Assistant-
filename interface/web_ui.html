@@ -527,6 +527,10 @@
         const WS_URL = 'ws://localhost:8765';
         // Token injected by the bridge's local HTTP server ({{AUTH_TOKEN}} placeholder).
         const AUTH_TOKEN = '{{AUTH_TOKEN}}';
+        // If the placeholder was NOT substituted, this page was opened straight
+        // from disk (or from a server other than the bridge), so the handshake
+        // can never succeed. Say so loudly instead of silently eating commands.
+        const TOKEN_INJECTED = AUTH_TOKEN.length > 0 && AUTH_TOKEN.indexOf('{{') !== 0;
         let ws = null;
         let wsAuthed = false;
         let startTime = Date.now();
@@ -540,6 +544,13 @@
         };
 
         function connectWS() {
+            if (!TOKEN_INJECTED) {
+                document.getElementById('wsState').textContent = 'NO TOKEN';
+                document.getElementById('wsState').style.color = '#ff4d4d';
+                log('⚠ Auth token missing — open http://localhost:8766/ (served by web_ui_bridge.py), not this file.');
+                log('⚠ Commands cannot reach the assistant until the page is served by the bridge.');
+                return;
+            }
             ws = new WebSocket(WS_URL);
             wsAuthed = false;
             ws.onopen = () => {
@@ -551,6 +562,11 @@
                 document.getElementById('wsState').style.color = '#ff4d4d';
                 updateState('SLEEP');
                 log('WS Disconnected' + (e.code === 4001 ? ' (auth failed)' : ''));
+                if (e.code === 4001) {
+                    // The bridge mints a fresh token every start, so an old page
+                    // can only ever be rejected — reloading fetches the new one.
+                    log('⚠ Auth failed — reload http://localhost:8766/ to get the current token.');
+                }
                 setTimeout(connectWS, 3000);
             };
             ws.onmessage = (e) => {
@@ -589,8 +605,16 @@
 
         function sendRaw(msg) {
             // All outgoing traffic funnels here — nothing is sent before auth.
-            if (ws && wsAuthed && ws.readyState === WebSocket.OPEN) ws.send(msg);
-            else log('⚠ Not authenticated — message dropped');
+            if (ws && wsAuthed && ws.readyState === WebSocket.OPEN) {
+                ws.send(msg);
+                return true;
+            }
+            const badge = document.getElementById('wsState');
+            badge.textContent = TOKEN_INJECTED ? 'OFFLINE' : 'NO TOKEN';
+            badge.style.color = '#ff4d4d';
+            log('⚠ Not authenticated — message NOT sent: ' + msg);
+            log('⚠ Check the bridge console, then reload http://localhost:8766/');
+            return false;
         }
 
         function sendLabel(type, val) {
@@ -663,9 +687,11 @@
         function sendCmd() {
             const input = document.getElementById('cmdInput');
             const val = input.value.trim();
-            if (val) {
+            if (!val) return;
+            // Keep the text in the box when the link is down, so a connectivity
+            // failure can never look like the command was accepted.
+            if (sendRaw(val)) {
                 addChat('user', val);
-                sendRaw(val);
                 input.value = '';
             }
         }

@@ -1,11 +1,9 @@
-import os
 import psutil
 import pyautogui
 from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 import screen_brightness_control as sbc
-from utils.config import Config
 from utils.helpers import is_online
 import logging
 try:
@@ -253,7 +251,7 @@ class SystemCtrl:
             # Focus/Activation verification loop (Priority 1 & 6)
             import time
             focused = False
-            for attempt in range(3):
+            for _ in range(3):
                 try:
                     win.activate()
                     time.sleep(0.15)
@@ -272,7 +270,9 @@ class SystemCtrl:
                     logging.debug("[engines/system.py:208] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass
                 time.sleep(0.15)
-                
+
+            if not focused:
+                logging.debug("[engines/system.py] snap_window: could not confirm focus after 3 attempts")
             if "left" in direction:
                 win.restore()
                 win.resizeTo(screen_w // 2, screen_h - 40) # Subtract 40px for taskbar safety

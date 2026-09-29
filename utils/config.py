@@ -2,7 +2,7 @@ import os
 import logging
 import re
 import tempfile
-from typing import Dict, List
+from typing import Dict
 from dotenv import load_dotenv
 
 # Load .env file from project root
@@ -348,7 +348,7 @@ class Config:
         # Read raw file to know what is actually persisted vs lingering env
         file_data = _read_env_file()
         load_dotenv(_env_path(), override=True)
-        for pid, meta in SUPPORTED_PROVIDERS.items():
+        for _pid, meta in SUPPORTED_PROVIDERS.items():
             # Key
             if meta["env"] in file_data:
                 setattr(cls, meta["env"], file_data[meta["env"]] or None)

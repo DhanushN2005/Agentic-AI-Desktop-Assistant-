@@ -161,10 +161,14 @@ class ContextMemory:
         self._save("active_artifact", json.dumps(artifact))
         return artifact
 
-    def update(self, cmd=None, app=None, query=None, browser=None, screenshot=None, url=None, selector=None, engine=None, yt_query=None, last_path=None, last_response=None, active_document=None, last_search=None, current_topic=None, active_goal=None, last_sdd=None):
+    def update(self, cmd=None, app=None, query=None, browser=None, screenshot=None, url=None, selector=None, engine=None, yt_query=None, last_path=None, last_response=None, active_document=None, last_search=None, current_topic=None, active_goal=None, last_sdd=None, **kwargs):
         # Update session timer to prevent premature context expiration during active tasks
         self.session_time = time.time()
         self._save("session_time", self.session_time)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+            if v is not None:
+                self._save(k, v)
 
         if cmd:
             self.last_cmd = cmd

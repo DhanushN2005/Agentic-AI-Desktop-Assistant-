@@ -5,12 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import utils.udp_auth as udp_auth
 from utils.udp_auth import pack, unpack
 from utils.path_jail import (
     is_basename_safe,
     is_system_location,
-    project_root,
     resolve_in_root,
 )
 
@@ -161,7 +159,6 @@ def _terminal_fn():
 def test_terminal_simple_command_no_shell():
     run = _terminal_fn()
     with patch("core.coding_tools.subprocess.run") as m:
-        from core.action_result import ActionResult
         m.return_value = MagicMock(stdout="hi", stderr="", returncode=0)
         out = run("echo hello")
         assert out.success is True
@@ -217,7 +214,7 @@ def test_developer_terminal_no_shell():
     eng = DeveloperEngine(orch)
     with patch("engines.developer.subprocess.run") as m:
         m.return_value = MagicMock(stdout="1", stderr="", returncode=0)
-        out = eng.execute_terminal(f"{sys.executable} -c print(1)")
+        eng.execute_terminal(f"{sys.executable} -c print(1)")
         args, kwargs = m.call_args
         assert kwargs.get("shell") is False
         assert isinstance(args[0], list)

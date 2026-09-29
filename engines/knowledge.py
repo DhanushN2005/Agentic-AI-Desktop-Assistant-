@@ -16,6 +16,7 @@ class KnowledgeEngine:
         self.allowed_exts = {'.txt', '.md', '.py', '.js', '.json', '.pdf'}
         self.index: Dict[str, List[str]] = {} # Keyword -> List of Paths
         self.file_cache: Dict[str, str] = {} # Path -> Content Snippet
+        self._index_mtime: Dict[str, float] = {} # Path -> last indexed mtime
         
         # Load existing index if available
         self._load_index()
@@ -60,6 +61,9 @@ class KnowledgeEngine:
         try:
             mtime = os.path.getmtime(path)
             # Skip if already indexed and not modified
+            if path in self.file_cache and self._index_mtime.get(path) == mtime:
+                return
+            self._index_mtime[path] = mtime
             content = self._read_file_safe(path)
             if not content: return
             
@@ -91,7 +95,7 @@ class KnowledgeEngine:
             return f"I couldn't find any documents in my index related to '{query}'."
 
         context = []
-        for path, score in sorted_paths:
+        for path, _score in sorted_paths:
             preview = self.file_cache.get(path, "")
             context.append(f"Source: {os.path.basename(path)}\nContent: {preview}")
 

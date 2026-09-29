@@ -156,6 +156,12 @@ class GoalEvaluator:
                     passed=size > 0,
                     details=f"Size: {size} bytes",
                 ))
+                if wants_verify:
+                    checks.append(GoalCheck(
+                        description="File verified by execution state",
+                        passed=verified,
+                        details="file_verified flag was set" if verified else "file_verified flag not set",
+                    ))
             elif file_path:
                 checks.append(GoalCheck(
                     description="File exists and has content",

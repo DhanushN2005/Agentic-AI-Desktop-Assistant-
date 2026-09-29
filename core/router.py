@@ -291,7 +291,10 @@ class IntentRouter:
                 "fill my name", "type my email", "submit this", "capture page",
                 "screenshot page", "screenshot website", "press enter", "hit enter",
                 "scroll to top", "scroll to bottom", "select all", "copy text",
-                "paste here", "click submit", "press tab", "click that button"
+                "paste here", "click submit", "press tab", "click that button",
+                "hover on", "hover over", "hover element", "select from", "choose from",
+                "click button", "dom click", "dom type", "inspect elements",
+                "interactive elements", "show buttons", "show inputs", "type into"
             ], 2),
 
             ("browser_tabs", [
@@ -305,7 +308,8 @@ class IntentRouter:
                 "extract text", "extract data", "summarize page", "read table",
                 "get links", "extract table", "scrape page", "summarize this page",
                 "get all links", "copy page text", "get page content",
-                "what's on this page", "read this page"
+                "what's on this page", "read this page", "interactive elements",
+                "find buttons", "find input fields", "multi tab research", "deep search"
             ], 2),
 
             ("play_youtube", [
@@ -1044,7 +1048,7 @@ class IntentRouter:
                 data = json.loads(match.group())
             except (json.JSONDecodeError, ValueError) as _je:
                 logging.debug("[core/router.py:1026] JSON decode failed: %s", _je)
-                raise ValueError("invalid JSON in LLM response")
+                raise ValueError("invalid JSON in LLM response") from _je
             merged_params = data.get("params", {})
             if "steps" in data:
                 merged_params["steps"] = data["steps"]

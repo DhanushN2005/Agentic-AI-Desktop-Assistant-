@@ -1,9 +1,7 @@
 import os
 import time
 import logging
-import csv
-from typing import List, Dict, Optional
-from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
+from playwright.sync_api import sync_playwright
 from utils.config import Config
 
 class BrowserEngine:
@@ -481,14 +479,14 @@ class BrowserEngine:
                     locator.fill(value, timeout=3000)
                     time.sleep(0.2)
                     if locator.input_value(timeout=1000) != value:
-                        raise Exception("Input verification failed twice.")
+                        raise Exception("Input verification failed twice.") from val_err
             else:
                 raise Exception("Could not resolve locator for standard fill.")
             
             self._check_captcha()
             return f"Successfully filled {selector}."
         except Exception as e:
-            if "Interrupted" in str(e): raise e
+            if "Interrupted" in str(e): raise
             self.logger.warning(f"Standard fill failed or unverified for {selector}: {e}. Triggering visual fill fallback...")
             
             try:
