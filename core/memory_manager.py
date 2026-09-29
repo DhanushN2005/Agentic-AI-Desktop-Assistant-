@@ -91,23 +91,30 @@ class MemoryManager:
         """Create database tables if they don't exist."""
         os.makedirs(os.path.dirname(self.DB_PATH), exist_ok=True)
         conn = sqlite3.connect(self.DB_PATH)
-        c = conn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS memories (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                category TEXT,
-                timestamp REAL,
-                source TEXT,
-                confidence REAL,
-                importance REAL,
-                expiration REAL,
-                tags TEXT,
-                metadata TEXT
-            )
-        """)
-        conn.commit()
-        conn.close()
+        try:
+            # WAL mode: readers don't block writers (single-writer still serialised).
+            try:
+                conn.execute("PRAGMA journal_mode=WAL;")
+            except Exception as _e:
+                logging.debug("[core/memory_manager.py:WAL] Swallowed exception: %s: %s", type(_e).__name__, _e)
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS memories (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    category TEXT,
+                    timestamp REAL,
+                    source TEXT,
+                    confidence REAL,
+                    importance REAL,
+                    expiration REAL,
+                    tags TEXT,
+                    metadata TEXT
+                )
+            """)
+            conn.commit()
+        finally:
+            conn.close()
 
     def _load(self):
         """Load memories from database."""
@@ -140,30 +147,50 @@ class MemoryManager:
         except Exception as e:
             self.logger.warning(f"[MEMORY] Failed to load from DB: {e}")
 
-    def _save(self):
-        """Persist memories to database."""
+    @staticmethod
+    def _row_for(entry: "MemoryEntry") -> tuple:
+        return (
+            entry.key,
+            json.dumps(entry.value) if not isinstance(entry.value, str) else entry.value,
+            entry.category.name,
+            entry.timestamp,
+            entry.source,
+            entry.confidence,
+            entry.importance,
+            entry.expiration,
+            json.dumps(entry.tags),
+            json.dumps(entry.metadata),
+        )
+
+    def _save_entry(self, entry: "MemoryEntry"):
+        """Persist a single entry (INSERT OR REPLACE) — O(1), no full rewrite."""
         try:
-            conn = sqlite3.connect(self.DB_PATH)
-            c = conn.cursor()
-            for entry in self._entries.values():
-                c.execute("""
+            with sqlite3.connect(self.DB_PATH) as conn:
+                conn.execute("""
                     INSERT OR REPLACE INTO memories
                     (key, value, category, timestamp, source, confidence, importance, expiration, tags, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    entry.key,
-                    json.dumps(entry.value) if not isinstance(entry.value, str) else entry.value,
-                    entry.category.name,
-                    entry.timestamp,
-                    entry.source,
-                    entry.confidence,
-                    entry.importance,
-                    entry.expiration,
-                    json.dumps(entry.tags),
-                    json.dumps(entry.metadata),
-                ))
-            conn.commit()
-            conn.close()
+                """, self._row_for(entry))
+        except Exception as e:
+            self.logger.warning(f"[MEMORY] Failed to save entry {entry.key}: {e}")
+
+    def _delete_key(self, key: str):
+        """Delete a single row — O(1), no full rewrite."""
+        try:
+            with sqlite3.connect(self.DB_PATH) as conn:
+                conn.execute("DELETE FROM memories WHERE key = ?", (key,))
+        except Exception as e:
+            self.logger.warning(f"[MEMORY] Failed to delete {key}: {e}")
+
+    def _save(self):
+        """Persist memories to database (full sync; prefer _save_entry for single rows)."""
+        try:
+            with sqlite3.connect(self.DB_PATH) as conn:
+                conn.executemany("""
+                    INSERT OR REPLACE INTO memories
+                    (key, value, category, timestamp, source, confidence, importance, expiration, tags, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, [self._row_for(entry) for entry in self._entries.values()])
         except Exception as e:
             self.logger.warning(f"[MEMORY] Failed to save to DB: {e}")
 
@@ -190,7 +217,7 @@ class MemoryManager:
             tags=tags or [],
         )
         self._entries[entry.key] = entry
-        self._save()
+        self._save_entry(entry)
         self.logger.info(f"[MEMORY] Stored: {entry.key} ({category.name})")
         return True
 
@@ -223,7 +250,7 @@ class MemoryManager:
         key = key.lower().strip()
         if key in self._entries:
             del self._entries[key]
-            self._save()
+            self._delete_key(key)
             self.logger.info(f"[MEMORY] Forgot: {key}")
             return True
         return False
@@ -233,7 +260,7 @@ class MemoryManager:
         keys = [k for k, v in self._entries.items() if v.category == category]
         for k in keys:
             del self._entries[k]
-        self._save()
+            self._delete_key(k)
         self.logger.info(f"[MEMORY] Forgot {len(keys)} entries in {category.name}")
         return len(keys)
 
@@ -273,8 +300,7 @@ class MemoryManager:
         keys = [k for k, v in self._entries.items() if v.is_expired]
         for k in keys:
             del self._entries[k]
-        if keys:
-            self._save()
+            self._delete_key(k)
         return len(keys)
 
     def to_summary(self) -> str:

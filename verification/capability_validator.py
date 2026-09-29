@@ -44,7 +44,7 @@ class CapabilityValidator:
                 curr_clip = SystemCtrl.get_clipboard()
             except Exception as _e:
                 logging.debug("[verification/capability_validator.py] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                return True
+                return False  # no signal -> fail closed, do not assume success
             return curr_clip != pre_state.get("clipboard", "")
 
         elif capability_name in ("filesystem", "file", "file_op"):
@@ -58,16 +58,16 @@ class CapabilityValidator:
             m = _re.search(r'["\']([A-Z]:\\\\[^"\']+|/[^"\']+|[\w\-./\\]+\.\w+)["\']', step_lower)
             if m and os.path.exists(m.group(1)):
                 return True
-            return True  # don't block: file intent may be content-gen, verified elsewhere
+            return False  # fail closed: unverified file claims must not pass
 
         elif capability_name in ("application", "app_op", "window"):
             # Generic app check: any non-explorer window title token match
             title = str(pre_state.get("window_title", "") or pre_state.get("active_window", "")).lower()
             if not title:
-                return True  # no signal -> don't block
+                return False  # no signal -> fail closed, do not assume success
             if "explorer" in title:
                 return False
             return True
 
-        # Default fallback: assume True if not strictly validated to prevent blocking
-        return True
+        # Default fallback: fail closed unless a branch above explicitly passed.
+        return False

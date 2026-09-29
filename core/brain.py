@@ -155,6 +155,38 @@ class Brain:
         else:
             self.anthropic_client = None
 
+    def ensure_maintenance_thread(self, interval_seconds: int = 1800) -> bool:
+        """Start the periodic memory-maintenance daemon (expired cleanup).
+
+        Runs off the read path: a daemon thread calls
+        ``memory_manager.cleanup_expired()`` every ``interval_seconds``
+        (default 30 min). No-op until a memory_manager is attached
+        (orchestrator sets ``brain.memory_manager`` at startup).
+        Returns True if the thread is (now) running.
+        """
+        if getattr(self, "_maintenance_started", False):
+            return True
+        self._maintenance_started = True
+
+        def _loop():
+            import time as _time
+            while True:
+                try:
+                    _time.sleep(interval_seconds)
+                    mm = getattr(self, "memory_manager", None)
+                    if mm is not None:
+                        try:
+                            mm.cleanup_expired()
+                        except Exception as _e:
+                            logging.debug("[core/brain.py:maintenance] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                except Exception as _e:
+                    logging.debug("[core/brain.py:maintenance] Swallowed exception: %s: %s", type(_e).__name__, _e)
+
+        import threading as _threading
+        t = _threading.Thread(target=_loop, daemon=True, name="brain-maintenance")
+        t.start()
+        return True
+
     def reload_providers(self):
         """Hot-reload all providers after API key change via UI (no restart needed)."""
         from utils.config import Config as C
@@ -271,8 +303,8 @@ class Brain:
                         if mm_hits:
                             mm_text = "\n".join([f"{h.key}: {h.value}" for h in mm_hits])
                             historical_data = f"{historical_data}\n{mm_text}" if historical_data else mm_text
-                        if len(mm_hits) > 0 and hash(prompt) % 20 == 0:
-                            self.memory_manager.cleanup_expired()
+                        # NOTE: expired-memory cleanup runs on the maintenance
+                        # thread (see ensure_maintenance_thread), never here.
                     except Exception as _e:
                         logging.debug("[core/brain.py:203] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 sys_p = self.context_compiler.compile(sys_p, {"memory": historical_data})

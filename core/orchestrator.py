@@ -79,6 +79,10 @@ class FlexieOrchestrator:
             from core.memory_manager import MemoryManager
             self.memory_manager = MemoryManager()
             self.brain.memory_manager = self.memory_manager
+            try:
+                self.brain.ensure_maintenance_thread()
+            except Exception as _e:
+                logging.debug("[core/orchestrator.py:maintenance] Swallowed exception: %s: %s", type(_e).__name__, _e)
             logging.info("MemoryManager wired to orchestrator and brain")
         except Exception as e:
             self.memory_manager = None

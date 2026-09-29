@@ -24,6 +24,8 @@ class PermissionSystem:
         self.current_level = default_level
         self.danger_gate = DangerGate()
         self.logger = logging.getLogger("Flexie.PermissionSystem")
+        # Expiry (monotonic) for temporary escalations; None = not escalated.
+        self._escalation_expires: float | None = None
 
         # Patterns that classify actions into permission levels
         self._level_patterns = {
@@ -82,9 +84,12 @@ class PermissionSystem:
         """
         Classifies a command into a permission level based on pattern matching.
         Returns the HIGHEST matching level (most restrictive).
+
+        Empty/whitespace commands classify as USER_CONFIRMATION (fail closed):
+        an empty command must never authorize even read-only tools.
         """
-        if not command:
-            return PermissionLevel.READ_ONLY
+        if not command or not command.strip():
+            return PermissionLevel.USER_CONFIRMATION
 
         # Check from least restrictive to most restrictive
         # Track the highest matching level
@@ -104,6 +109,17 @@ class PermissionSystem:
 
         return highest
 
+    def _maybe_expire_escalation(self):
+        """Auto-reset an expired escalation back to the default level."""
+        if self._escalation_expires is None:
+            return
+        import time as _time
+        if _time.monotonic() >= self._escalation_expires:
+            self._escalation_expires = None
+            self.current_level = self.default_level
+            self.logger.info("[PERMISSION] Escalation expired — reset to "
+                             f"{self.default_level.name}")
+
     def check_permission(
         self,
         tool,
@@ -121,6 +137,7 @@ class PermissionSystem:
         Returns:
             (allowed: bool, reason: str, required_level: Optional[PermissionLevel])
         """
+        self._maybe_expire_escalation()
         effective_level = current_level or self.current_level
 
         # Resolve the required permission level
@@ -161,14 +178,22 @@ class PermissionSystem:
         """Check if user reply is a cancellation."""
         return self.danger_gate.is_cancellation(text)
 
-    def escalate(self, level: PermissionLevel):
-        """Temporarily escalate permission level (e.g., after user confirmation)."""
+    def escalate(self, level: PermissionLevel, ttl_seconds: float = 300.0):
+        """Temporarily escalate permission level (e.g., after user confirmation).
+
+        The escalation auto-resets to the default level after ``ttl_seconds``
+        (default 5 min); ``reset()`` clears it immediately. ``ttl_seconds<=0``
+        means no expiry (stays until ``reset()``) for legacy callers.
+        """
+        import time as _time
         old = self.current_level
         self.current_level = level
-        self.logger.info(f"[PERMISSION] Escalated: {old.name} -> {level.name}")
+        self._escalation_expires = (_time.monotonic() + ttl_seconds) if ttl_seconds and ttl_seconds > 0 else None
+        self.logger.info(f"[PERMISSION] Escalated: {old.name} -> {level.name} (ttl={ttl_seconds}s)")
 
     def reset(self):
         """Reset to default permission level."""
+        self._escalation_expires = None
         self.current_level = self.default_level
 
     def to_summary(self) -> str:

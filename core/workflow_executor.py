@@ -19,6 +19,8 @@ class WorkflowExecutor:
     """
     def __init__(self, orch):
         self.orch = orch
+        # Human-readable reason for the last verification failure (None if last step verified).
+        self.last_verify_reason: str | None = None
 
     def blocking_execute(self, cmd: str, timeout: float = None) -> ActionResult:
         """
@@ -63,6 +65,7 @@ class WorkflowExecutor:
         step_lower = step.lower()
         verified = True
         retries = 0
+        self.last_verify_reason = None
 
         # A. Verification for file/folder operations
         if "folder" in step_lower:
@@ -99,15 +102,20 @@ class WorkflowExecutor:
                     orch.logger.info(f"[SELF-CORRECTION] Goal evaluator: {eval_res.summary}")
                 except Exception as _e:
                     logging.debug("[core/workflow_executor.py:99] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                # Recovery: Copy contents to clipboard and tell user
+                # Recovery: Copy contents to clipboard and tell user, but the
+                # step still FAILED verification — never mark it verified.
                 if orch.ctx.last_response:
                     try:
                         import pyperclip
                         pyperclip.copy(orch.ctx.last_response)
                     except Exception as _e:
                         logging.debug("[core/workflow_executor.py:105] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                    orch.speak("Verification Alert: Document writing failed. Self-healing saved response to clipboard. Press Ctrl+V to paste.")
-                    verified = True
+                    orch.speak("Verification Alert: Document writing failed. I saved the response to clipboard so you can paste it manually.")
+                self.last_verify_reason = (
+                    f"file step unverified: '{active_doc or orch.ctx.last_path or step}' "
+                    "missing or empty after execution"
+                )
+                orch.logger.warning(f"[PLANNER VERIFICATION FAILURE] {self.last_verify_reason}")
                 retries += 1
 
         # B. Verification for browser operations
