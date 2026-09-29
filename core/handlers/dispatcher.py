@@ -19,6 +19,7 @@ from core.handlers.code_search import handle_local_code_search
 from core.handlers.color_info import handle_color
 from core.handlers.converter import handle_convert
 from core.handlers.dev import handle_briefing, handle_clipboard, handle_dev_build, handle_dev_explain, handle_intel
+from core.jobs.handler import handle_job_intent
 from core.handlers.dictionary import handle_dictionary
 from core.handlers.facts import handle_facts
 from core.handlers.files import (
@@ -302,8 +303,12 @@ def dispatch_intent(orch, intent, c, silent):
             return handle_save_active(orch)
         if intent == "auto_save":
             return handle_auto_save(orch, c)
-        if intent == "dev_build":
-            return handle_dev_build(orch, c)
+        if intent in (
+            "dev_build", "build_project", "job_status", "job_pause",
+            "pause_build", "job_resume", "resume_build", "job_cancel",
+            "cancel_build", "job_undo", "undo_last_phase"
+        ):
+            return handle_job_intent(orch, intent, c)
         if intent == "dev_explain":
             return handle_dev_explain(orch)
         if intent == "knowledge_search":

@@ -69,7 +69,7 @@ def make_voice(frames, tail):
     v._mic_context = v._mic  # truthy -> skips __enter__
     v._mic_sample_rate = FakeMic.SAMPLE_RATE
     v.lang = "en-IN"
-    v._asr_lock = __import__("threading").Lock()
+    v._asr_lock = threading.Lock()
     v.is_speaking = False
     v._speech_buffer = ""
     v.sent_ui = []
@@ -146,6 +146,17 @@ def test_ambient_silence_never_triggers(monkeypatch):
     v = make_voice([], tail=silence_frame())
 
     # Short wait window keeps the test fast; nothing should ever be captured.
+    assert v.listen_adaptive(mode="fast", timeout=0.3) == ""
+
+
+def test_single_frame_blip_is_rejected(monkeypatch):
+    """One isolated loud frame (click/keyboard) must not open an utterance."""
+    monkeypatch.setattr(voice_module, "is_online", lambda: False)
+    frames = [silence_frame() for _ in range(5)]
+    frames += [frame(1500)]                                # single blip
+    frames += [silence_frame() for _ in range(40)]
+    v = make_voice(frames, tail=silence_frame())
+
     assert v.listen_adaptive(mode="fast", timeout=0.3) == ""
 
 

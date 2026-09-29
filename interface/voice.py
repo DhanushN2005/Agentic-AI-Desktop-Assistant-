@@ -69,9 +69,12 @@ def _env_number(name: str, default: float) -> float:
         return float(default)
 
 
-VAD_MIN_ENERGY = _env_number("FLEXIE_VAD_MIN_ENERGY", 150.0)      # ~ -47 dBFS floor
+VAD_MIN_ENERGY = _env_number("FLEXIE_VAD_MIN_ENERGY", 120.0)      # ~ -48 dBFS floor
 VAD_ENERGY_RATIO = _env_number("FLEXIE_VAD_ENERGY_RATIO", 1.5)    # above ambient
 VAD_FRAME_MS = 30          # webrtcvad accepts ONLY 10/20/30 ms frames
+VAD_MIN_ONSET_FRAMES = 3        # ~90 ms of sustained level -> a real word, not a click
+VAD_MIN_UTTERANCE_SECONDS = 0.24   # shorter blips are never sent to ASR
+VAD_PRE_ROLL_SECONDS = 0.3         # audio kept before the detected onset
 VAD_STUCK_MUTE_SECONDS = 30.0   # long TTS replies may legitimately run 10-25s
 VAD_MIC_SAMPLE_RATE = 16000     # preferred rate: Google ASR + webrtcvad optimum
 
@@ -529,7 +532,10 @@ class VoiceInterface:
             # recognizer.energy_threshold, so the two are always comparable.
             noise_floor = max(float(self.recognizer.energy_threshold), VAD_MIN_ENERGY)
             
-            # webrtcvad only understands 8/16/32/48 kHz streams.
+            # webrtcvad only understands 8/16/32/48 kHz streams. It is used as an
+            # additional (OR) onset signal: measured on this hardware it stays
+            # silent on real room ambience but still catches quiet speech that
+            # sits below the energy floor.
             webrtc_vad = getattr(self, '_webrtc_vad', None)
             if webrtc_vad is None and sample_rate in (8000, 16000, 32000, 48000):
                 try:
@@ -544,11 +550,13 @@ class VoiceInterface:
             audio_buffer = bytearray()
             speech_started = False
             silence_start_time = None
-            total_duration = 0.0
             active_speech_duration = 0.0
+            onset_run = 0
             last_partial_time = time.time()
             max_rms_seen = 0.0
             max_peak_seen = 0
+            pre_roll_bytes = int(sample_rate * sample_width * VAD_PRE_ROLL_SECONDS)
+            max_buffer_bytes = int(sample_rate * sample_width * 20.0)
             
             # Timeout for starting to speak (7.0 seconds total wait window)
             max_wait_time = max(0.1, float(timeout)) if timeout is not None else Config.VOICE_LISTEN_TIMEOUT
@@ -575,13 +583,17 @@ class VoiceInterface:
                             )
                             self.is_speaking = False
                         else:
+                            # Stay deaf while the assistant talks (no self-trigger),
+                            # and drop any partial utterance state from before.
                             audio_buffer.clear()
-                            total_duration = 0.0
+                            speech_started = False
+                            silence_start_time = None
+                            active_speech_duration = 0.0
+                            onset_run = 0
                             wait_elapsed = 0.0
                             continue
                         
                     audio_buffer.extend(raw_chunk)
-                    total_duration += chunk_seconds
                     
                     count = len(raw_chunk) // 2
                     if count == 0:
@@ -628,10 +640,18 @@ class VoiceInterface:
                     
                     if is_active_speech:
                         active_speech_duration += chunk_seconds
-                        if not speech_started:
-                            speech_started = True
-                            logging.info(f"VAD [Speech Started]: Energy={rms:.1f} (peak {peak}) vs Threshold={vad_threshold:.1f}. Buffering active.")
                         silence_start_time = None
+                        
+                        if not speech_started:
+                            # Require a short run of level so a single click,
+                            # key tap or mic pop never opens an utterance.
+                            onset_run += 1
+                            if onset_run < VAD_MIN_ONSET_FRAMES:
+                                continue
+                            speech_started = True
+                            if len(audio_buffer) > pre_roll_bytes:
+                                del audio_buffer[:-pre_roll_bytes]
+                            logging.info(f"VAD [Speech Started]: Energy={rms:.1f} (peak {peak}) vs Threshold={vad_threshold:.1f}. Buffering active.")
                         
                         # Dynamic partial recognition in background thread to achieve streaming feel
                         buf_len = len(audio_buffer)
@@ -652,6 +672,7 @@ class VoiceInterface:
                         else:
                             self.send_to_ui("PARTIAL", "Listening...")
                     else:
+                        onset_run = 0
                         if speech_started:
                             if silence_start_time is None:
                                 silence_start_time = time.time()
@@ -681,7 +702,7 @@ class VoiceInterface:
 
                         # Safety loop cap — generous so longer commands are never truncated
                         # mid-word. Endpoint detection already handles finishing.
-                        if total_duration >= 20.0:
+                        if len(audio_buffer) >= max_buffer_bytes:
                             logging.info("VAD [Safety Cap]: Utterance cap reached.")
                             break
                         
@@ -708,6 +729,15 @@ class VoiceInterface:
                     time.sleep(0.2)
                     
             if len(audio_buffer) == 0:
+                return ""
+            
+            # Reject click-like blips: nothing that short can be a command, and
+            # shipping it to ASR only yields junk transcripts.
+            if active_speech_duration < VAD_MIN_UTTERANCE_SECONDS:
+                logging.info(
+                    f"VAD [Rejected]: only {active_speech_duration:.2f}s of speech "
+                    f"(< {VAD_MIN_UTTERANCE_SECONDS:.2f}s) — ignoring blip."
+                )
                 return ""
                 
             elapsed_latency = time.time() - start_time

@@ -231,6 +231,13 @@ NL_OVERRIDES = [
     (r"\b(save\s+(?:it|this|that|the\s+answer|the\s+result)\s+(?:to|in|into)\s+(?:a\s+)?(?:file\s+)?(?:in\s+)?(?:the\s+)?(?:downloads?|desktop|documents?))\b", "file_save", 0.9),
     (r"\b(write\s+(?:the\s+)?(?:result|output|content|answer)\s+(?:to|into)\s+(?:a\s+)?file\s+(?:in\s+)?(?:the\s+)?(?:downloads?|desktop|documents?))\b", "file_save", 0.9),
     (r"\b(export\s+(?:the\s+)?(?:result|output|answer)\s+(?:to|as)\s+(?:a\s+)?(?:file\s+)?(?:in\s+)?(?:the\s+)?(?:downloads?|desktop|documents?))\b", "file_save", 0.9),
+
+    # Build Jobs (control & status)
+    (r"\b(job\s+status|build\s+status|status\s+of\s+(?:the\s+)?build|how\s+is\s+the\s+build\s+going)\b", "job_status", 0.95),
+    (r"\b(pause\s+(?:the\s+)?(?:build|job|project))\b", "job_pause", 0.95),
+    (r"\b(resume\s+(?:the\s+)?(?:build|job|project))\b", "job_resume", 0.95),
+    (r"\b(cancel\s+(?:the\s+)?(?:build|job|project)|stop\s+(?:the\s+)?build)\b", "job_cancel", 0.95),
+    (r"\b(undo\s+(?:the\s+)?(?:last\s+)?(?:build\s+)?phase|rollback\s+(?:last\s+)?phase)\b", "job_undo", 0.95),
 ]
 
 
@@ -558,6 +565,22 @@ class IntentRouter:
                 "create an app", "build a basic", "scaffold project",
                 "new project", "start project"
             ], 10),
+            ("job_status", [
+                "job status", "build status", "project status", "status of build",
+                "status of job", "how is the build going", "check build"
+            ], 11),
+            ("job_pause", [
+                "pause build", "pause the build", "pause project", "pause job"
+            ], 11),
+            ("job_resume", [
+                "resume build", "resume the build", "resume project", "resume job"
+            ], 11),
+            ("job_cancel", [
+                "cancel build", "cancel the build", "stop the build", "cancel project", "cancel job"
+            ], 11),
+            ("job_undo", [
+                "undo last phase", "undo build phase", "undo phase", "rollback phase", "undo project phase"
+            ], 11),
             ("dev", [
                 "git status", "git diff", "git commit", "run python",
                 "execute script", "terminal execute", "analyze traceback",

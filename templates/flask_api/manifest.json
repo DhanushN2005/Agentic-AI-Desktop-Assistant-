@@ -1,0 +1,29 @@
+{
+  "name": "flask_api",
+  "title": "Flask REST API & Web Service",
+  "keywords": ["flask", "api", "rest", "backend", "python server", "web service", "endpoint"],
+  "stack": "python-flask",
+  "run_command": "python app.py",
+  "test_command": "pytest",
+  "acceptance_criteria": [
+    "Flask server starts and binds port 5000",
+    "GET /health returns HTTP 200 with status ok",
+    "API endpoints return valid JSON",
+    "Unit tests pass cleanly"
+  ],
+  "dependencies": ["flask>=3.0.0", "pytest>=7.0.0"],
+  "files": [
+    {
+      "name": "app.py",
+      "purpose": "Main Flask application and REST endpoints"
+    },
+    {
+      "name": "requirements.txt",
+      "purpose": "Python package dependencies"
+    },
+    {
+      "name": "test_app.py",
+      "purpose": "Pytest integration tests"
+    }
+  ]
+}
