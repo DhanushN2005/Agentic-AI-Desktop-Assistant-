@@ -8,13 +8,14 @@ PyAudio>=0.2.13  # microphone backend required by speech_recognition.Microphone(
 vosk>=0.3.45
 
 # Browser Automation
-playwright>=1.52.0
+playwright>=1.52.0,<2.0.0
 
 # AI / LLM Providers — all configurable via UI: 🔑 AI KEYS
-google-genai>=1.0.0
-groq>=0.4.0
-openai>=1.30.0
-anthropic>=0.40.0
+# Caps block untested future majors; see "Major-upgrade notes" at the bottom.
+google-genai>=1.0.0,<2.0.0
+groq>=0.4.0,<1.0.0
+openai>=1.30.0,<3.0.0
+anthropic>=0.40.0,<1.0.0
 
 # System & Clipboard
 pyperclip>=1.8.2
@@ -29,7 +30,7 @@ comtypes>=1.2.0
 
 # Web & HTTP
 requests>=2.32.0
-websockets>=12.0
+websockets>=12.0,<17.0.0
 ddgs>=8.0.0  # successor of duckduckgo-search (renamed upstream)
 
 # Environment & Config
@@ -39,7 +40,7 @@ python-dotenv>=1.0.0
 pillow>=10.0.0
 pytesseract>=0.3.10
 
-# PDF Reading
+# PDF Reading (NOTE: PyMuPDF is AGPL-licensed — see LICENSE section below)
 pymupdf>=1.23.0
 
 # UI
@@ -51,14 +52,30 @@ edge-tts>=7.0.0  # neural TTS voices (natural, Jarvis-style)
 nest-asyncio>=1.5.8
 
 # Optional: Vector Store (for semantic memory) — enables ChromaDB in core/vector_store.py
-chromadb>=0.4.0
+chromadb>=0.4.0,<2.0.0
 onnxruntime>=1.17.0
 
 # Agentic Framework
-langgraph>=0.0.299
+langgraph>=0.0.299,<2.0.0
 
 # Optional: Docker Sandbox — enables isolated code exec in sandbox/executor.py
 docker>=7.0.0
 
 # Optional: Enhanced VAD — boosts speech detection in interface/voice.py
-webrtcvad>=2.0.10
+# webrtcvad is deprecated upstream; webrtcvad-wheels provides the same `webrtcvad` import.
+webrtcvad-wheels>=2.0.10
+
+# --- Major-upgrade notes (do NOT bump these without migration work) ---
+# chromadb 0.x -> 1.x: PersistentClient + embedding-function API changed; the
+#   bundled code targets 1.x (env runs 1.5.5). Anyone pinned to 0.x must migrate
+#   `context/flexie_memory/` and re-test core/vector_store.py.
+# langgraph 0.0.x -> 1.x: StateGraph/checkpoint API rewritten; env runs 1.0.10
+#   but core/agent_loop.py still assumes the old API — rewrite before relying on it.
+# google-genai 1.x -> 2.x: Client/models.generate_content + interactions API;
+#   core/brain.py targets 1.x (`genai.Client(api_key=...)`).
+# websockets 12 -> 15+: legacy `serve` callback signature removed; the bridge
+#   uses single-arg `ws_handler(websocket)`, which matches the new API.
+# playwright 1.52 -> 1.6x: run `playwright install chromium` after bumping and
+#   re-test stealth args in engines/browser.py.
+# openai 1.x -> 2.x: client init + error types changed; check
+#   core/brain.py::_ask_openai_compatible after bumping.

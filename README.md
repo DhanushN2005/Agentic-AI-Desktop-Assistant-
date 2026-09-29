@@ -43,7 +43,7 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 
 **Not a cloud SaaS** — data stays on your machine. External calls only to free LLM APIs (Groq, Gemini) and free public APIs (weather, news, Wikipedia).
 
-**385 tests pass** — CI runs pytest (blocking) + ruff on every push via `.github/workflows/ci.yml`.
+**480 test cases across 18 test files pass** — CI runs pytest (blocking) + ruff on every push via `.github/workflows/ci.yml`.
 
 ---
 
@@ -267,7 +267,7 @@ tell me binary search code and save to downloads  # single code_gen, not split
 | Engine | Tech | Free? |
 |---|---|-------|
 | Voice | SpeechRecognition, Vosk, edge-tts (neural) + pygame, SAPI fallback, webrtcvad | Yes |
-| LLM | Groq (openai/gpt-oss-20b), OpenAI gpt-4o-mini, DeepSeek, Mistral, Gemini 1.5-flash, Claude, Ollama, DDGS fallback | Yes |
+| LLM | Groq (openai/gpt-oss-20b), OpenAI gpt-4o-mini, DeepSeek, Mistral, Gemini 2.0-flash, Claude, Ollama, DDGS fallback | Yes |
 | Browser | Playwright 1.52 chromium persistent `browser_session/` | Yes |
 | Files | FileManager, PathResolver | Yes |
 | Code | CodeSearchEngine, CodeGen, Research (DDG + LLM 618 words) | Yes |
@@ -391,7 +391,7 @@ python interface/web_ui_bridge.py  # ws://localhost:8765
 | Var | Default | Purpose |
 |---|---|---------|
 | `GROQ_API_KEY` | `""` | Groq `openai/gpt-oss-20b` (primary, `brain.py`) |
-| `GEMINI_API_KEY` | `""` | Gemini `1.5-flash` `brain.py` (vision + chat fallback) |
+| `GEMINI_API_KEY` | `""` | Gemini `2.0-flash` `brain.py` (vision + chat fallback) |
 | `FLEXIE_VOICE` | `en-GB-RyanNeural` | Edge neural voice for TTS (e.g. `en-US-GuyNeural`, `en-IN-PrabhatNeural`) |
 | `FLEXIE_TTS_MODE` | `neural` | `neural` (Edge TTS) or `sapi` (offline Windows SAPI fallback) |
 | `FLEXIE_EMAIL`/`FLEXIE_PASS` | `""` | EmailEngine IMAP/SMTP `engines/email_engine.py:8` |
@@ -430,8 +430,8 @@ flexie_v2/
 │   ├── config.py (_validate_env)
 │   ├── path_resolver.py (Downloads/Desktop)
 │   └── installer.py (no --upgrade on every start)
-├── tests/ (385 tests)
-├── requirements.txt (playwright>=1.52, google-genai>=0.8.0, ddgs>=8)
+├── tests/ (18 files, 480 test cases)
+├── requirements.txt (playwright>=1.52,<2, google-genai>=1.0,<2, ddgs>=8)
 └── main.py (install_missing + orchestrator.run)
 ```
 
@@ -441,7 +441,7 @@ flexie_v2/
 
 ```bash
 python -m pytest tests/ -v
-# 385 passed in ~32s
+# 480 passed (18 test files)
 
 # Feature routing check (75 commands)
 python -c "from core.router import IntentRouter; r=IntentRouter(); print(r.route('tell me binary search code and save to downloads'))"
@@ -480,4 +480,13 @@ python -c "from core.workflow_parser import WorkflowParser; print(WorkflowParser
 
 ---
 
-*Flexie 2.0 — Built for Dhanush. 385 tests. Voice → Router → Hybrid → Planner → DAG → Verify → Memory → Stream.*
+## License
+
+No LICENSE file is committed yet — add one before distributing (placeholder:
+MIT recommended for the app code). Note that `pymupdf` (PyMuPDF) is
+**AGPL-licensed**: distributing binaries that link it requires AGPL compliance
+or a commercial PyMuPDF license.
+
+---
+
+*Flexie 2.0 — Built for Dhanush. 480 tests. Voice → Router → Hybrid → Planner → DAG → Verify → Memory → Stream.*
