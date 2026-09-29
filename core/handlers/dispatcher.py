@@ -306,7 +306,8 @@ def dispatch_intent(orch, intent, c, silent):
         if intent in (
             "dev_build", "build_project", "job_status", "job_pause",
             "pause_build", "job_resume", "resume_build", "job_cancel",
-            "cancel_build", "job_undo", "undo_last_phase"
+            "cancel_build", "job_undo", "undo_last_phase", "job_open",
+            "job_launch", "open_project"
         ):
             return handle_job_intent(orch, intent, c)
         if intent == "dev_explain":

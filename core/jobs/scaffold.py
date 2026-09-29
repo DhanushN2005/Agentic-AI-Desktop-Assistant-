@@ -65,6 +65,53 @@ def scaffold_project(spec: ProjectSpec, workspace_dir: str) -> bool:
         with open(os.path.join(vscode_dir, "tasks.json"), "w", encoding="utf-8") as f:
             json.dump(tasks_json, f, indent=2)
 
+        # 4. Create .vscode/extensions.json for recommended AI & language tools
+        recommendations = [
+            "saoudrizwan.claude-dev",       # Cline
+            "rooveterinaryinc.roo-cline",   # Roo Code
+            "esbenp.prettier-vscode",       # Prettier
+            "ritwickdey.LiveServer",        # Live Server
+        ]
+        if spec.stack in ("python", "flask"):
+            recommendations.append("ms-python.python")
+        elif spec.stack in ("react", "node", "javascript", "typescript"):
+            recommendations.append("dbaeumer.vscode-eslint")
+
+        extensions_json = {"recommendations": recommendations}
+        with open(os.path.join(vscode_dir, "extensions.json"), "w", encoding="utf-8") as f:
+            json.dump(extensions_json, f, indent=2)
+
+        # 5. Create .vscode/settings.json pre-wired to local AI bridge / Ollama
+        settings_json = {
+            "editor.formatOnSave": True,
+            "cline.apiProvider": "openai-compatible",
+            "cline.baseUrl": "http://127.0.0.1:9899/v1",
+            "cline.apiKey": "flexie-local-bridge",
+            "roo-cline.apiProvider": "openai-compatible",
+            "roo-cline.baseUrl": "http://127.0.0.1:9899/v1",
+            "roo-cline.apiKey": "flexie-local-bridge",
+            "files.exclude": {
+                "**/__pycache__": True,
+                "**/.git": True,
+                "**/.pytest_cache": True,
+            },
+        }
+        with open(os.path.join(vscode_dir, "settings.json"), "w", encoding="utf-8") as f:
+            json.dump(settings_json, f, indent=2)
+
+        # 6. Create .clinerules for AI assistant workspace context
+        clinerules_content = (
+            f"# {spec.title} - AI Assistant Workspace Directives\n\n"
+            "This project was autonomously scaffolded by Flexie Dev Assistant.\n\n"
+            "## Architecture & Workflow Rules\n"
+            "1. Read `PLAN.md` before making architectural or structural changes.\n"
+            "2. Read and verify requirements against `ACCEPTANCE.md` before concluding any feature.\n"
+            "3. Follow the development guidelines in `AGENTS.md`.\n"
+            "4. Always test and verify code stability before saving edits.\n"
+        )
+        with open(os.path.join(workspace_dir, ".clinerules"), "w", encoding="utf-8") as f:
+            f.write(clinerules_content)
+
         return True
     except Exception as e:
         logger.error("Scaffolding failed for %s: %s", workspace_dir, e)

@@ -87,4 +87,19 @@ def handle_job_intent(orch: Any, intent: str, command: str) -> bool:
         orch.speak(msg)
         return True
 
+    elif intent in ("job_open", "job_launch", "open_project"):
+        from core.jobs.launcher import launch_job_workspace
+        job = mgr.get_latest_job()
+        if not job:
+            orch.speak("No build project found to open.")
+            return True
+        res = launch_job_workspace(job, auto_browser=True)
+        if res.get("vscode_opened"):
+            orch.speak(f"Opened project {job.title} in VS Code.")
+        else:
+            orch.speak(f"Opened workspace folder for {job.title}.")
+        if hasattr(orch, "send_to_ui"):
+            orch.send_to_ui("JOB_LAUNCHED", res)
+        return True
+
     return False

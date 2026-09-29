@@ -86,6 +86,15 @@ NL_OVERRIDES = [
     # Clipboard
     (r"\b(clipboard|clip\s+history|what\s+(?:did\s+)?i\s+copy|copy\s+(?:this|that|to|it|the\s+result)|paste\s+(?:from|that|this|it|the\s+result|the\s+output)|search\s+clipboard|clear\s+clipboard)\b", "clipboard_mgr", 0.85),
 
+    # Dev Assistant Autonomous Build & Control
+    (r"\b(build\s+(?:a\s+)?project|create\s+(?:a\s+)?project|start\s+(?:a\s+)?project|code\s+(?:a\s+)?project|autonomous\s+build|build\s+(?:an?\s+)?(?:web\s+)?app)\b", "build_project", 0.95),
+    (r"\b(job\s+status|build\s+status|how\s+is\s+(?:the\s+)?(?:build|project)|status\s+of\s+(?:the\s+)?build)\b", "job_status", 0.95),
+    (r"\b(pause\s+(?:the\s+)?(?:build|job)|hold\s+(?:the\s+)?build)\b", "job_pause", 0.95),
+    (r"\b(resume\s+(?:the\s+)?(?:build|job)|continue\s+(?:the\s+)?build)\b", "job_resume", 0.95),
+    (r"\b(cancel\s+(?:the\s+)?(?:build|job)|stop\s+(?:the\s+)?(?:build|job)|abort\s+(?:the\s+)?build)\b", "job_cancel", 0.95),
+    (r"\b(undo\s+(?:last\s+)?phase|rollback\s+(?:last\s+)?phase)\b", "job_undo", 0.95),
+    (r"\b(open\s+(?:the\s+)?(?:project|workspace|in\s+vscode|in\s+code)|launch\s+(?:the\s+)?(?:project|app|application))\b", "job_open", 0.95),
+
     # Code Generation (generate/write code) - MUST come BEFORE local_code_search
     # Only match explicit code generation requests, NOT searches
     (r"\b(tell|give|show|write|generate|create|get)\s+(?:me\s+)?(?:a\s+)?(?:the\s+)?(?:an?\s+)?(?:python|java|javascript|js|c\+\+|cpp|html|css|sql|ruby|go|rust|swift|kotlin)\s+(?:code|script|program|implementation|algorithm|function|class)\b", "code_gen", 0.95),
@@ -238,6 +247,7 @@ NL_OVERRIDES = [
     (r"\b(resume\s+(?:the\s+)?(?:build|job|project))\b", "job_resume", 0.95),
     (r"\b(cancel\s+(?:the\s+)?(?:build|job|project)|stop\s+(?:the\s+)?build)\b", "job_cancel", 0.95),
     (r"\b(undo\s+(?:the\s+)?(?:last\s+)?(?:build\s+)?phase|rollback\s+(?:last\s+)?phase)\b", "job_undo", 0.95),
+    (r"\b(open\s+(?:the\s+)?(?:project|workspace|in\s+vscode|in\s+code)|launch\s+(?:the\s+)?(?:project|app|application))\b", "job_open", 0.95),
 ]
 
 
