@@ -51,6 +51,31 @@ def prepare_speech_text(text: str) -> str:
     t = re.sub(r"[*_#~<>{}\[\]\\]+", " ", t)
     return re.sub(r"\s{2,}", " ", t).strip()
 
+
+# ---------------------------------------------------------------------------
+# VAD tuning.
+#
+# IMPORTANT: every energy value below is in RAW 16-bit RMS units — the exact
+# scale used by speech_recognition's `energy_threshold` (audioop.rms). The old
+# code mixed two scales: the ambient floor came from `energy_threshold`
+# (raw RMS, e.g. ~70-500) while the frame level was divided by 32768 and
+# multiplied by 1000 (~33x smaller), so the `80.0` floor silently meant
+# raw RMS ~2620 (-22 dBFS) and normal speech never crossed it.
+# ---------------------------------------------------------------------------
+def _env_number(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+VAD_MIN_ENERGY = _env_number("FLEXIE_VAD_MIN_ENERGY", 150.0)      # ~ -47 dBFS floor
+VAD_ENERGY_RATIO = _env_number("FLEXIE_VAD_ENERGY_RATIO", 1.5)    # above ambient
+VAD_FRAME_MS = 30          # webrtcvad accepts ONLY 10/20/30 ms frames
+VAD_STUCK_MUTE_SECONDS = 30.0   # long TTS replies may legitimately run 10-25s
+VAD_MIC_SAMPLE_RATE = 16000     # preferred rate: Google ASR + webrtcvad optimum
+
+
 class VoiceInterface:
     def __init__(self):
         self.recognizer = sr.Recognizer()
@@ -112,16 +137,20 @@ class VoiceInterface:
         self.speech_thread.start()
         
         # 1. Establish persistent open microphone stream context to avoid device locking failures
-        self._mic = sr.Microphone()
+        self._mic = None
         self._mic_context = None
+        self._mic_sample_rate = None
         try:
             logging.info("Voice: Initializing persistent microphone stream...")
-            self._mic_context = self._mic.__enter__()
+            self._mic, self._mic_sample_rate = self._open_mic_stream()
+            logging.info(f"Voice: Mic stream live @ {self._mic_sample_rate} Hz.")
             logging.info("Voice: Calibrating microphone for ambient noise floor...")
             self.recognizer.adjust_for_ambient_noise(self._mic, duration=1.5)
-            logging.info(f"Voice: Calibration complete. Dynamic threshold baseline set to {self.recognizer.energy_threshold:.1f}")
+            logging.info(f"Voice: Calibration complete. Dynamic threshold baseline set to {self.recognizer.energy_threshold:.1f} (raw RMS)")
         except Exception as ce:
-            logging.error(f"Voice: Persistent mic initialization/calibration failed: {ce}")    # ------------------------------------------------------------------
+            logging.error(f"Voice: Persistent mic initialization/calibration failed: {ce}")
+
+    # ------------------------------------------------------------------
     # TTS engines
     # ------------------------------------------------------------------
     # Voice selection (env-overridable):
@@ -350,6 +379,77 @@ class VoiceInterface:
             self.speech_queue.put(self._speech_buffer)
             self._speech_buffer = ""
 
+    def _resolve_mic_device(self):
+        """Optional mic selection via FLEXIE_MIC_DEVICE.
+
+        Accepts either a device index ("2") or a case-insensitive name
+        substring ("steam", "realtek"). Returns None (system default) when the
+        variable is unset or does not match, so behaviour is unchanged for
+        everyone who does not set it.
+        """
+        pref = (os.getenv("FLEXIE_MIC_DEVICE") or "").strip()
+        if not pref:
+            return None
+
+        try:
+            names = sr.Microphone.list_microphone_names()
+        except Exception as e:
+            logging.warning(f"Voice: could not enumerate microphones ({e}); using system default")
+            return None
+
+        if pref.isdigit():
+            idx = int(pref)
+            if 0 <= idx < len(names):
+                logging.info(f"Voice: FLEXIE_MIC_DEVICE={idx} -> [{idx}] {names[idx]}")
+                return idx
+            logging.warning(f"Voice: FLEXIE_MIC_DEVICE={idx} out of range (0-{len(names) - 1}); using system default")
+            return None
+
+        for idx, name in enumerate(names):
+            if pref.lower() in (name or "").lower():
+                logging.info(f"Voice: FLEXIE_MIC_DEVICE='{pref}' -> [{idx}] {name}")
+                return idx
+
+        logging.warning(f"Voice: FLEXIE_MIC_DEVICE='{pref}' matched no input device; using system default")
+        return None
+
+    def _open_mic_stream(self, device_index=None):
+        """Open (and keep open) the persistent mic stream.
+
+        Prefers a 16 kHz stream because that is what Google ASR expects and the
+        only rate family webrtcvad can consume (8/16/32/48 kHz). Falls back to
+        the hardware's own default rate when the device refuses 16 kHz, so a
+        device that only exposes 44.1 kHz still works (just without webrtcvad).
+
+        Returns (mic, sample_rate). Raises if no stream could be opened.
+        """
+        if device_index is None:
+            device_index = self._resolve_mic_device()
+
+        last_err = None
+        for rate in (VAD_MIC_SAMPLE_RATE, None):
+            mic = None
+            try:
+                if rate:
+                    mic = sr.Microphone(device_index=device_index, sample_rate=rate)
+                else:
+                    # None -> speech_recognition uses the hardware default rate.
+                    mic = sr.Microphone(device_index=device_index)
+                self._mic_context = mic.__enter__()
+                return mic, mic.SAMPLE_RATE
+            except Exception as e:
+                last_err = e
+                logging.warning(f"Voice: mic open at {rate or 'device-default'} Hz failed: {e}")
+                if mic is not None:
+                    try:
+                        mic.__exit__(None, None, None)
+                    except Exception as _e:
+                        logging.debug("[interface/voice.py] Swallowed exception during mic rollback: %s: %s",
+                                      type(_e).__name__, _e)
+
+        self._mic_context = None
+        raise RuntimeError(f"could not open microphone stream: {last_err}")
+
     def _get_adaptive_mode(self, timeout=None, phrase_time_limit=None) -> str:
         """Dynamically infers the best listening mode (fast, normal, conversation) based on interaction context."""
         # "fast" is reserved for short yes/no replies (timeout<=3). Anything
@@ -380,7 +480,11 @@ class VoiceInterface:
         
         # Ensure lazy instantiation of persistent stream context if needed
         if not hasattr(self, '_mic') or self._mic is None:
-            self._mic = sr.Microphone()
+            try:
+                self._mic, self._mic_sample_rate = self._open_mic_stream()
+            except Exception as e:
+                logging.error(f"VAD Persistent Mic stream lazy init failed: {e}")
+                return ""
         if not getattr(self, '_mic_context', None):
             try:
                 self._mic_context = self._mic.__enter__()
@@ -397,7 +501,10 @@ class VoiceInterface:
         else:
             silence_timeout = 0.6   # was 0.9 — normal commands
 
-        logging.info(f"VAD [Listening]: Mode={mode.upper()}, SilenceTimeout={silence_timeout}s")
+        logging.info(
+            f"VAD [Listening]: Mode={mode.upper()}, SilenceTimeout={silence_timeout}s, "
+            f"EnergyFloor={VAD_MIN_ENERGY:.0f} (raw RMS)"
+        )
         
         import struct
         import math
@@ -408,16 +515,31 @@ class VoiceInterface:
             sample_rate = source.SAMPLE_RATE
             sample_width = source.SAMPLE_WIDTH
             
-            # 0.06 seconds per frame for even higher resolution & under-1.5s total latency
-            chunk_size = int(sample_rate * 0.06)
+            # 30 ms frames: valid for webrtcvad (it rejects anything else) and
+            # short enough to keep barge-in latency low.
+            chunk_size = max(1, int(sample_rate * (VAD_FRAME_MS / 1000.0)))
+            chunk_seconds = chunk_size / float(sample_rate)
             
             # Setup recognizer parameters
             self.recognizer.pause_threshold = silence_timeout
             self.recognizer.phrase_threshold = 0.3
             self.recognizer.non_speaking_duration = 0.5
             
-            # Baseline energy threshold
-            noise_floor = self.recognizer.energy_threshold
+            # Ambient floor in RAW 16-bit RMS units — the same scale as
+            # recognizer.energy_threshold, so the two are always comparable.
+            noise_floor = max(float(self.recognizer.energy_threshold), VAD_MIN_ENERGY)
+            
+            # webrtcvad only understands 8/16/32/48 kHz streams.
+            webrtc_vad = getattr(self, '_webrtc_vad', None)
+            if webrtc_vad is None and sample_rate in (8000, 16000, 32000, 48000):
+                try:
+                    import webrtcvad
+                    webrtc_vad = webrtcvad.Vad(2)
+                    self._webrtc_vad = webrtc_vad
+                except Exception as e:
+                    logging.debug(f"VAD: webrtcvad unavailable ({e}); energy gate only")
+            elif webrtc_vad is None:
+                logging.info(f"VAD: stream is {sample_rate} Hz — webrtcvad needs 8/16/32/48 kHz, using energy gate only")
             
             audio_buffer = bytearray()
             speech_started = False
@@ -425,6 +547,8 @@ class VoiceInterface:
             total_duration = 0.0
             active_speech_duration = 0.0
             last_partial_time = time.time()
+            max_rms_seen = 0.0
+            max_peak_seen = 0
             
             # Timeout for starting to speak (7.0 seconds total wait window)
             max_wait_time = max(0.1, float(timeout)) if timeout is not None else Config.VOICE_LISTEN_TIMEOUT
@@ -442,10 +566,13 @@ class VoiceInterface:
                     raw_chunk = stream.read(chunk_size)
                     
                     if getattr(self, 'is_speaking', False):
-                        # Hard mute: prevent feedback loop - but with timeout to avoid stuck mute
-                        # If speaking for >8s, allow mic anyway (TTS likely stuck)
-                        if time.time() - getattr(self, '_speak_start_time', 0) > 8.0:
-                            logging.warning("VAD: is_speaking stuck >8s, forcing unmute")
+                        # Hard mute: prevent feedback loop - but with timeout to avoid stuck mute.
+                        # The guard is deliberately generous (30s): real TTS replies can take
+                        # 10-25s, and force-unmuting mid-reply makes the AI hear itself.
+                        if time.time() - getattr(self, '_speak_start_time', 0) > VAD_STUCK_MUTE_SECONDS:
+                            logging.warning(
+                                f"VAD: is_speaking stuck >{VAD_STUCK_MUTE_SECONDS:.0f}s, forcing unmute"
+                            )
                             self.is_speaking = False
                         else:
                             audio_buffer.clear()
@@ -454,47 +581,56 @@ class VoiceInterface:
                             continue
                         
                     audio_buffer.extend(raw_chunk)
-                    total_duration += 0.06
+                    total_duration += chunk_seconds
                     
                     count = len(raw_chunk) // 2
                     if count == 0:
                         continue
                     
                     shorts = struct.unpack(f"{count}h", raw_chunk)
-                    sum_squares = sum((s / 32768.0) ** 2 for s in shorts)
-                    rms = math.sqrt(sum_squares / count) * 1000
+                    # RAW int16 RMS (audioop.rms equivalent) — identical units to
+                    # recognizer.energy_threshold. Do NOT rescale: comparing a
+                    # rescaled value against an unscaled threshold is what made
+                    # every utterance look like silence.
+                    sum_squares = sum(float(s) * float(s) for s in shorts)
+                    rms = math.sqrt(sum_squares / count)
+                    peak = max(max(shorts), -min(shorts))
+                    if rms > max_rms_seen:
+                        max_rms_seen = rms
+                    if peak > max_peak_seen:
+                        max_peak_seen = peak
                     
-                    # Optional webrtcvad: if installed, use it for better detection
-                    try:
-                        import webrtcvad
-                        vad_obj = getattr(self, '_webrtc_vad', None)
-                        if vad_obj is None:
-                            vad_obj = webrtcvad.Vad(2)
-                            self._webrtc_vad = vad_obj
-                        is_webrtc_speech = vad_obj.is_speech(raw_chunk, sample_rate)
-                    except Exception as _e:
-                        logging.debug("[interface/voice.py:317] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                        is_webrtc_speech = None
+                    # Optional webrtcvad: needs valid 10/20/30 ms frames at 8/16/32/48 kHz
+                    is_webrtc_speech = False
+                    if webrtc_vad is not None:
+                        try:
+                            is_webrtc_speech = webrtc_vad.is_speech(raw_chunk, sample_rate)
+                        except Exception as _e:
+                            logging.debug("[interface/voice.py] webrtcvad frame rejected: %s: %s", type(_e).__name__, _e)
+                            webrtc_vad = None
+                            self._webrtc_vad = None
                     
                     # Adapt ambient noise floor during silent gaps (and only when AI is NOT speaking)
                     if not speech_started and not self.is_speaking:
                         noise_floor = (noise_floor * 0.95) + (rms * 0.05)
-                        noise_floor = max(noise_floor, 35.0)
+                        noise_floor = max(noise_floor, VAD_MIN_ENERGY * 0.25)
                         
                     # 3. Echo-Proof Barge-In & Self-Trigger Prevention
-                    # Lowered from 1.8/120 to 1.5/80 - fixes voice not detected in noisy rooms
-                    vad_threshold = max(noise_floor * 1.5, 80.0)
+                    # Threshold is "a bit above the measured room ambience", but never
+                    # below VAD_MIN_ENERGY (~ -47 dBFS) so a silent room still needs
+                    # real speech to trigger.
+                    vad_threshold = max(noise_floor * VAD_ENERGY_RATIO, VAD_MIN_ENERGY)
                         
                     is_active_speech = rms > vad_threshold
-                    # Boost with webrtcvad if available
-                    if is_webrtc_speech is not None:
-                        is_active_speech = is_active_speech or is_webrtc_speech
+                    # Boost with webrtcvad if available (catches quiet/soft speech)
+                    if is_webrtc_speech:
+                        is_active_speech = True
                     
                     if is_active_speech:
-                        active_speech_duration += 0.06
+                        active_speech_duration += chunk_seconds
                         if not speech_started:
                             speech_started = True
-                            logging.info(f"VAD [Speech Started]: Energy={rms:.1f} vs Threshold={vad_threshold:.1f}. Buffering active.")
+                            logging.info(f"VAD [Speech Started]: Energy={rms:.1f} (peak {peak}) vs Threshold={vad_threshold:.1f}. Buffering active.")
                         silence_start_time = None
                         
                         # Dynamic partial recognition in background thread to achieve streaming feel
@@ -534,9 +670,13 @@ class VoiceInterface:
                                     logging.info(f"VAD [Speech Ended]: Paused {elapsed_silence:.1f}s >= {current_timeout:.1f}s. Finalizing.")
                                     break
                         else:
-                            wait_elapsed += 0.06
+                            wait_elapsed += chunk_seconds
                             if wait_elapsed >= max_wait_time:
-                                logging.info("VAD [Timeout]: No human voice detected.")
+                                logging.info(
+                                    "VAD [Timeout]: No human voice detected. "
+                                    f"(loudest frame: rms={max_rms_seen:.1f}, peak={max_peak_seen}, "
+                                    f"threshold={vad_threshold:.1f}, mic={sample_rate}Hz)"
+                                )
                                 return ""
 
                         # Safety loop cap — generous so longer commands are never truncated
@@ -554,11 +694,14 @@ class VoiceInterface:
                             if hasattr(self, '_mic_context') and self._mic_context:
                                 try: self._mic.__exit__(None, None, None)
                                 except Exception as _e:
-                                    logging.debug("[interface/voice.py:392] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                            self._mic = sr.Microphone()
-                            self._mic_context = self._mic.__enter__()
+                                    logging.debug("[interface/voice.py] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                            self._mic, self._mic_sample_rate = self._open_mic_stream()
                             stream = self._mic.stream
-                            logging.info("VAD: Mic stream context re-instantiated successfully.")
+                            sample_rate = self._mic.SAMPLE_RATE
+                            sample_width = self._mic.SAMPLE_WIDTH
+                            chunk_size = max(1, int(sample_rate * (VAD_FRAME_MS / 1000.0)))
+                            chunk_seconds = chunk_size / float(sample_rate)
+                            logging.info(f"VAD: Mic stream context re-instantiated successfully @ {sample_rate} Hz.")
                         except Exception as re_err:
                             logging.error(f"VAD: Re-instantiation of mic context failed: {re_err}")
                         err_count = 0

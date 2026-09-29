@@ -442,7 +442,10 @@ class DeveloperEngine:
                     try:
                         code_cmd = shutil.which("code") or r"C:\Users\Dhanush\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd"
                         if os.path.exists(code_cmd):
-                            subprocess.Popen([code_cmd, target_dir], shell=True)
+                            if code_cmd.lower().endswith(".cmd") or code_cmd.lower().endswith(".bat"):
+                                subprocess.Popen(["cmd.exe", "/c", code_cmd, target_dir], shell=False)
+                            else:
+                                subprocess.Popen([code_cmd, target_dir], shell=False)
                             opened = True
                         else:
                             os.startfile(target_dir)

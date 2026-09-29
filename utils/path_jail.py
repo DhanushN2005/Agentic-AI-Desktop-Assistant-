@@ -9,6 +9,11 @@ raises ``ValueError``.
 import os
 
 _SYSTEM_DIR_NAMES = {"windows", "program files", "program files (x86)", "programdata"}
+_WIN_RESERVED_NAMES = {
+    "con", "prn", "aux", "nul",
+    *(f"com{i}" for i in range(1, 10)),
+    *(f"lpt{i}" for i in range(1, 10)),
+}
 
 
 def project_root() -> str:
@@ -22,6 +27,11 @@ def resolve_in_root(path: str, root: str) -> str:
     # Strip surrounding quotes users sometimes include
     if len(p) >= 2 and p[0] == p[-1] and p[0] in ("'", '"'):
         p = p[1:-1]
+    for part in os.path.normpath(p).split(os.sep):
+        if part:
+            stem = part.split(".")[0].lower()
+            if stem in _WIN_RESERVED_NAMES:
+                raise ValueError(f"reserved Windows device name in path: {part!r}")
     joined = p if os.path.isabs(p) else os.path.join(root, p)
     real = os.path.realpath(os.path.abspath(joined))
     real_root = os.path.realpath(os.path.abspath(root))
@@ -32,6 +42,9 @@ def resolve_in_root(path: str, root: str) -> str:
     if not inside:
         raise ValueError(f"path escapes workspace root: {path!r}")
     return real
+
+
+validate_path_jail = resolve_in_root
 
 
 def is_basename_safe(name: str) -> bool:
@@ -46,6 +59,9 @@ def is_basename_safe(name: str) -> bool:
     if ".." in n:
         return False
     if len(n) > 255:
+        return False
+    stem = n.split(".")[0].lower()
+    if stem in _WIN_RESERVED_NAMES:
         return False
     return True
 
