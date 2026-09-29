@@ -2,6 +2,7 @@ import re
 from difflib import get_close_matches
 
 from utils.config import Config
+import logging
 
 # Common typo corrections for voice/typing errors
 TYPO_MAP = {
@@ -91,6 +92,7 @@ NL_OVERRIDES = [
     (r"\b(tell|give|show|write|generate|create|get)\s+(?:me\s+)?(?:a\s+)?(?:the\s+)?(?:binary\s+search|sorting|linked\s+list|tree|graph|queue|stack|hash\s+map|array|matrix|fibonacci|factorial|palindrome)\s+(?:code|script|program|implementation|algorithm|function|class)\b", "code_gen", 0.95),
     (r"\b(python|java|javascript|js|c\+\+|cpp|html|css|sql)\s+(?:code|script|program|implementation)\s+(?:for|of|to)\s+(?:a\s+)?\w+\b", "code_gen", 0.9),
     (r"\b(generate|write|create)\s+(?:me\s+)?(?:a\s+)?(?:full\s+)?(?:code|script|program)\s+(?:for|of|to)\s+(?:a\s+)?\w+\b", "code_gen", 0.85),
+    (r"\b(create|make|build|generate|design|write)\b.*\b(page|form|interface|component|template|dashboard|screen)\b", "code_gen", 0.95),
 
     # Local code search (must come AFTER code_gen to prefer code generation)
     # Only match code/project/repository searches, NOT general file searches
@@ -100,7 +102,15 @@ NL_OVERRIDES = [
     (r"\b(summariz|summary|brief|overview|tldr|tl;dr|condense|shorten|abbreviate)\b", "summarize", 0.85),
 
     # Awareness
-    (r"\b(who\s+are\s+you|what\s+are\s+you|tell\s+me\s+about\s+yourself|your\s+name|describe\s+yourself|what\s+can\s+you\s+do|your\s+(?:stats|capabilities|abilities|features))\b", "awareness", 0.95),
+    (r"\b(who\s+am\s+i|who\s+are\s+you|what\s+are\s+you|tell\s+me\s+about\s+yourself|your\s+name|describe\s+yourself|what\s+can\s+you\s+do|your\s+(?:stats|capabilities|abilities|features))\b", "awareness", 0.95),
+    # Awareness: limitations ("what can't you do")
+    (r"\b(what\s+can'?t\s+you\s+do|what\s+cannot\s+you\s+do|your\s+limitations?|what\s+are\s+your\s+limits?)\b", "awareness", 0.95),
+    # Awareness: sub-agents
+    (r"\b(sub[- ]?agents?|your\s+agents?|your\s+team|who\s+works\s+for\s+you|your\s+helpers|what\s+agents)\b", "awareness", 0.95),
+    # Awareness: modes
+    (r"\b(your\s+modes?|available\s+modes?|what\s+modes|which\s+modes|all\s+modes|mode\s+list)\b", "awareness", 0.95),
+    # Awareness: architecture / sub-systems
+    (r"\b(how\s+(?:do|are)\s+you\s+(?:work|function|built)|your\s+architecture|your\s+systems?|system\s+overview|what\s+systems)\b", "awareness", 0.95),
 
     # Memory system (must come BEFORE remind_me for "remember that/this/when")
     (r"\b(remember\s+(?:that|this|when)|keep\s+in\s+mind|don'?t\s+forget|what\s+do\s+you\s+remember|what\s+have\s+you\s+learned|memory\s+(?:stats|status)|how\s+much\s+(?:do\s+you\s+)?remember|recent\s+conversations?|what\s+did\s+we\s+talk\s+about|conversation\s+history|search\s+memory|popular\s+topics?)\b", "memory_system", 0.9),
@@ -137,6 +147,14 @@ NL_OVERRIDES = [
 
     # Text Tools
     (r"\b(word\s+count|character\s+count|count\s+(?:the\s+)?(?:words?|chars?|characters?|letters?)|how\s+many\s+(?:words?|characters?|letters?))\b", "text_tools", 0.9),
+
+    # **NEW: Run/Execute CMD commands** - intercept before app_op "open" pattern
+    (r"\b(run|execute)\s+(?:command|cmd|terminal)\b", "run_command", 10),
+
+    # **NEW: Web UI Activation** - MUST come before app_op "open" pattern
+    (r"\b(open|start|activate)\s+web\s+ui\b", "open_web_ui", 9),
+
+    # Hash / Encoder
     (r"\b(reverse\s+(?:this|that|text|it|the\s+text)|make\s+(?:it|this|text)\s+(?:all\s+)?uppercase|make\s+(?:it|this|text)\s+(?:all\s+)?lowercase|title\s+case|sentence\s+case|snake\s+case|camel\s+case|kebab\s+case)\b", "text_tools", 0.9),
     (r"\b(remove\s+duplicates?|sort\s+(?:the\s+)?lines?|slugify|wrap\s+text|extract\s+(?:all\s+)?(?:emails?|urls?|links?|numbers?))\b", "text_tools", 0.9),
     (r"\b(text\s+(?:tools?|utilities?|processor|manipulator|editor))\b", "text_tools", 0.85),
@@ -696,7 +714,7 @@ class IntentRouter:
             ], 6),
 
             ("awareness", [
-                "who are you", "tell me about yourself", "what are you",
+                "who am i", "who are you", "tell me about yourself", "what are you",
                 "your name", "your stats", "your statistics", "how you doing",
                 "your personality", "what are you like", "describe yourself",
                 "what do you know", "what have you learned", "your knowledge",
@@ -979,6 +997,10 @@ class IntentRouter:
         - search (web search)
         - conversational (general chat)
         - complex (multi-step tasks)
+        - artifact_open (open/show the active generated file)
+        - artifact_run (run/execute the active generated file)
+        - artifact_edit (modify/update the active generated file)
+        - artifact_extend (create another file linked to the active generated file)
 
         Return a JSON object:
         {{
@@ -1010,11 +1032,19 @@ class IntentRouter:
         - NEVER combine multiple actions into one step
         """
         try:
-            res_raw = brain_instance.ask(prompt, system_override="You are a tool router. Return ONLY valid JSON.")
-            # Simple JSON extraction
+            res_raw = brain_instance.ask(prompt, system_override="You are a tool router. Return ONLY valid JSON.", use_rag=False)
+            if not res_raw or not isinstance(res_raw, str):
+                raise ValueError("empty LLM response")
+            # Simple JSON extraction (guarded: non-JSON output falls back to route())
             import json
-            json_str = re.search(r'\{.*\}', res_raw, re.DOTALL).group()
-            data = json.loads(json_str)
+            match = re.search(r'\{.*\}', res_raw, re.DOTALL)
+            if match is None:
+                raise ValueError("no JSON object in LLM response")
+            try:
+                data = json.loads(match.group())
+            except (json.JSONDecodeError, ValueError) as _je:
+                logging.debug("[core/router.py:1026] JSON decode failed: %s", _je)
+                raise ValueError("invalid JSON in LLM response")
             merged_params = data.get("params", {})
             if "steps" in data:
                 merged_params["steps"] = data["steps"]
@@ -1023,8 +1053,13 @@ class IntentRouter:
             if "goal" in data:
                 merged_params["goal"] = data["goal"]
             return data.get("intent", "conversational"), data.get("confidence", 0.0), merged_params
-        except Exception:
-            return "conversational", 0.0, {}
+        except Exception as _e:
+            logging.debug("[core/router.py:1026] Swallowed exception: %s: %s", type(_e).__name__, _e)
+            try:
+                fallback_intent, fallback_conf = self.route(command)
+                return fallback_intent, fallback_conf, {}
+            except Exception:
+                return "conversational", 0.0, {}
 
     def route(self, command: str) -> tuple[str, float]:
         # Keep existing fast regex route as the 'First Tier' (Latency optimization)

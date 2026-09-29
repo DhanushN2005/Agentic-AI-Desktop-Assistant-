@@ -3,6 +3,7 @@ import sys
 import subprocess
 import re
 from utils.config import Config
+import logging
 
 class DeveloperEngine:
     DANGER_CMDS = ["rm ", "del ", "format ", "rmdir /s", ">", "mkfs", "rd /s"]
@@ -21,10 +22,11 @@ class DeveloperEngine:
             if not SafetyGuard().validate(cmd):
                 return "Blocked by safety guard: command contains dangerous patterns."
             gate = DangerGate()
-            if gate.is_dangerous(cmd):
+            if gate.detect(cmd):
                 if not self.flexie.voice.confirm(f"The command '{cmd}' might be dangerous. Do you still want to run it?"):
                     return "Command execution cancelled for safety."
-        except: pass
+        except Exception as _e:
+            logging.debug("[engines/developer.py:27] Swallowed exception: %s: %s", type(_e).__name__, _e)
         # Legacy danger check
         if any(d in cmd.lower() for d in self.DANGER_CMDS):
             if not self.flexie.voice.confirm(f"The command '{cmd}' might be dangerous. Do you still want to run it?"):
@@ -47,6 +49,7 @@ class DeveloperEngine:
                 summary = self.flexie.brain.ask(f"Explain this terminal error in one simple conversational sentence for speech: {error[:500]}")
                 return f"The command failed. {summary}"
         except Exception as e:
+            logging.debug("[engines/developer.py:49] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"I failed to execute the terminal command due to an internal error: {str(e)}"
 
     def get_git_status(self) -> str:
@@ -58,7 +61,8 @@ class DeveloperEngine:
             
             summary = self.flexie.brain.ask(f"Summarize this git status short output into a natural sentence about what files changed: {status}")
             return f"Here is your git status: {summary}"
-        except:
+        except Exception as _e:
+            logging.debug("[engines/developer.py:61] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Dhanush, it looks like the current folder is not a Git repository, or Git is not initialized here."
 
     def get_git_diff_summary(self) -> str:
@@ -70,7 +74,8 @@ class DeveloperEngine:
             
             summary = self.flexie.brain.ask(f"Summarize these git changes based on the file stats in one natural sentence: {diff}")
             return f"Recent changes summary: {summary}"
-        except:
+        except Exception as _e:
+            logging.debug("[engines/developer.py:73] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "I couldn't retrieve a Git diff for this project."
 
     def run_python_script(self, file_path: str) -> str:
@@ -92,6 +97,7 @@ class DeveloperEngine:
                 summary = self.brain.summarize_error(res.stderr)
                 return f"The script failed to run. Based on the logs, {summary}"
         except Exception as e:
+            logging.debug("[engines/developer.py:94] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"An error occurred while trying to run the script: {str(e)}"
 
     def debug_screen(self) -> str:
@@ -136,6 +142,7 @@ class DeveloperEngine:
                 f.write(res)
             return "I have analyzed the project and saved a detailed multi-level explanation to flexie_project_explanation.md in your project folder."
         except Exception as e:
+            logging.debug("[engines/developer.py:138] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"I had trouble explaining the project: {e}"
 
     def analyze_repository(self) -> str:
@@ -162,6 +169,7 @@ class DeveloperEngine:
                 f.write(res)
             return "I have completed the repository analysis. The full architectural report has been saved to flexie_architecture_report.md."
         except Exception as e:
+            logging.debug("[engines/developer.py:164] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"I had trouble analyzing the repository: {e}"
 
     def audit_repository(self) -> str:
@@ -183,6 +191,7 @@ class DeveloperEngine:
                 f.write(res)
             return "I have finished auditing the codebase. A full severity breakdown and bug report has been saved to flexie_bug_report.md."
         except Exception as e:
+            logging.debug("[engines/developer.py:185] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"I had trouble auditing the repository: {e}"
 
     def generate_tests(self) -> str:
@@ -211,6 +220,7 @@ class DeveloperEngine:
             
             return "I generated the tests but couldn't parse the code block correctly. Please try again."
         except Exception as e:
+            logging.debug("[engines/developer.py:213] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"I had trouble generating tests: {e}"
 
     def autonomous_build(self, user_request: str, autonomous: bool = False) -> str:
@@ -314,7 +324,8 @@ class DeveloperEngine:
             if is_auto:
                 try:
                     self.flexie.files.open_item("vscode", target_path=folder)
-                except: pass
+                except Exception as _e:
+                    logging.debug("[engines/developer.py:317] Swallowed exception: %s: %s", type(_e).__name__, _e)
             else:
                 if self.flexie.voice.confirm("Would you like me to open this project in VS Code?"):
                     self.flexie.files.open_item("vscode", target_path=folder)
@@ -330,4 +341,5 @@ class DeveloperEngine:
             return f"Autonomous project build complete at {folder} - {len(files)} files verified."
             
         except Exception as e:
+            logging.debug("[engines/developer.py:332] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"The autonomous build failed: {e}"
