@@ -87,6 +87,8 @@ _KNOWN_ENV_KEYS = {
     "FLEXIE_CODE_MAX_TOKENS", "FLEXIE_ARTIFACT_SOURCE_CHARS",
     "FLEXIE_VOICE_LISTEN_TIMEOUT", "FLEXIE_CODE_OUTPUT_DIR",
     "FLEXIE_ARTIFACT_BACKUP_DIR", "FLEXIE_JOB_TOKEN_BUDGET",
+    "FLEXIE_OPENAI_BRIDGE_ENABLED", "FLEXIE_OPENAI_BRIDGE_PORT",
+    "FLEXIE_CHEAP_FIRST_ENABLED",
 }
 _ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _CUSTOM_KEY_RES = (
@@ -203,6 +205,13 @@ def _env_number(name, default, converter):
         return default
 
 
+def _env_bool(name, default):
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+
 def _mask_key(key: str) -> str:
     if not key or len(key) < 8:
         return "••••"
@@ -224,6 +233,9 @@ class Config:
     ARTIFACT_SOURCE_CHARS = _env_number("FLEXIE_ARTIFACT_SOURCE_CHARS", 20000, int)
     VOICE_LISTEN_TIMEOUT = _env_number("FLEXIE_VOICE_LISTEN_TIMEOUT", 7.0, float)
     CODE_OUTPUT_DIR = os.getenv("FLEXIE_CODE_OUTPUT_DIR", os.path.join(os.path.expanduser("~"), "Downloads"))
+    OPENAI_BRIDGE_ENABLED = _env_bool("FLEXIE_OPENAI_BRIDGE_ENABLED", False)
+    OPENAI_BRIDGE_PORT = _env_number("FLEXIE_OPENAI_BRIDGE_PORT", 9899, int)
+    CHEAP_FIRST_ENABLED = _env_bool("FLEXIE_CHEAP_FIRST_ENABLED", True)
     ARTIFACT_BACKUP_DIR = os.getenv("FLEXIE_ARTIFACT_BACKUP_DIR", os.path.join(os.getcwd(), "context", "artifact_backups"))
     SNAP_PATH  = os.path.join(os.getcwd(), "captures", "flexie_snap.png")
     CAPTURE_DIR = os.path.join(os.getcwd(), "captures")
