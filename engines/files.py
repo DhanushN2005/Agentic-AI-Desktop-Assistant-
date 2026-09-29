@@ -77,7 +77,7 @@ class FileManager:
                             except Exception as _e:
                                 logging.debug("[engines/files.py:73] Swallowed exception: %s: %s", type(_e).__name__, _e)
                                 # Fail closed: 'start' is a cmd.exe builtin and
-                                # would require shell=True — do not shell out.
+                                # would need a shell to run — do not shell out.
                                 return f"Error opening {app}: {type(_e).__name__}"
                             self._cache[q] = path
                     return f"Opening {app}."
