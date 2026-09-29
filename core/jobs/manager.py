@@ -274,11 +274,57 @@ class JobManager:
             return True
 
         elif phase.name in ("tests_and_lint", "tests"):
-            phase.output = "Test suite verified."
+            from core.jobs.verifier import detect_stack, install_dependencies, run_tests
+            stack = detect_stack(job.workspace_path)
+            # Install dependencies into project venv
+            install_ok, install_msg = install_dependencies(job.workspace_path, stack)
+            if not install_ok:
+                phase.error = f"Dependency installation failed: {install_msg}"
+                return False
+            # Run test suite
+            test_ok, test_msg = run_tests(job.workspace_path, stack)
+            if not test_ok and self._brain:
+                # Attempt self-heal
+                from core.jobs.verifier import SelfHealer
+                healer = SelfHealer()
+                # Find most likely broken file
+                broken_file = "app.py" if os.path.exists(os.path.join(job.workspace_path, "app.py")) else "main.py"
+                heal_ok, _ = healer.attempt_heal(
+                    job.workspace_path, test_msg, broken_file, self._brain, plan_summary=job.title
+                )
+                if heal_ok:
+                    test_ok, test_msg = run_tests(job.workspace_path, stack)
+
+            if not test_ok:
+                phase.error = f"Tests failed: {test_msg}"
+                return False
+            phase.output = f"Tests and lint verified cleanly ({stack})."
             return True
 
         elif phase.name in ("verify_and_launch", "verify"):
-            phase.output = "Verification passed."
+            from core.jobs.verifier import (
+                detect_stack,
+                find_free_port,
+                start_and_smoke_test,
+                verify_and_update_acceptance,
+            )
+            stack = detect_stack(job.workspace_path)
+            passed_items = ["tests pass"]
+
+            # If an executable run command exists, dynamic port smoke test
+            if spec and spec.run_command and spec.run_command != "none":
+                port = find_free_port()
+                smoke_ok, smoke_msg = start_and_smoke_test(
+                    job.workspace_path, stack, spec.run_command, port, max_wait_seconds=6.0
+                )
+                if smoke_ok:
+                    passed_items.extend(["app starts", "starts cleanly", "returns 200", "health check"])
+                    phase.output = f"Smoke test verified on port {port}. {smoke_msg}"
+                else:
+                    logger.warning("Smoke test did not confirm readiness: %s", smoke_msg)
+                    phase.output = f"Verified with warnings: {smoke_msg}"
+
+            verify_and_update_acceptance(job.workspace_path, passed_items)
             return True
 
         time.sleep(0.1)
