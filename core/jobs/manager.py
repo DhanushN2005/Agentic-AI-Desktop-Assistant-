@@ -253,7 +253,13 @@ class JobManager:
             return True
 
         elif phase.name in ("core_logic", "code"):
-            if spec and spec.files:
+            if self._brain:
+                from core.jobs.generator import CodeGenerator
+                gen = CodeGenerator()
+                ok = gen.generate_all_files(job, self._brain, phase)
+                if not ok:
+                    return False
+            elif spec and spec.files:
                 for fspec in spec.files:
                     target_path = os.path.join(job.workspace_path, fspec.name)
                     if not os.path.exists(target_path):
