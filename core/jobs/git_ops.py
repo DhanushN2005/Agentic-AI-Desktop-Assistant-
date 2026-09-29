@@ -163,3 +163,35 @@ def undo_last_phase(workspace: str, workspace_root: Optional[str] = None) -> Tup
         return False, f"Git reset failed: {reset_res.stderr.strip()}"
     except Exception as e:
         return False, f"Undo operation encountered an error: {e}"
+
+
+def get_job_git_history(workspace: str, max_count: int = 10) -> list[dict]:
+    """Return recent git commit log for the workspace."""
+    if not is_git_available():
+        return []
+
+    real_ws = os.path.realpath(workspace)
+    if not os.path.exists(os.path.join(real_ws, ".git")):
+        return []
+
+    try:
+        res = subprocess.run(
+            ["git", "log", f"-n{max_count}", "--format=%h|%s"],
+            cwd=real_ws,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            shell=False,
+        )
+        if res.returncode != 0:
+            return []
+
+        commits = []
+        for line in res.stdout.strip().splitlines():
+            if "|" in line:
+                sha, msg = line.split("|", 1)
+                commits.append({"sha": sha.strip(), "message": msg.strip()})
+        return commits
+    except Exception as e:
+        logger.debug("Failed to read git history in %s: %s", real_ws, e)
+        return []
