@@ -2,12 +2,17 @@ import re
 import urllib.parse
 
 
+def _wm(word: str, text: str) -> bool:
+    """Word-boundary match — 'stop' won't hit 'stopwatch'."""
+    return bool(re.search(r'\b' + re.escape(word) + r'\b', text))
+
+
 def handle_play_youtube(orch, c):
     import threading
 
     if any(k in c for k in ["app", "build", "task", "project", "code"]):
         return False
-    if any(x in c for x in ["next", "skip", "kip"]):
+    if any(_wm(x, c) for x in ["next", "skip", "kip"]):
         orch.speak("Skipping to the next track.")
         orch.speak(orch.yt.control_player("next"))
         return True
@@ -54,11 +59,11 @@ def handle_youtube(orch, c):
         return True
 
     # "play next song" / "skip next" — must be caught before "play" maps to pause
-    if any(x in c for x in ["next", "skip"]):
+    if any(_wm(x, c) for x in ["next", "skip"]):
         orch.speak(orch.yt.control_player("next"))
         return True
 
-    # Advanced Controls (Substring based)
+    # Advanced Controls — use word-boundary matching so "stopwatch" ≠ "stop"
     yt_actions = {
         "pause": ["pause", "stop", "halt", "resume", "play", "mute", "unmute"],
         "fullscreen": ["fullscreen", "full screen", "maximize"],
@@ -74,7 +79,7 @@ def handle_youtube(orch, c):
     }
 
     for act, triggers in yt_actions.items():
-        if any(t in c for t in triggers):
+        if any(_wm(t, c) for t in triggers):
             # Re-enable mic on pause so user can still give commands
             if act == "pause" and hasattr(orch, "voice") and orch.voice:
                 orch.voice.suppress_asr = False
@@ -103,16 +108,16 @@ def handle_media(orch, c):
 
     # Persistence: If YouTube is active, prioritize it
     if orch.yt.is_session_active() or orch.ctx.active_engine == "youtube":
-        if any(x in c for x in ["stop", "pause", "halt", "resume", "play"]):
-            orch.speak(orch.yt.control_player("pause" if any(x in c for x in ["stop", "pause", "halt"]) else "play"))
-        elif any(x in c for x in ["next", "skip"]):
+        if any(_wm(x, c) for x in ["stop", "pause", "halt", "resume", "play"]):
+            orch.speak(orch.yt.control_player("pause" if any(_wm(x, c) for x in ["stop", "pause", "halt"]) else "play"))
+        elif any(_wm(x, c) for x in ["next", "skip"]):
             orch.speak("Playing next on YouTube.")
             orch.speak(orch.yt.control_player("next"))
         return True
 
-    if any(x in c for x in ["stop", "pause", "halt"]):
+    if any(_wm(x, c) for x in ["stop", "pause", "halt"]):
         orch.music.stop()
         orch.speak("Playback stopped.")
-    elif "next" in c:
+    elif _wm("next", c):
         orch.music.next()
     return True
