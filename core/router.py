@@ -2,6 +2,7 @@ import re
 from difflib import get_close_matches
 
 from utils.config import Config
+import logging
 
 # Common typo corrections for voice/typing errors
 TYPO_MAP = {
@@ -20,6 +21,14 @@ TYPO_MAP = {
     "seting": "setting", "settign": "setting",
     "secnd": "second", "secod": "second", "seond": "second", "secound": "second",
     "alaram": "alarm", "alarma": "alarm",
+    # Mail typos / voice errors
+    "hek": "check", "chek": "check", "chck": "check",
+    "mial": "mail", "maill": "mail", "emal": "email", "emial": "email",
+    "snend": "send", "sned": "send",
+    "rply": "reply", "repply": "reply",
+    "srch": "search", "serch": "search",
+    "dleete": "delete", "delet": "delete",
+    "archve": "archive", "archiev": "archive",
     "remnder": "reminder", "remindr": "reminder", "remider": "reminder",
     "weahter": "weather", "wether": "weather", "wheather": "weather",
     "genrate": "generate", "generat": "generate", "generete": "generate",
@@ -48,12 +57,59 @@ TYPO_MAP = {
     "jsn": "json", "jsoon": "json",
     "hashh": "hash", "haash": "hash",
     "morse": "morse", "morss": "morse",
+    # Common voice command typos
+    "tha": "the", "thet": "the", "teh": "the",
+    "opended": "opened", "opend": "opened", "openned": "opened", "opeen": "opened",
+    "searh": "search", "serch": "search", "sarch": "search", "seach": "search",
+    "crhome": "chrome", "chorme": "chrome", "chrme": "chrome",
+    "borwser": "browser", "broser": "browser", "broswe": "browser",
+    "calender": "calendar", "calander": "calendar", "calandar": "calendar",
+    "xcalender": "xcalendar", "xcalander": "xcalendar",
+    "runn": "run", "rrun": "run",
+    "lauch": "launch", "launche": "launch", "laucnh": "launch",
+    "buid": "build", "buildd": "build",
+    "creat": "create", "cretae": "create",
+    # Desktop / location typos
+    "destop": "desktop", "deskop": "desktop", "desktoop": "desktop",
+    # YouTube typos (covers "next song in u tube" → "next song in youtube")
+    "utube": "youtube", "youtbe": "youtube", "yotube": "youtube", "youttube": "youtube",
+    # Navigation/control
+    "nextt": "next", "nxt": "next", "nex": "next",
+    # Concatenated voice tokens
+    "applicationfor": "application for", "appfor": "app for",
 }
 
 
 # Natural language override patterns: (pattern, intent, confidence)
 # Checked BEFORE compiled triggers to intercept conversational phrasing.
 NL_OVERRIDES = [
+    # ── Open YouTube directly (no play/search) → browser_navigate ────────────
+    (r"^(?:open|launch|go\s+to|start)\s+(?:youtube|yt)$", "browser_navigate", 0.99),
+
+    # ── YouTube player controls (fast-path, no LLM) ──────────────────────────
+    (r"\b(?:next|skip)\s+(?:song|video|track)\b", "youtube", 0.97),
+    (r"\b(?:pause|resume|stop)\s+(?:the\s+)?(?:song|video|music|youtube|playback)\b", "youtube", 0.97),
+
+    # ── "where is my song / what's playing" → youtube ─────────────────────────
+    (r"\b(?:where(?:'s| is)\s+(?:my\s+|the\s+)?song|what(?:'s| is)\s+(?:playing|the\s+song|the\s+video|this\s+song)|current(?:ly\s+playing|\s+song|\s+video)|what\s+am\s+i\s+(?:watching|listening))\b", "youtube", 0.97),
+
+    # ── Build/create app shortcuts → code_gen ────────────────────────────────
+    (r"\b(?:build|create|make|generate)\s+(?:a|an)\s+(?:app|application|tool|program|website|web\s+app|stopwatch|calculator|timer|clock|todo|game)\b", "code_gen", 0.95),
+
+    # ── Play/watch on YouTube → play_youtube (highest priority) ─────────────
+    # Route to play_youtube, NOT youtube, so handle_play_youtube runs
+    # (handle_youtube treats "play" as a pause/control keyword — wrong for song requests)
+    (r"\b(?:open|launch|start)\s+(?:the\s+)?(?:chrome|browser|edge|firefox)\b.{0,60}\b(?:play|watch)\b.{0,60}\b(?:youtube|yt)\b", "play_youtube", 0.99),
+    (r"\b(?:play|watch)\b.{0,60}\b(?:in|on)\s+(?:youtube|yt)\b", "play_youtube", 0.99),
+    (r"\b(?:open|launch|start)\s+(?:the\s+)?(?:chrome|browser|edge|firefox)\b.{0,30}\b(?:play|watch)\b", "play_youtube", 0.97),
+
+    # ── Situation-aware browser search (highest priority) ──────────────────
+    # "in the opened chrome search for X", "search for X in the opened browser"
+    (r"\bin\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\s+(?:search|look|find|go|type|navigate)\b", "browser_search", 0.99),
+    (r"\b(?:search|look|find|go)\b.{0,40}\bin\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\b", "browser_search", 0.99),
+    (r"\b(?:search|find|look\s+up)\s+.{1,60}\s+(?:using|with|on|in)\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|browser|firefox)\b", "browser_search", 0.98),
+    (r"\bsearch\s+(?:for\s+)?.+\s+in\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|it|the\s+browser)\b", "browser_search", 0.98),
+
     # Alarm / Timer / Time
     (r"\b(what(?:'?s|\s+is)\s+(?:the\s+)?time|current\s+time|tell\s+me\s+(?:the\s+)?time|time\s+is\s+it|whats?\s+the\s+time|what\s+hour)\b", "alarm", 0.95),
     (r"\b(set|start|begin|create|put|make)\s+(?:a\s+)?(?:timer|countdown|alarm|wake)\b", "alarm", 0.9),
@@ -66,6 +122,57 @@ NL_OVERRIDES = [
 
     # News
     (r"\b(what'?s?\s+(?:happening|going\s+on|in\s+the\s+news|new\s+today)|tell\s+me\s+(?:the\s+)?(?:news|headlines)|any\s+(?:news|updates|happening)|what\s+(?:are?\s+)?the\s+(?:latest|headlines))\b", "news", 0.9),
+
+    # ── Mail / Email ────────────────────────────────────────────────────
+    # Check / inbox  (highest priority — catch "check mail", "hek mail", "open inbox")
+    (r"\b(check|read|open|show|get|fetch|load|view|hek|chek)\s+(?:my\s+)?(?:mail|inbox|emails?|messages?)\b", "mail_check", 0.95),
+    (r"\b(what(?:'?s|\s+is)\s+(?:in\s+)?(?:my\s+)?(?:inbox|mail|email))\b", "mail_check", 0.95),
+    (r"\b(any\s+(?:new\s+)?(?:mail|email|messages?))\b", "mail_check", 0.9),
+    (r"\b(unread\s+(?:emails?|messages?|mail))\b", "mail_check", 0.9),
+    (r"\b(check\s+gmail|open\s+gmail|gmail\s+inbox)\b", "mail_check", 0.95),
+    # Count
+    (r"\b(how\s+many\s+(?:unread\s+)?(?:emails?|messages?|mails?))\b", "mail_count", 0.95),
+    (r"\b((?:email|mail)\s+count|count\s+(?:my\s+)?(?:emails?|mails?))\b", "mail_count", 0.9),
+    # Read a specific email
+    (r"\b(read\s+email\s+\d+|open\s+email\s+\d+|show\s+email\s+\d+)\b", "mail_read", 0.97),
+    (r"\b(read\s+(?:the\s+)?(?:email|mail|message)\s+from)\b", "mail_read", 0.95),
+    (r"\b(what\s+(?:does|did)\s+(?:the\s+)?(?:email|mail)\s+(?:from|say))\b", "mail_read", 0.9),
+    # Send
+    (r"\b(send\s+(?:an?\s+)?(?:email|mail|message)\s+to)\b", "mail_send", 0.97),
+    (r"\b(compose\s+(?:and\s+send|an?\s+)?(?:email|mail)\s+to)\b", "mail_send", 0.95),
+    (r"\b(email\s+[\w.+@\-]+@[\w.-]+\.\w+)\b", "mail_send", 0.93),
+    # Reply
+    (r"\b(reply\s+to\s+(?:the\s+)?(?:email|mail|message|last))\b", "mail_reply", 0.97),
+    (r"\b(reply\s+(?:with|saying))\b", "mail_reply", 0.93),
+    (r"\b(respond\s+to\s+(?:the\s+)?(?:email|mail|message))\b", "mail_reply", 0.93),
+    # Forward
+    (r"\b(forward\s+(?:the\s+)?(?:email|mail|message)\s+to)\b", "mail_forward", 0.95),
+    (r"\b(forward\s+email\s+\d+\s+to)\b", "mail_forward", 0.97),
+    # Search
+    (r"\b(search\s+(?:my\s+)?(?:inbox|emails?|mail)\s+(?:for|about))\b", "mail_search", 0.95),
+    (r"\b(find\s+(?:emails?|mails?)\s+(?:from|about|with|containing))\b", "mail_search", 0.93),
+    (r"\b(look\s+for\s+(?:emails?|mails?)\s+(?:from|about|with))\b", "mail_search", 0.9),
+    # Delete
+    (r"\b(delete\s+(?:email|mail)\s+(?:\d+|from|the))\b", "mail_delete", 0.95),
+    (r"\b(trash\s+(?:email|mail)\s+(?:\d+|the))\b", "mail_delete", 0.93),
+    # Archive
+    (r"\b(archive\s+(?:email|mail)\s+(?:\d+|the|from))\b", "mail_archive", 0.95),
+    (r"\b(move\s+(?:email|mail)\s+to\s+archive)\b", "mail_archive", 0.9),
+    # Mark as read
+    (r"\b(mark\s+(?:email|mail|it)\s+(?:as\s+)?read)\b", "mail_mark_read", 0.93),
+    # Draft
+    (r"\b(save\s+(?:as\s+)?draft|draft\s+(?:an?\s+)?(?:email|mail))\b", "mail_draft", 0.93),
+    # Sent
+    (r"\b((?:show|check|view|list)\s+(?:my\s+)?(?:sent\s+(?:emails?|mails?|messages?)|sent\s+folder))\b", "mail_sent", 0.93),
+    (r"\b(emails?\s+i\s+(?:sent|have\s+sent))\b", "mail_sent", 0.9),
+    # Folders
+    (r"\b((?:list|show|view)\s+(?:my\s+)?(?:mail\s+)?folders?)\b", "mail_folders", 0.9),
+    (r"\b(what\s+(?:email|mail)\s+folders?\s+(?:do\s+i\s+have|are\s+there))\b", "mail_folders", 0.9),
+    # Summarize inbox
+    (r"\b(summarize\s+(?:my\s+)?(?:inbox|emails?|mail)|(?:inbox|email)\s+summary|brief\s+(?:me\s+on\s+)?(?:my\s+)?(?:inbox|emails?))\b", "mail_summarize", 0.95),
+    # AI compose
+    (r"\b(compose\s+(?:an?\s+)?(?:email|mail)|write\s+(?:an?\s+)?(?:email|mail)\s+to|draft\s+(?:an?\s+)?(?:email|mail)\s+to)\b", "mail_compose", 0.93),
+    # ────────────────────────────────────────────────────────────────────
 
     # Translate (must come BEFORE daily_briefing to avoid "translate good morning" hijack)
     (r"\b(translate|translation|translate\s+this\s+to|say\s+it\s+in|in\s+(?:spanish|french|hindi|german|japanese|chinese|korean|arabic|portuguese|italian|russian))\b", "translate", 0.9),
@@ -85,12 +192,45 @@ NL_OVERRIDES = [
     # Clipboard
     (r"\b(clipboard|clip\s+history|what\s+(?:did\s+)?i\s+copy|copy\s+(?:this|that|to|it|the\s+result)|paste\s+(?:from|that|this|it|the\s+result|the\s+output)|search\s+clipboard|clear\s+clipboard)\b", "clipboard_mgr", 0.85),
 
+    # Dev Assistant — Job LAUNCH / OPEN (MUST be checked BEFORE dev_build to prevent wrong routing)
+    # These patterns cover: 'run/open/launch/show the app/project/calendar I built'
+    (r"\bcan\s+you\s+(?:please\s+)?(?:run|open|launch|show|start|execute|preview)\s+(?:that|the|it|this)\s*(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|thing|one)?\b", "job_open", 0.97),
+    (r"\b(?:run|open|launch|show|start)\s+(?:that|the|it)\s+(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|website|thing)\b", "job_open", 0.97),
+    (r"\b(?:run|open|start|launch|show|execute|preview)\s+(?:the\s+)?(?:built|created|generated|finished|completed)\s+(?:app(?:lication)?|project|website|cal(?:e?nd[ae]r)?)\b", "job_open", 0.97),
+    (r"\b(?:run|open|launch|show)\s+(?:the\s+)?(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?)\s+(?:in\s+(?:browser|edge|chrome|firefox)|for\s+me|now|please)?\b", "job_open", 0.96),
+    (r"\b(?:can\s+(?:you\s+)?)?(?:run|start|open|launch)\s+(?:the\s+)?(?:opened|existing|last|previous)\s+(?:project|app(?:lication)?|build|workspace)\b", "job_open", 0.96),
+    (r"\b(?:open|launch|show|run|start)\s+(?:it|that|this)\s+(?:in\s+(?:browser|the\s+browser|edge|chrome|firefox))?\b", "job_open", 0.95),
+    # Existing patterns kept:
+    (r"\b(open\s+(?:the\s+)?(?:project|workspace|in\s+vscode|in\s+code)|launch\s+(?:the\s+)?(?:project|app|application))\b", "job_open", 0.95),
+    (r"\b(run|start|execute|show|preview)\s+(?:me\s+)?(?:the\s+)?(?:that\s+)?(?:built|created|generated|opened|app(?:lication)?|project|cal[l]*[ea]nd[ea]r)\s*(?:app(?:lication)?|project|for\s+me)?\b", "job_open", 0.94),
+    (r"\b(run|start|open|launch|show)\s+(?:that|it|the\s+app|the\s+project|the\s+calendar|that\s+app)\b", "job_open", 0.94),
+    (r"\bcan\s+you\s+(?:run|start|open|launch|show)\s+(?:that|the)\s+(?:app|project|cal[l]*[ea]nd[ea]r)\b", "job_open", 0.94),
+    # 'can you start running/opening the X that you built/created/made/generated now'
+    (r"\bcan\s+you\s+(?:please\s+)?(?:start\s+)?(?:running|opening|launching|showing)\s+(?:the\s+)?(?:\w+\s+){0,6}(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|website)\b", "job_open", 0.97),
+    (r"\b(?:start\s+)?(?:run|open|launch|show)\s+(?:the\s+)?(?:\w+\s+){1,8}(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|website)\b", "job_open", 0.98),
+    (r"\b(?:start\s+)?(?:running|opening|launching)\s+(?:the\s+)?(?:(?:\w+\s+){0,5})(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?)\s+(?:that\s+(?:you|i)\s+(?:build|built|created|made|generated)|now|please)\b", "job_open", 0.97),
+
+    # Contextual follow-ups after a build: "to see time/clock", "to see it", "to view it"
+    # Users say this after building a clock app, calendar, etc. to mean "open/run it"
+    (r"\bto\s+(?:see|view|check|use|run|try)\s+(?:the\s+)?(?:time|clock|timer|calendar|app|result|it|output)\b", "job_open", 0.93),
+    (r"\b(?:i\s+)?want\s+to\s+(?:see|view|check|use|try)\s+(?:the\s+)?(?:time|clock|timer|calendar|it|that)\b", "job_open", 0.93),
+
+    # Dev Assistant Autonomous Build & Control
+    (r"\b(?:can you\s+|could you\s+|please\s+)?(build|create|make|code|develop|generate)\b.*\b(project|web\s*app|application|website|cal[l]*[ea]nd[ea]r|portal|service)\b", "dev_build", 0.96),
+    (r"\b(?:can you\s+|could you\s+|please\s+)?(build|create|make|code|develop)\s+(?:me\s+)?(?:a\s+)?(?:an\s+)?(?:modern\s+|interactive\s+|full\s+)?(?:app|application|website|web\s*app|cal[l]*[ea]nd[ea]r|system|tool)\b", "dev_build", 0.96),
+
+    # Dev Assistant - Debug and Fix
+    (r"\b(?:fix|debug|repair|solve|resolve)\s+(?:the\s+)?(?:issues?|bugs?|errors?|problems?)\s+(?:in\s+)?(?:that\s+)?(?:the\s+)?(?:app|project|application|build)\b", "job_fix", 0.96),
+    (r"\b(?:the\s+)?(?:app|project|application|build)\s+(?:is\s+not\s+working|is\s+broken|has\s+bugs|failed|crashed|is\s+failing)\b", "job_fix", 0.96),
+    (r"\b(?:app\s+)?not\s+(?:working|created|functioning|visible).*?(?:fix|resolve|debug)\b", "job_fix", 0.95),
+
     # Code Generation (generate/write code) - MUST come BEFORE local_code_search
     # Only match explicit code generation requests, NOT searches
     (r"\b(tell|give|show|write|generate|create|get)\s+(?:me\s+)?(?:a\s+)?(?:the\s+)?(?:an?\s+)?(?:python|java|javascript|js|c\+\+|cpp|html|css|sql|ruby|go|rust|swift|kotlin)\s+(?:code|script|program|implementation|algorithm|function|class)\b", "code_gen", 0.95),
     (r"\b(tell|give|show|write|generate|create|get)\s+(?:me\s+)?(?:a\s+)?(?:the\s+)?(?:binary\s+search|sorting|linked\s+list|tree|graph|queue|stack|hash\s+map|array|matrix|fibonacci|factorial|palindrome)\s+(?:code|script|program|implementation|algorithm|function|class)\b", "code_gen", 0.95),
     (r"\b(python|java|javascript|js|c\+\+|cpp|html|css|sql)\s+(?:code|script|program|implementation)\s+(?:for|of|to)\s+(?:a\s+)?\w+\b", "code_gen", 0.9),
     (r"\b(generate|write|create)\s+(?:me\s+)?(?:a\s+)?(?:full\s+)?(?:code|script|program)\s+(?:for|of|to)\s+(?:a\s+)?\w+\b", "code_gen", 0.85),
+    (r"\b(create|make|build|generate|design|write)\b.*\b(page|form|interface|component|template|dashboard|screen)\b", "code_gen", 0.95),
 
     # Local code search (must come AFTER code_gen to prefer code generation)
     # Only match code/project/repository searches, NOT general file searches
@@ -100,7 +240,15 @@ NL_OVERRIDES = [
     (r"\b(summariz|summary|brief|overview|tldr|tl;dr|condense|shorten|abbreviate)\b", "summarize", 0.85),
 
     # Awareness
-    (r"\b(who\s+are\s+you|what\s+are\s+you|tell\s+me\s+about\s+yourself|your\s+name|describe\s+yourself|what\s+can\s+you\s+do|your\s+(?:stats|capabilities|abilities|features))\b", "awareness", 0.95),
+    (r"\b(who\s+am\s+i|who\s+are\s+you|what\s+are\s+you|tell\s+me\s+about\s+yourself|your\s+name|describe\s+yourself|what\s+can\s+you\s+do|your\s+(?:stats|capabilities|abilities|features))\b", "awareness", 0.95),
+    # Awareness: limitations ("what can't you do")
+    (r"\b(what\s+can'?t\s+you\s+do|what\s+cannot\s+you\s+do|your\s+limitations?|what\s+are\s+your\s+limits?)\b", "awareness", 0.95),
+    # Awareness: sub-agents
+    (r"\b(sub[- ]?agents?|your\s+agents?|your\s+team|who\s+works\s+for\s+you|your\s+helpers|what\s+agents)\b", "awareness", 0.95),
+    # Awareness: modes
+    (r"\b(your\s+modes?|available\s+modes?|what\s+modes|which\s+modes|all\s+modes|mode\s+list)\b", "awareness", 0.95),
+    # Awareness: architecture / sub-systems
+    (r"\b(how\s+(?:do|are)\s+you\s+(?:work|function|built)|your\s+architecture|your\s+systems?|system\s+overview|what\s+systems)\b", "awareness", 0.95),
 
     # Memory system (must come BEFORE remind_me for "remember that/this/when")
     (r"\b(remember\s+(?:that|this|when)|keep\s+in\s+mind|don'?t\s+forget|what\s+do\s+you\s+remember|what\s+have\s+you\s+learned|memory\s+(?:stats|status)|how\s+much\s+(?:do\s+you\s+)?remember|recent\s+conversations?|what\s+did\s+we\s+talk\s+about|conversation\s+history|search\s+memory|popular\s+topics?)\b", "memory_system", 0.9),
@@ -137,6 +285,14 @@ NL_OVERRIDES = [
 
     # Text Tools
     (r"\b(word\s+count|character\s+count|count\s+(?:the\s+)?(?:words?|chars?|characters?|letters?)|how\s+many\s+(?:words?|characters?|letters?))\b", "text_tools", 0.9),
+
+    # **NEW: Run/Execute CMD commands** - intercept before app_op "open" pattern
+    (r"\b(run|execute)\s+(?:command|cmd|terminal)\b", "run_command", 10),
+
+    # **NEW: Web UI Activation** - MUST come before app_op "open" pattern
+    (r"\b(open|start|activate)\s+web\s+ui\b", "open_web_ui", 9),
+
+    # Hash / Encoder
     (r"\b(reverse\s+(?:this|that|text|it|the\s+text)|make\s+(?:it|this|text)\s+(?:all\s+)?uppercase|make\s+(?:it|this|text)\s+(?:all\s+)?lowercase|title\s+case|sentence\s+case|snake\s+case|camel\s+case|kebab\s+case)\b", "text_tools", 0.9),
     (r"\b(remove\s+duplicates?|sort\s+(?:the\s+)?lines?|slugify|wrap\s+text|extract\s+(?:all\s+)?(?:emails?|urls?|links?|numbers?))\b", "text_tools", 0.9),
     (r"\b(text\s+(?:tools?|utilities?|processor|manipulator|editor))\b", "text_tools", 0.85),
@@ -213,6 +369,17 @@ NL_OVERRIDES = [
     (r"\b(save\s+(?:it|this|that|the\s+answer|the\s+result)\s+(?:to|in|into)\s+(?:a\s+)?(?:file\s+)?(?:in\s+)?(?:the\s+)?(?:downloads?|desktop|documents?))\b", "file_save", 0.9),
     (r"\b(write\s+(?:the\s+)?(?:result|output|content|answer)\s+(?:to|into)\s+(?:a\s+)?file\s+(?:in\s+)?(?:the\s+)?(?:downloads?|desktop|documents?))\b", "file_save", 0.9),
     (r"\b(export\s+(?:the\s+)?(?:result|output|answer)\s+(?:to|as)\s+(?:a\s+)?(?:file\s+)?(?:in\s+)?(?:the\s+)?(?:downloads?|desktop|documents?))\b", "file_save", 0.9),
+
+    # Build Jobs (control & status)
+    (r"\b(?:can you\s+|could you\s+|please\s+)?(build|create|make|code|develop|generate)\b.*\b(project|web\s*app|application|website|cal[le]nder|dashboard|portfolio|portal|service)\b", "build_project", 0.96),
+    (r"\b(?:can you\s+|could you\s+|please\s+)?(build|create|make|code|develop)\s+(?:me\s+)?(?:a\s+)?(?:an\s+)?(?:modern\s+|interactive\s+|full\s+)?(?:app|application|website|web\s*app|cal[le]nder|system|tool)\b", "build_project", 0.96),
+    (r"\b(build\s+(?:a\s+)?project|create\s+(?:a\s+)?project|start\s+(?:a\s+)?project|code\s+(?:a\s+)?project|autonomous\s+build|build\s+(?:an?\s+)?(?:web\s+)?app)\b", "build_project", 0.95),
+    (r"\b(job\s+status|build\s+status|how\s+is\s+(?:the\s+)?(?:build|project|task)|status\s+of\s+(?:the\s+)?build)\b", "job_status", 0.95),
+    (r"\b(pause\s+(?:the\s+)?(?:build|job|project|task))\b", "job_pause", 0.95),
+    (r"\b(resume\s+(?:the\s+)?(?:build|job|project|task|app\s+building\s+task)|continue\s+(?:the\s+)?(?:build|task)|fix\s+(?:the\s+)?(?:build|tests?|code|that)|retry\s+(?:the\s+)?build|heal\s+(?:the\s+)?build)\b", "job_resume", 0.95),
+    (r"\b(cancel\s+(?:the\s+)?(?:build|job|project|task)|stop\s+(?:the\s+)?(?:build|job))\b", "job_cancel", 0.95),
+    (r"\b(undo\s+(?:the\s+)?(?:last\s+)?(?:build\s+)?phase|rollback\s+(?:last\s+)?phase)\b", "job_undo", 0.95),
+    (r"\b(open\s+(?:the\s+)?(?:project|workspace|in\s+vscode|in\s+code)|launch\s+(?:the\s+)?(?:project|app|application))\b", "job_open", 0.95),
 ]
 
 
@@ -273,7 +440,10 @@ class IntentRouter:
                 "fill my name", "type my email", "submit this", "capture page",
                 "screenshot page", "screenshot website", "press enter", "hit enter",
                 "scroll to top", "scroll to bottom", "select all", "copy text",
-                "paste here", "click submit", "press tab", "click that button"
+                "paste here", "click submit", "press tab", "click that button",
+                "hover on", "hover over", "hover element", "select from", "choose from",
+                "click button", "dom click", "dom type", "inspect elements",
+                "interactive elements", "show buttons", "show inputs", "type into"
             ], 2),
 
             ("browser_tabs", [
@@ -287,7 +457,8 @@ class IntentRouter:
                 "extract text", "extract data", "summarize page", "read table",
                 "get links", "extract table", "scrape page", "summarize this page",
                 "get all links", "copy page text", "get page content",
-                "what's on this page", "read this page"
+                "what's on this page", "read this page", "interactive elements",
+                "find buttons", "find input fields", "multi tab research", "deep search"
             ], 2),
 
             ("play_youtube", [
@@ -536,6 +707,22 @@ class IntentRouter:
                 "create an app", "build a basic", "scaffold project",
                 "new project", "start project"
             ], 10),
+            ("job_status", [
+                "job status", "build status", "project status", "status of build",
+                "status of job", "how is the build going", "check build"
+            ], 11),
+            ("job_pause", [
+                "pause build", "pause the build", "pause project", "pause job"
+            ], 11),
+            ("job_resume", [
+                "resume build", "resume the build", "resume project", "resume job"
+            ], 11),
+            ("job_cancel", [
+                "cancel build", "cancel the build", "stop the build", "cancel project", "cancel job"
+            ], 11),
+            ("job_undo", [
+                "undo last phase", "undo build phase", "undo phase", "rollback phase", "undo project phase"
+            ], 11),
             ("dev", [
                 "git status", "git diff", "git commit", "run python",
                 "execute script", "terminal execute", "analyze traceback",
@@ -696,7 +883,7 @@ class IntentRouter:
             ], 6),
 
             ("awareness", [
-                "who are you", "tell me about yourself", "what are you",
+                "who am i", "who are you", "tell me about yourself", "what are you",
                 "your name", "your stats", "your statistics", "how you doing",
                 "your personality", "what are you like", "describe yourself",
                 "what do you know", "what have you learned", "your knowledge",
@@ -978,7 +1165,13 @@ class IntentRouter:
         - knowledge_search (searching local files/notes)
         - search (web search)
         - conversational (general chat)
-        - complex (multi-step tasks)
+        - dev_build (creating/building autonomous software projects, web apps, calendars, tools, dashboards, or websites - use this for any app, software, or project build request)
+        - job_resume (resuming or auto-healing a paused or failed software build task; use when user says resume/fix/retry/continue the app/build/task)
+        - complex (multi-step tasks that don't match the above)
+        - artifact_open (open/show the active generated file)
+        - artifact_run (run/execute the active generated file)
+        - artifact_edit (modify/update the active generated file)
+        - artifact_extend (create another file linked to the active generated file)
 
         Return a JSON object:
         {{
@@ -1010,11 +1203,19 @@ class IntentRouter:
         - NEVER combine multiple actions into one step
         """
         try:
-            res_raw = brain_instance.ask(prompt, system_override="You are a tool router. Return ONLY valid JSON.")
-            # Simple JSON extraction
+            res_raw = brain_instance.ask(prompt, system_override="You are a tool router. Return ONLY valid JSON.", use_rag=False)
+            if not res_raw or not isinstance(res_raw, str):
+                raise ValueError("empty LLM response")
+            # Simple JSON extraction (guarded: non-JSON output falls back to route())
             import json
-            json_str = re.search(r'\{.*\}', res_raw, re.DOTALL).group()
-            data = json.loads(json_str)
+            match = re.search(r'\{.*\}', res_raw, re.DOTALL)
+            if match is None:
+                raise ValueError("no JSON object in LLM response")
+            try:
+                data = json.loads(match.group())
+            except (json.JSONDecodeError, ValueError) as _je:
+                logging.debug("[core/router.py:1026] JSON decode failed: %s", _je)
+                raise ValueError("invalid JSON in LLM response") from _je
             merged_params = data.get("params", {})
             if "steps" in data:
                 merged_params["steps"] = data["steps"]
@@ -1023,8 +1224,13 @@ class IntentRouter:
             if "goal" in data:
                 merged_params["goal"] = data["goal"]
             return data.get("intent", "conversational"), data.get("confidence", 0.0), merged_params
-        except Exception:
-            return "conversational", 0.0, {}
+        except Exception as _e:
+            logging.debug("[core/router.py:1026] Swallowed exception: %s: %s", type(_e).__name__, _e)
+            try:
+                fallback_intent, fallback_conf = self.route(command)
+                return fallback_intent, fallback_conf, {}
+            except Exception:
+                return "conversational", 0.0, {}
 
     def route(self, command: str) -> tuple[str, float]:
         # Keep existing fast regex route as the 'First Tier' (Latency optimization)
@@ -1066,9 +1272,14 @@ class IntentRouter:
         ]):
             return "knowledge_search", 0.9
 
-        # 1.5. SPECIAL CASE: WEB DEVELOPMENT
-        if any(x in cmd for x in ["build", "create", "make", "generate", "code", "develop"]) and any(y in cmd for y in ["website", "app", "project", "portfolio"]):
-            return "dev_build", 0.95
+        # 1.45. SPECIAL CASE: JOB RESUME / RETRY / FIX BUILD
+        if any(x in cmd for x in ["resume", "retry", "continue", "fix", "recover"]) and any(y in cmd for y in ["app", "build", "project", "job", "task"]):
+            return "job_resume", 0.98
+
+        # 1.5. SPECIAL CASE: WEB / SOFTWARE / APP DEVELOPMENT
+        if any(x in cmd for x in ["build", "create", "make", "generate", "code", "develop"]) and any(y in cmd for y in ["website", "app", "project", "portfolio", "calendar", "calender", "callender", "service"]):
+            if not any(z in cmd for z in ["interface", "page", "form", "component"]):
+                return "dev_build", 0.96
 
         # 1.55. SPECIAL CASE: MATH
         if any(x in cmd for x in ["plus", "minus", "times", "divided by", "multiplied by", "calculate", "math problem"]) and any(ch.isdigit() for ch in cmd):

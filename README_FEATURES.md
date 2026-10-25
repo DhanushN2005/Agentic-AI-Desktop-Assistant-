@@ -16,7 +16,7 @@ Flexie 2.0 is an advanced desktop AI assistant built for high-performance automa
 
 ## 🧠 2. Intelligent Brain & Core Logic
 **Category: Reasoning & NLP**
-*   **Multi-LLM Fallback:** Graceful failover between **Groq**, **Gemini**, and local **Ollama** ensures the assistant is always online.
+*   **Multi-LLM Fallback:** Graceful failover across **Groq → OpenAI → DeepSeek → Mistral → Gemini (2.0-flash) → Anthropic → Ollama**, with DuckDuckGo web search as the final fallback.
 *   **Self-Correction Logic:** If an LLM fails, Flexie automatically resorts to a DuckDuckGo web search to answer your question.
 *   **Persistent SQLite Memory:** Remembers your history, URLs, and previous queries across restarts.
 *   **Robust Intent Routing:** A high-speed regex and keyword-based router that classifies commands (Search, Apps, Media, Calc) before processing.
@@ -48,7 +48,7 @@ Flexie 2.0 is an advanced desktop AI assistant built for high-performance automa
 *   **Selector Fragility:** If a website (e.g., Gmail) significantly changes its HTML layout, specific automation scripts may fail until updated.
 *   **API Rate Limits:** Usage on free tiers (especially Groq) can lead to temporary "Rate Limit Reached" errors.
 *   **STT Noise:** In extremely loud environments, the Speech-to-Text engine may fail to parse subtle wake-word triggers.
-*   **Port Conflicts:** The UDP-based UI-to-Orchestrator communication requires port `10000` to be free.
+*   **Port Conflicts:** The UI↔Orchestrator plane needs UDP `9886`/`9887`, WebSocket `8765` and HTTP `8766` free on localhost. Every UDP command must carry the per-run `FLEXIE_UDP_TOKEN` (see `utils/udp_auth.py`); `main.py` also writes it to `.flexie_udp_token` so a bridge/UI started by hand authenticates. Open the dashboard at `http://localhost:8766/` (the bridge page where the token is injected) — opening `web_ui.html` from disk can never authenticate.
 
 ## 🔍 Edge Cases
 *   **Empty Clipboard:** Clicking `CLIP` when the clipboard has no text will trigger a "Clipboard Empty" warning instead of an analysis.

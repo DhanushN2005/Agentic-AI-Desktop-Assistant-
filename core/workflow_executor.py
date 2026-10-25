@@ -8,6 +8,7 @@ from core.action_result import ActionResult
 from core.execution_graph import ExecutionNode
 from core.task_classifier import TaskState
 from engines.system import SystemCtrl
+import logging
 
 
 class WorkflowExecutor:
@@ -18,6 +19,8 @@ class WorkflowExecutor:
     """
     def __init__(self, orch):
         self.orch = orch
+        # Human-readable reason for the last verification failure (None if last step verified).
+        self.last_verify_reason: str | None = None
 
     def blocking_execute(self, cmd: str, timeout: float = None) -> ActionResult:
         """
@@ -62,6 +65,7 @@ class WorkflowExecutor:
         step_lower = step.lower()
         verified = True
         retries = 0
+        self.last_verify_reason = None
 
         # A. Verification for file/folder operations
         if "folder" in step_lower:
@@ -96,15 +100,22 @@ class WorkflowExecutor:
                     ge = GoalEvaluator()
                     eval_res = ge.evaluate(step, {"file_saved": False, "file_path": active_doc or ""})
                     orch.logger.info(f"[SELF-CORRECTION] Goal evaluator: {eval_res.summary}")
-                except: pass
-                # Recovery: Copy contents to clipboard and tell user
+                except Exception as _e:
+                    logging.debug("[core/workflow_executor.py:99] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                # Recovery: Copy contents to clipboard and tell user, but the
+                # step still FAILED verification — never mark it verified.
                 if orch.ctx.last_response:
                     try:
                         import pyperclip
                         pyperclip.copy(orch.ctx.last_response)
-                    except: pass
-                    orch.speak("Verification Alert: Document writing failed. Self-healing saved response to clipboard. Press Ctrl+V to paste.")
-                    verified = True
+                    except Exception as _e:
+                        logging.debug("[core/workflow_executor.py:105] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                    orch.speak("Verification Alert: Document writing failed. I saved the response to clipboard so you can paste it manually.")
+                self.last_verify_reason = (
+                    f"file step unverified: '{active_doc or orch.ctx.last_path or step}' "
+                    "missing or empty after execution"
+                )
+                orch.logger.warning(f"[PLANNER VERIFICATION FAILURE] {self.last_verify_reason}")
                 retries += 1
 
         # B. Verification for browser operations
@@ -201,6 +212,10 @@ class WorkflowExecutor:
         """Executes a list of steps sequentially with system state snapshots, verification hooks, and self-healing recovery."""
         orch = self.orch
 
+        if not steps or len(steps) == 0:
+            orch.logger.warning("[WorkflowExecutor] Empty steps provided. Skipping execution.")
+            return
+
         # Acquire arbitration lock for the main orchestrator agent
         lock_id = "workflow_execution"
         if not orch.arbitrator.acquire_lock(lock_id, "main_orchestrator", timeout=3.0):
@@ -211,7 +226,8 @@ class WorkflowExecutor:
             orch.speak(f"Initializing semantic plan with {len(steps)} sequential steps.")
             try:
                 orch.send_to_ui("WORKFLOW", "|".join(steps))
-            except: pass
+            except Exception as _e:
+                logging.debug("[core/workflow_executor.py:214] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
             # --- PHASE 1: DAG PLANNER INTEGRATION (Minimal Intrusion) ---
             try:
@@ -251,7 +267,8 @@ class WorkflowExecutor:
                         _di, _, _ = orch.router.route_dynamic(clean_step, orch.brain)
                         if _di and _di != "conversational":
                             step_intent = _di
-                except Exception:
+                except Exception as _e:
+                    logging.debug("[core/workflow_executor.py:254] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass  # Non-fatal; fall back to "unknown"
 
                 # Deduplication Check - only skip exact duplicate commands, not same intent
@@ -294,7 +311,8 @@ class WorkflowExecutor:
                     semantic_res = orch.semantic_validator.validate_outcome(clean_step, {"status": "executed"})
                     if not semantic_res.get("valid", True):
                         orch.logger.warning(f"[SEMANTIC_VALIDATOR] Flagged potential execution issue: {semantic_res.get('reason')}")
-                except Exception:
+                except Exception as _e:
+                    logging.debug("[core/workflow_executor.py:297] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass  # Safe fallback
 
                 if verified:
@@ -366,7 +384,8 @@ class WorkflowExecutor:
                     orig = " and ".join(steps)
                     eval_res = ge.evaluate(orig, state)
                     orch.logger.info(f"[GoalEvaluator] {eval_res.summary}")
-                except: pass
+                except Exception as _e:
+                    logging.debug("[core/workflow_executor.py:369] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
         finally:
             orch.arbitrator.release_lock(lock_id, "main_orchestrator")

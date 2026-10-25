@@ -20,6 +20,12 @@ def handle_capability_delegation(orch, intent, c, silent):
                 if not silent:
                     orch.speak(res)
                 return True
+        elif capability == "specialist":
+            if hasattr(orch, "agent_team") and orch.agent_team:
+                res = orch.agent_team.delegate(c)
+                if res and not silent:
+                    orch.speak(res)
+                return True
         elif capability == "sdd":
             from sdd.engineer import SDDEngineer
             engineer = SDDEngineer(orch.brain)

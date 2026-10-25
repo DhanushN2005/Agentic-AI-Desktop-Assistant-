@@ -1,0 +1,29 @@
+{
+  "name": "cli_tool",
+  "title": "Python Command Line Utility",
+  "keywords": ["cli", "terminal", "command line", "script", "utility", "tool", "console", "argparse"],
+  "stack": "python-cli",
+  "run_command": "python main.py --help",
+  "test_command": "pytest",
+  "acceptance_criteria": [
+    "CLI responds to --help with usage instructions and exit code 0",
+    "Argument parsing properly handles commands and flags",
+    "Exceptions degrade cleanly with descriptive error messages",
+    "Unit tests pass with 100% coverage on core commands"
+  ],
+  "dependencies": ["pytest>=7.0.0"],
+  "files": [
+    {
+      "name": "main.py",
+      "purpose": "Command line entrypoint with argparse"
+    },
+    {
+      "name": "requirements.txt",
+      "purpose": "Python package dependencies"
+    },
+    {
+      "name": "test_cli.py",
+      "purpose": "Automated CLI integration tests"
+    }
+  ]
+}

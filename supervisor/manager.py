@@ -117,7 +117,8 @@ class Supervisor:
                 me = psutil.Process(current_pid)
                 for child in me.children(recursive=True):
                     descendant_pids.add(child.pid)
-            except psutil.NoSuchProcess:
+            except psutil.NoSuchProcess as _e:
+                logging.debug("[supervisor/manager.py:120] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 pass
 
             if not descendant_pids:
@@ -130,7 +131,8 @@ class Supervisor:
                     if ("playwright" in pname or "chrome" in pname) and proc.pid in descendant_pids:
                         proc.kill()
                         self.logger.info(f"Supervisor: Killed descendant zombie '{proc.info['name']}' (pid {proc.pid})")
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                except (psutil.NoSuchProcess, psutil.AccessDenied) as _e:
+                    logging.debug("[supervisor/manager.py:133] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass
         except Exception as e:
             self.logger.error(f"Error during zombie cleanup: {e}")

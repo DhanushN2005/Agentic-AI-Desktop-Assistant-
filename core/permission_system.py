@@ -6,11 +6,14 @@ Upgrades the existing DangerGate into a proper permission model with levels:
 
 Every action must pass through this system. The LLM cannot bypass it.
 """
-import re
 import logging
-from typing import Optional
-from core.tool_registry import PermissionLevel, ToolSpec
+import re
+import time
+import uuid
+from collections.abc import Callable
+
 from core.danger_gate import DangerGate
+from core.tool_registry import PermissionLevel
 
 
 class PermissionSystem:
@@ -24,6 +27,10 @@ class PermissionSystem:
         self.current_level = default_level
         self.danger_gate = DangerGate()
         self.logger = logging.getLogger("Flexie.PermissionSystem")
+        # Expiry (monotonic) for temporary escalations; None = not escalated.
+        self._escalation_expires: float | None = None
+        self._pending_approval: dict | None = None
+        self._on_approval_callback: Callable[[dict], None] | None = None
 
         # Patterns that classify actions into permission levels
         self._level_patterns = {
@@ -82,9 +89,12 @@ class PermissionSystem:
         """
         Classifies a command into a permission level based on pattern matching.
         Returns the HIGHEST matching level (most restrictive).
+
+        Empty/whitespace commands classify as USER_CONFIRMATION (fail closed):
+        an empty command must never authorize even read-only tools.
         """
-        if not command:
-            return PermissionLevel.READ_ONLY
+        if not command or not command.strip():
+            return PermissionLevel.USER_CONFIRMATION
 
         # Check from least restrictive to most restrictive
         # Track the highest matching level
@@ -104,12 +114,23 @@ class PermissionSystem:
 
         return highest
 
+    def _maybe_expire_escalation(self):
+        """Auto-reset an expired escalation back to the default level."""
+        if self._escalation_expires is None:
+            return
+        import time as _time
+        if _time.monotonic() >= self._escalation_expires:
+            self._escalation_expires = None
+            self.current_level = self.default_level
+            self.logger.info("[PERMISSION] Escalation expired — reset to "
+                             f"{self.default_level.name}")
+
     def check_permission(
         self,
         tool,
         command_context: str = "",
-        current_level: Optional[PermissionLevel] = None,
-    ) -> tuple[bool, str, Optional[PermissionLevel]]:
+        current_level: PermissionLevel | None = None,
+    ) -> tuple[bool, str, PermissionLevel | None]:
         """
         Check if a tool can be executed given the current permission level.
         
@@ -121,6 +142,7 @@ class PermissionSystem:
         Returns:
             (allowed: bool, reason: str, required_level: Optional[PermissionLevel])
         """
+        self._maybe_expire_escalation()
         effective_level = current_level or self.current_level
 
         # Resolve the required permission level
@@ -161,15 +183,77 @@ class PermissionSystem:
         """Check if user reply is a cancellation."""
         return self.danger_gate.is_cancellation(text)
 
-    def escalate(self, level: PermissionLevel):
-        """Temporarily escalate permission level (e.g., after user confirmation)."""
+    def escalate(self, level: PermissionLevel, ttl_seconds: float = 300.0):
+        """Temporarily escalate permission level (e.g., after user confirmation).
+
+        The escalation auto-resets to the default level after ``ttl_seconds``
+        (default 5 min); ``reset()`` clears it immediately. ``ttl_seconds<=0``
+        means no expiry (stays until ``reset()``) for legacy callers.
+        """
+        import time as _time
         old = self.current_level
         self.current_level = level
-        self.logger.info(f"[PERMISSION] Escalated: {old.name} -> {level.name}")
+        self._escalation_expires = (_time.monotonic() + ttl_seconds) if ttl_seconds and ttl_seconds > 0 else None
+        self.logger.info(f"[PERMISSION] Escalated: {old.name} -> {level.name} (ttl={ttl_seconds}s)")
 
     def reset(self):
         """Reset to default permission level."""
+        self._escalation_expires = None
         self.current_level = self.default_level
+
+    def set_approval_callback(self, callback: Callable[[dict], None]):
+        """Register a callback invoked when an action requires approval."""
+        self._on_approval_callback = callback
+
+    def create_approval_request(
+        self,
+        action: str,
+        details: str = "",
+        level: PermissionLevel = PermissionLevel.USER_CONFIRMATION,
+    ) -> dict:
+        """Create a pending approval request for an action requiring confirmation."""
+        req = {
+            "id": f"apr_{uuid.uuid4().hex[:8]}",
+            "action": action,
+            "details": details,
+            "level": level,
+            "created_at": time.time(),
+            "status": "pending",
+        }
+        self._pending_approval = req
+        if self._on_approval_callback:
+            try:
+                self._on_approval_callback(req)
+            except Exception as e:
+                self.logger.debug(f"[PermissionSystem] approval callback failed: {e}")
+        return req
+
+    def get_pending_request(self) -> dict | None:
+        """Return the current pending approval request, if any."""
+        return self._pending_approval
+
+    def approve_request(self, request_id: str | None = None, ttl_seconds: float = 300.0) -> bool:
+        """Approve the pending request and escalate permission."""
+        if not self._pending_approval:
+            return False
+        if request_id and self._pending_approval.get("id") != request_id:
+            return False
+        req = self._pending_approval
+        req["status"] = "approved"
+        level = req.get("level", PermissionLevel.USER_CONFIRMATION)
+        self.escalate(level, ttl_seconds=ttl_seconds)
+        self._pending_approval = None
+        return True
+
+    def reject_request(self, request_id: str | None = None) -> bool:
+        """Reject and clear the pending approval request."""
+        if not self._pending_approval:
+            return False
+        if request_id and self._pending_approval.get("id") != request_id:
+            return False
+        self._pending_approval["status"] = "rejected"
+        self._pending_approval = None
+        return True
 
     def to_summary(self) -> str:
         """Human-readable permission summary."""

@@ -1,7 +1,16 @@
+import os
 import sys
 import types
 
+from core.brain import Brain
 from core.handlers import dispatch_intent, handle_context_command
+from core.handlers.code_gen import (
+    _explicit_artifact_filename,
+    _extract_change_request,
+    _next_artifact_filename,
+    _parse_code_query,
+    handle_artifact_command,
+)
 from core.handlers.agents import handle_capability_delegation
 from core.handlers.browser import (
     handle_browser_control,
@@ -57,6 +66,22 @@ class FakeCtx:
         self.last_selector = None
         self.registers = {}
         self.updated = {}
+        self.artifact = None
+
+    def get_artifact(self):
+        return self.artifact
+
+    def set_artifact(self, path=None, language=None, query=None, request=None, related_paths=None, extra=None):
+        self.artifact = {
+            "path": path,
+            "language": language,
+            "query": query,
+            "request": request,
+            "related_paths": list(related_paths or []),
+        }
+        if path:
+            self.last_path = path
+        return self.artifact
 
     def update(self, **kwargs):
         self.updated.update(kwargs)
@@ -68,9 +93,15 @@ class FakeBrain:
     def __init__(self):
         self.calls = []
 
-    def ask(self, prompt, system_override=None):
+    def ask(self, prompt, system_override=None, use_rag=True, max_tokens=None, history=None):
         self.calls.append((prompt, system_override))
+        self.last_options = {"use_rag": use_rag, "max_tokens": max_tokens, "history": history}
         return "summary result"
+
+    def ask_stream(self, prompt, system_override=None, use_rag=False, max_tokens=None, history=None):
+        self.calls.append((prompt, system_override))
+        self.last_options = {"use_rag": use_rag, "max_tokens": max_tokens, "history": history}
+        yield "summary result"
 
     def translate(self, text, dest_lang):
         return f"translated '{text}' to {dest_lang}"
@@ -79,8 +110,10 @@ class FakeBrain:
 class FakeVoice:
     def __init__(self):
         self.lang = "en-IN"
+        self.confirm_calls = []
 
     def confirm(self, question):
+        self.confirm_calls.append(question)
         return True
 
     def listen(self, timeout=5):
@@ -242,6 +275,8 @@ class FakeMemory:
     def __init__(self):
         self.reminders = []
         self.facts = {}
+        self.chat = []
+        self.conversation = []
     def add_reminder(self, task, minutes):
         self.reminders.append((task, minutes))
     def list_reminders(self):
@@ -256,6 +291,12 @@ class FakeMemory:
         self.facts.pop(key, None)
     def all_facts(self):
         return [(k, v, "general") for k, v in self.facts.items()]
+    def add_chat(self, role, content):
+        self.chat.append((role, content))
+    def add_conversation_turn(self, role, content):
+        self.conversation.append({"role": role, "content": content})
+    def get_conversation_messages(self, limit=10, max_chars=8000):
+        return self.conversation[-limit:]
 
 
 class FakeOrchestrator:
@@ -281,8 +322,18 @@ class FakeOrchestrator:
         self.sent_ui = []
         self.redirected = []
 
-    def speak(self, text, silent=False):
+    def speak(self, text, silent=False, record_chat=True):
         self.spoken.append(text)
+
+    def record_response(self, text):
+        self.memory.add_chat("Flexie", text)
+        self.memory.add_conversation_turn("assistant", text)
+
+    def get_conversation_history(self, current_query=None, limit=8):
+        history = self.memory.get_conversation_messages(limit=limit)
+        if current_query and history and history[-1].get("content", "").lower() == current_query.lower():
+            history = history[:-1]
+        return history
 
     def send_to_ui(self, tag, value):
         self.sent_ui.append((tag, value))
@@ -454,6 +505,146 @@ def test_dispatch_conversational_fallback(monkeypatch):
     assert orch.brain.calls[-1][1] == Config.SYSTEM_PROMPT_STANDARD  # standard prompt for professional mode
     assert orch.spoken[-1] == "summary result"
     assert orch.ctx.updated.get("query") == "hello there"
+
+
+def test_brain_builds_message_history_without_duplicate_current_prompt():
+    messages = Brain._build_messages(
+        "system",
+        "make it responsive",
+        [
+            {"role": "user", "content": "create a login page"},
+            {"role": "assistant", "content": "The page is ready."},
+            {"role": "user", "content": "make it responsive"},
+        ],
+    )
+    assert messages == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "create a login page"},
+        {"role": "assistant", "content": "The page is ready."},
+        {"role": "user", "content": "make it responsive"},
+    ]
+
+
+def test_parse_login_code_query_preserves_page_semantics():
+    assert _parse_code_query("can you create a login page using html and css") == (
+        "login page",
+        Config.CODE_OUTPUT_DIR,
+        "html",
+    )
+
+
+def test_dispatch_code_gen_skips_rag_and_confirmation(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.handlers.code_gen._resolve_code_dir", lambda _: str(tmp_path))
+    orch = make_orch()
+    handled = dispatch_intent(orch, "code_gen", "create a login page using html", False)
+    assert handled is True
+    assert orch.brain.last_options["use_rag"] is False
+    assert orch.brain.last_options["history"] == []
+    assert orch.voice.confirm_calls == []
+
+
+def test_parse_code_query_strips_polite_trailing_reference():
+    assert _parse_code_query("can you create a login web page for me") == (
+        "login page",
+        Config.CODE_OUTPUT_DIR,
+        "html",
+    )
+
+
+def test_artifact_open_uses_active_generated_file(monkeypatch, tmp_path):
+    orch = make_orch()
+    target = tmp_path / "login_page.html"
+    target.write_text("<html></html>", encoding="utf-8")
+    orch.ctx.set_artifact(str(target), language="html", query="login page", request="create a login page")
+    opened = []
+    monkeypatch.setattr("core.handlers.code_gen.webbrowser.open", opened.append)
+    assert handle_artifact_command(orch, "artifact_open:can you run that html code,") is True
+    assert opened == [f"file://{os.path.abspath(target)}"]
+    assert orch.ctx.last_path == str(target)
+
+
+def test_artifact_edit_updates_same_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(Config, "ARTIFACT_BACKUP_DIR", str(tmp_path / "backups"))
+    orch = make_orch()
+    target = tmp_path / "login_page.html"
+    target.write_text("<html><body>Login</body></html>", encoding="utf-8")
+    orch.ctx.set_artifact(str(target), language="html", query="login page", request="create a login page")
+    orch.brain.ask = lambda *args, **kwargs: "<html><body>Login<a>Forgot</a></body></html>"
+    assert handle_artifact_command(orch, "artifact_edit:add a forgot password link to that page") is True
+    assert "Forgot" in target.read_text(encoding="utf-8")
+    assert list((tmp_path / "backups").glob("login_page.html.*.bak"))
+    assert orch.ctx.last_path == str(target)
+
+
+def test_artifact_extend_links_new_html_file(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.handlers.code_gen._resolve_code_dir", lambda _: str(tmp_path))
+    monkeypatch.setattr(Config, "ARTIFACT_BACKUP_DIR", str(tmp_path / "backups"))
+    orch = make_orch()
+    source = tmp_path / "login_page.html"
+    source.write_text("<html><body><form></form></body></html>", encoding="utf-8")
+    orch.ctx.set_artifact(str(source), language="html", query="login page", request="create a login page")
+    responses = iter([
+        "<html><body>Home</body></html>",
+        "<html><body><form action='home.html'></form></body></html>",
+    ])
+    orch.brain.ask = lambda *args, **kwargs: next(responses)
+    original = "artifact_extend:generate another html page called home.html and redirect the login page to it"
+    assert handle_artifact_command(orch, original) is True
+    target = tmp_path / "home.html"
+    assert "Home" in target.read_text(encoding="utf-8")
+    assert "home.html" in source.read_text(encoding="utf-8")
+    assert orch.ctx.last_path == str(target)
+    assert orch.ctx.artifact["related_paths"] == [str(source)]
+
+
+def test_explicit_and_sequential_artifact_filenames(tmp_path):
+    assert _explicit_artifact_filename("generate another page called home.html", "html") == "home.html"
+    assert _extract_change_request("add a forgot password link to that page") == "forgot password link"
+    assert _next_artifact_filename(str(tmp_path / "login_page.html"), "html", str(tmp_path)) == "login_page_2.html"
+
+
+def test_dispatch_conversational_passes_history_and_records_one_response():
+    orch = make_orch()
+    orch.memory.conversation.extend([
+        {"role": "user", "content": "create a login page"},
+        {"role": "assistant", "content": "I can create that page."},
+    ])
+    handled = dispatch_intent(orch, "conversational", "make it responsive", False)
+    assert handled is True
+    assert orch.brain.last_options["history"] == [
+        {"role": "user", "content": "create a login page"},
+        {"role": "assistant", "content": "I can create that page."},
+    ]
+    assert orch.memory.conversation[-1] == {"role": "assistant", "content": "summary result"}
+
+
+def test_dispatch_conversational_records_one_turn_for_stream_chunks():
+    orch = make_orch()
+
+    def stream(*args, **kwargs):
+        yield "first "
+        yield "second"
+
+    orch.brain.ask_stream = stream
+    assert dispatch_intent(orch, "conversational", "hello", False) is True
+    assert orch.memory.conversation[-1] == {"role": "assistant", "content": "first second"}
+
+
+def test_dispatch_dynamic_artifact_intent_uses_generated_file(monkeypatch):
+    orch = make_orch()
+    calls = []
+    monkeypatch.setattr(
+        "core.handlers.dispatcher.handle_artifact_command",
+        lambda handler_orch, command: calls.append((handler_orch, command)) or True,
+    )
+    assert dispatch_intent(orch, "artifact_edit", "add a password hint", False) is True
+    assert calls == [(orch, "artifact_edit:add a password hint")]
+
+
+def test_dispatch_handler_failure_is_reported(monkeypatch):
+    orch = make_orch()
+    monkeypatch.setattr("core.handlers.dispatcher.handle_conversational", lambda *args: 1 / 0)
+    assert dispatch_intent(orch, "conversational", "hello", False) is False
 
 
 def test_dispatch_snap_keywords_before_intent(monkeypatch):
@@ -739,7 +930,8 @@ def test_mode_switch():
     assert handle_mode(orch, "set mode to hacker", False) is True
     assert orch.current_mode == "hacker"
     assert ("MODE", "hacker") in orch.sent_ui
-    assert "System Optimized for hacker." in orch.spoken
+    spoken = " ".join(orch.spoken)
+    assert "hacker" in spoken and "silent autonomous" in spoken
 
 
 def test_mode_unknown():

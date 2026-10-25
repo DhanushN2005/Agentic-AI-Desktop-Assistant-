@@ -11,7 +11,17 @@ def handle_browser_navigate(orch, c):
 
 
 def handle_browser_control(orch, c):
-    if "click" in c:
+    if "hover" in c:
+        target = re.sub(r"(hover over|hover on|hover)", "", c).strip()
+        orch.speak(orch.browser.hover_element(target))
+    elif "select" in c and "from" in c:
+        parts = re.split(r"\s+from\s+", re.sub(r"^(select|choose)\s+", "", c).strip())
+        if len(parts) >= 2:
+            opt, target = parts[0].strip(), parts[1].strip()
+            orch.speak(orch.browser.select_dropdown(target, opt))
+        else:
+            orch.speak(orch.browser.click_element(c))
+    elif "click" in c:
         target = re.sub(r"(click on|click the|click)", "", c).strip()
         orch.ctx.update(selector=target)
 
@@ -58,7 +68,14 @@ def handle_browser_tabs(orch, c):
 
 
 def handle_browser_extract(orch, c):
-    if "summarize" in c:
+    if "research" in c or "multi tab" in c or "deep search" in c:
+        query = re.sub(r"\b(research|multi tab research on|multi tab|deep search on|deep search)\b", "", c).strip()
+        res = orch.browser.multi_tab_research(query, orch.brain)
+    elif "interactive" in c or "buttons" in c or "fields" in c or "elements" in c:
+        res = orch.browser.extract_interactive_elements()
+    elif "table" in c:
+        res = orch.browser.extract_page_data("tables")
+    elif "summarize" in c:
         res = orch.browser.get_summary(orch.brain)
     elif "links" in c:
         res = "Found links: " + orch.browser.extract_page_data("links")

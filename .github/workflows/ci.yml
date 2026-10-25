@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-timeout ruff
+          pip install -r requirements.txt
+
+      - name: Lint (advisory — ruff findings reported but do not block)
+        run: ruff check . --output-format concise
+        continue-on-error: true
+
+      - name: Run tests
+        env:
+          # No real API keys in CI — brain falls back to offline paths.
+          GROQ_API_KEY: ""
+          GEMINI_API_KEY: ""
+        run: pytest tests -q --timeout=120
+
+  lint-strict:
+    name: Ruff (strict gate on core safety modules)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Strict lint on safety-critical modules
+        # These files guard execution — they must stay warning-free.
+        run: ruff check core/safety.py core/danger_gate.py core/permission_system.py core/coding_tools.py sandbox/ --select F,E9,B

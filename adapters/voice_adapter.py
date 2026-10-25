@@ -1,5 +1,6 @@
+from core.event_bus.bus import Event, EventBus
 from interface.voice import VoiceInterface
-from core.event_bus.bus import EventBus, Event
+
 
 class LegacyVoiceAdapter:
     """Decouples voice VAD thresholds, audio streams, and speech playbacks to standard events."""

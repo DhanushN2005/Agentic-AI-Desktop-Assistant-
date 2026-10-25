@@ -1,0 +1,29 @@
+{
+  "name": "static_site",
+  "title": "Modern Static Web Application",
+  "keywords": ["html", "css", "javascript", "static", "website", "landing page", "frontend", "web page"],
+  "stack": "html5-css3-vanilla-js",
+  "run_command": "python -m http.server 8000",
+  "test_command": "python -c \"import os; assert os.path.exists('index.html')\"",
+  "acceptance_criteria": [
+    "index.html contains semantic HTML5 and UTF-8 encoding",
+    "style.css renders responsive design with modern layout",
+    "script.js loads without uncaught console errors",
+    "Local HTTP server serves content with HTTP 200"
+  ],
+  "dependencies": [],
+  "files": [
+    {
+      "name": "index.html",
+      "purpose": "Main user interface document"
+    },
+    {
+      "name": "style.css",
+      "purpose": "Responsive stylesheet"
+    },
+    {
+      "name": "script.js",
+      "purpose": "Client-side interactivity"
+    }
+  ]
+}

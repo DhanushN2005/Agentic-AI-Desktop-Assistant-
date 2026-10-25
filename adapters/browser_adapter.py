@@ -1,6 +1,8 @@
 import logging
+
+from core.event_bus.bus import Event, EventBus
 from engines.browser import BrowserEngine
-from core.event_bus.bus import EventBus, Event
+
 
 class LegacyBrowserAdapter:
     """Standardized adapter for the legacy BrowserEngine, mapping actions to the Event Bus."""

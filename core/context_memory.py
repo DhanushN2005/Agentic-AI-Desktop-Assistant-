@@ -1,8 +1,10 @@
+import json
 import os
 import re
 import time
 
 from engines.system import SystemCtrl
+import logging
 
 
 class ContextMemory:
@@ -25,12 +27,18 @@ class ContextMemory:
         self.active_document = self._load("active_document")
         self.last_search = self._load("last_search")
 
+        # Browser situational context
+        self.browser_open = False
+        self.active_browser = self._load("active_browser", "")
+
         # New Context Tracker registers
         self.focused_app = None
         self.clipboard_state = None
         self.last_generated_content = self.last_response
         self.current_topic = self._load("current_topic")
         self.active_goal = self._load("active_goal")
+        self.last_sdd = self._load("last_sdd")
+        self.active_artifact = self._load_artifact()
 
         # Cross-app data registers
         self.registers = {}
@@ -44,7 +52,8 @@ class ContextMemory:
         try:
             stored_time = self._load("session_time")
             self.session_time = float(stored_time) if stored_time else time.time()
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/context_memory.py:47] Swallowed exception: %s: %s", type(_e).__name__, _e)
             self.session_time = time.time()
 
         # Session dynamic cleanup on startup if expired
@@ -69,7 +78,8 @@ class ContextMemory:
         try:
             self.focused_app = SystemCtrl.get_active_window_title()
             self.clipboard_state = SystemCtrl.get_clipboard()
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/context_memory.py:72] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
     def clear_session(self):
@@ -82,12 +92,15 @@ class ContextMemory:
         self.last_path = None
         self.current_topic = None
         self.active_goal = None
+        self.last_sdd = None
+        self.active_artifact = None
         self.session_time = time.time()
         if self.mem:
-            for k in ["last_response", "last_search", "active_document", "last_app", "last_path", "session_time", "current_topic", "active_goal"]:
+            for k in ["last_response", "last_search", "active_document", "last_app", "last_path", "session_time", "current_topic", "active_goal", "last_sdd", "active_artifact"]:
                 try:
                     self.mem.store(f"ctx_{k}", "")
-                except Exception:
+                except Exception as _e:
+                    logging.debug("[core/context_memory.py:90] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass
 
     def _load(self, key, default=None):
@@ -99,10 +112,78 @@ class ContextMemory:
         if self.mem and val is not None:
             self.mem.store(f"ctx_{key}", str(val))
 
-    def update(self, cmd=None, app=None, query=None, browser=None, screenshot=None, url=None, selector=None, engine=None, yt_query=None, last_path=None, last_response=None, active_document=None, last_search=None, current_topic=None, active_goal=None):
+    def _load_artifact(self):
+        raw = self._load("active_artifact")
+        if isinstance(raw, dict):
+            data = raw
+        else:
+            try:
+                data = json.loads(raw) if raw else None
+            except (TypeError, ValueError):
+                return None
+        if not isinstance(data, dict) or not data.get("path"):
+            return None
+        related = data.get("related_paths") or []
+        data["related_paths"] = [str(item) for item in related if item][-20:]
+        return data
+
+    def get_artifact(self):
+        artifact = self.active_artifact or self._load_artifact()
+        self.active_artifact = artifact
+        if not artifact:
+            return None
+        path = artifact.get("path")
+        if not path or not os.path.exists(path):
+            return None
+        return artifact
+
+    def set_artifact(self, path=None, language=None, kind=None, query=None, request=None, related_paths=None, extra=None):
+        previous = self.active_artifact or {}
+        related = list(previous.get("related_paths") or [])
+        if related_paths:
+            related.extend(str(item) for item in related_paths if item)
+        if previous.get("path") and previous.get("path") != path and previous.get("path") not in related:
+            related.append(previous.get("path"))
+        if path:
+            path = os.path.abspath(path)
+            self.last_path = path
+            self._save("last_path", path)
+        now = time.time()
+        artifact = {
+            "path": path or previous.get("path"),
+            "language": language or previous.get("language"),
+            "kind": kind or previous.get("kind"),
+            "query": query if query is not None else previous.get("query"),
+            "request": request if request is not None else previous.get("request"),
+            "related_paths": related[-20:],
+            "created_at": previous.get("created_at") or now,
+            "updated_at": now,
+        }
+        if isinstance(extra, dict):
+            artifact.update(extra)
+        self.active_artifact = artifact
+        self._save("active_artifact", json.dumps(artifact))
+        return artifact
+
+    def set_browser_open(self, browser_name: str):
+        """Mark a browser as currently open and active."""
+        self.browser_open = True
+        self.active_browser = browser_name.lower()
+        self._save("active_browser", self.active_browser)
+
+    def clear_browser_open(self):
+        self.browser_open = False
+        self.active_browser = ""
+        self._save("active_browser", "")
+
+    def update(self, cmd=None, app=None, query=None, browser=None, screenshot=None, url=None, selector=None, engine=None, yt_query=None, last_path=None, last_response=None, active_document=None, last_search=None, current_topic=None, active_goal=None, last_sdd=None, **kwargs):
         # Update session timer to prevent premature context expiration during active tasks
         self.session_time = time.time()
         self._save("session_time", self.session_time)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+            if v is not None:
+                self._save(k, v)
 
         if cmd:
             self.last_cmd = cmd
@@ -150,9 +231,51 @@ class ContextMemory:
         if active_goal:
             self.active_goal = active_goal
             self._save("active_goal", active_goal)
+        if last_sdd is not None:
+            self.last_sdd = last_sdd
+            self._save("last_sdd", last_sdd)
 
         # Always synchronize system states during memory updates
         self.sync_system_state()
+
+    @staticmethod
+    def _leading_action(text):
+        token = (text or "").split(" ", 1)[0].strip()
+        return token if re.fullmatch(r"[a-z]+", token or "") else ""
+
+    def _artifact_command(self, cmd, reference):
+        artifact = self.get_artifact()
+        if not artifact:
+            return None
+        action = self._leading_action(reference)
+        remainder = reference[len(action):].strip() if action else reference
+        if not action:
+            return None
+        basename = os.path.basename(str(artifact.get("path") or "")).lower()
+        explicit_names = [token.lower() for token in re.findall(r"[\w.-]+\.[\w]{1,10}", remainder)]
+        if explicit_names and all(name != basename for name in explicit_names):
+            return None
+        has_pronoun = bool(re.search(r"\b(that|it|this)\b", reference))
+        mentions_work = bool(re.search(r"\b(files?|pages?|documents?|code|apps?|projects?|programs?|scripts?|html|css|js)\b", reference))
+        change_noun = bool(re.search(r"\b(changes?|updates?|modifications?|revisions?|fixes?|improvements?)\b", remainder))
+        open_verbs = {"open", "show", "display", "preview", "launch", "start"}
+        run_verbs = {"run", "execute", "test"}
+        edit_verbs = {"edit", "change", "update", "modify", "revise", "fix", "improve", "enhance", "add", "insert", "append"}
+        create_verbs = {"create", "generate", "build", "make", "write", "design", "develop"}
+        linked_markers = {"another", "new", "second", "other", "next", "linked", "redirect", "redirects", "navigate", "navigation", "route", "link", "links", "connect", "connected"}
+        if action in open_verbs and (has_pronoun or mentions_work):
+            return f"artifact_open:{cmd}"
+        if action in run_verbs and (has_pronoun or mentions_work):
+            return f"artifact_run:{cmd}"
+        if action in edit_verbs and (has_pronoun or mentions_work or change_noun):
+            return f"artifact_edit:{cmd}"
+        if action == "make" and change_noun:
+            return f"artifact_edit:{cmd}"
+        if action in create_verbs and has_pronoun and not linked_markers.intersection(set(reference.split())):
+            return f"artifact_edit:{cmd}"
+        if action in create_verbs and mentions_work and linked_markers.intersection(set(reference.split())):
+            return f"artifact_extend:{cmd}"
+        return None
 
     def resolve(self, cmd: str) -> str:
         # Re-sync system focus and clipboard state before resolving to ensure we use latest context
@@ -163,11 +286,17 @@ class ContextMemory:
             return cmd
 
         c = cmd.lower().strip()
+        reference = re.sub(r"^(please|can you|could you|would you|will you|do you)\s+", "", c).strip()
+        reference = re.sub(r"\s+for\s+me$", "", reference).strip()
 
         # Check for pending actions first (multi-turn conversations)
         if self.pending_action:
             # Return the command as-is so the handler can process the follow-up
             return cmd
+
+        artifact_command = self._artifact_command(cmd, reference)
+        if artifact_command:
+            return artifact_command
 
         # Match paste/write commands for registers
         for reg_name, val in list(self.registers.items()):
@@ -236,7 +365,7 @@ class ContextMemory:
                 return f"navigate to {self.last_url}"
         if any(x == c for x in ["show it again", "show that again"]) and self.last_screenshot:
             return "show screenshot"
-        if any(x == c for x in ["open it", "open that", "open this", "open the file", "open this file", "open that file", "open the folder", "open that folder", "open this folder", "open the directory", "open it again"]):
+        if any(x == reference for x in ["open it", "open that", "open this", "open the file", "open this file", "open that file", "open the folder", "open that folder", "open this folder", "open the directory", "open it again"]):
             target_file = self.active_document or self.last_path or self.last_screenshot
             if target_file:
                 return f"open {target_file}"

@@ -1,6 +1,7 @@
 import re
+
 import requests
-from typing import Optional
+import logging
 
 
 class TextSummarizerEngine:
@@ -49,13 +50,15 @@ class TextSummarizerEngine:
                 text = text[:5000]
             return self.summarize(text, num_sentences)
         except Exception as e:
+            logging.debug("[engines/text_summarizer.py:51] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Error fetching content: {e}"
 
     def summarize_file(self, filepath: str, num_sentences: int = 5) -> str:
         """Read a text file and summarize it."""
         try:
-            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            with open(filepath, encoding="utf-8", errors="ignore") as f:
                 text = f.read()
             return self.summarize(text, num_sentences)
         except Exception as e:
+            logging.debug("[engines/text_summarizer.py:60] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Error reading file: {e}"

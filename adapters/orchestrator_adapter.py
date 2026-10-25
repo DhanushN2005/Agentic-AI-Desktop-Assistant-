@@ -1,6 +1,8 @@
 import logging
+
+from core.event_bus.bus import Event, EventBus
 from core.orchestrator import FlexieOrchestrator
-from core.event_bus.bus import EventBus, Event
+
 
 class LegacyOrchestratorAdapter:
     """Standardized adapter wrapping the legacy FlexieOrchestrator runtime operations."""
@@ -8,7 +10,7 @@ class LegacyOrchestratorAdapter:
         self.orch = orchestrator
         self.bus = EventBus()
         self.logger = logging.getLogger("OrchestratorAdapter")
-        
+
         # Overlay the speak method to dispatch events to the bus
         self.original_speak = self.orch.speak
         self.orch.speak = self.wrapped_speak
@@ -20,10 +22,10 @@ class LegacyOrchestratorAdapter:
     def execute_command(self, cmd: str, silent: bool = False):
         """Standardized interface to dispatch commands directly to the core orchestrator queues."""
         self.bus.publish(Event("orchestrator.command.received", {"command": cmd, "silent": silent}, priority=1))
-        
+
         # Place in queue to guarantee thread safety
         self.orch.cmd_queue.put(cmd)
-        
+
         self.bus.publish(Event("orchestrator.command.enqueued", {"command": cmd}))
 
     def get_status(self) -> dict:

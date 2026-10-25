@@ -18,14 +18,14 @@ Provides commands:
   "Forget everything about X."
   "Why do you remember this?"
 """
-import time
 import json
 import logging
 import os
 import sqlite3
-from enum import Enum, auto
-from typing import Any, Dict, List, Optional
+import time
 from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import Any
 
 
 class MemoryCategory(Enum):
@@ -47,9 +47,9 @@ class MemoryEntry:
     source: str = "user"  # "user", "system", "inferred"
     confidence: float = 1.0  # 0.0 to 1.0
     importance: float = 0.5  # 0.0 to 1.0
-    expiration: Optional[float] = None  # Unix timestamp, None = never
-    tags: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    expiration: float | None = None  # Unix timestamp, None = never
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_expired(self) -> bool:
@@ -83,7 +83,7 @@ class MemoryManager:
 
     def __init__(self):
         self.logger = logging.getLogger("Flexie.MemoryManager")
-        self._entries: Dict[str, MemoryEntry] = {}
+        self._entries: dict[str, MemoryEntry] = {}
         self._ensure_db()
         self._load()
 
@@ -91,23 +91,30 @@ class MemoryManager:
         """Create database tables if they don't exist."""
         os.makedirs(os.path.dirname(self.DB_PATH), exist_ok=True)
         conn = sqlite3.connect(self.DB_PATH)
-        c = conn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS memories (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                category TEXT,
-                timestamp REAL,
-                source TEXT,
-                confidence REAL,
-                importance REAL,
-                expiration REAL,
-                tags TEXT,
-                metadata TEXT
-            )
-        """)
-        conn.commit()
-        conn.close()
+        try:
+            # WAL mode: readers don't block writers (single-writer still serialised).
+            try:
+                conn.execute("PRAGMA journal_mode=WAL;")
+            except Exception as _e:
+                logging.debug("[core/memory_manager.py:WAL] Swallowed exception: %s: %s", type(_e).__name__, _e)
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS memories (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    category TEXT,
+                    timestamp REAL,
+                    source TEXT,
+                    confidence REAL,
+                    importance REAL,
+                    expiration REAL,
+                    tags TEXT,
+                    metadata TEXT
+                )
+            """)
+            conn.commit()
+        finally:
+            conn.close()
 
     def _load(self):
         """Load memories from database."""
@@ -119,7 +126,8 @@ class MemoryManager:
                 key, value, cat_name, ts, src, conf, imp, exp, tags_json, meta_json = row
                 try:
                     category = MemoryCategory[cat_name]
-                except KeyError:
+                except KeyError as _e:
+                    logging.debug("[core/memory_manager.py:122] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     category = MemoryCategory.FACTS
                 entry = MemoryEntry(
                     key=key,
@@ -139,30 +147,50 @@ class MemoryManager:
         except Exception as e:
             self.logger.warning(f"[MEMORY] Failed to load from DB: {e}")
 
-    def _save(self):
-        """Persist memories to database."""
+    @staticmethod
+    def _row_for(entry: "MemoryEntry") -> tuple:
+        return (
+            entry.key,
+            json.dumps(entry.value) if not isinstance(entry.value, str) else entry.value,
+            entry.category.name,
+            entry.timestamp,
+            entry.source,
+            entry.confidence,
+            entry.importance,
+            entry.expiration,
+            json.dumps(entry.tags),
+            json.dumps(entry.metadata),
+        )
+
+    def _save_entry(self, entry: "MemoryEntry"):
+        """Persist a single entry (INSERT OR REPLACE) — O(1), no full rewrite."""
         try:
-            conn = sqlite3.connect(self.DB_PATH)
-            c = conn.cursor()
-            for entry in self._entries.values():
-                c.execute("""
+            with sqlite3.connect(self.DB_PATH) as conn:
+                conn.execute("""
                     INSERT OR REPLACE INTO memories
                     (key, value, category, timestamp, source, confidence, importance, expiration, tags, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    entry.key,
-                    json.dumps(entry.value) if not isinstance(entry.value, str) else entry.value,
-                    entry.category.name,
-                    entry.timestamp,
-                    entry.source,
-                    entry.confidence,
-                    entry.importance,
-                    entry.expiration,
-                    json.dumps(entry.tags),
-                    json.dumps(entry.metadata),
-                ))
-            conn.commit()
-            conn.close()
+                """, self._row_for(entry))
+        except Exception as e:
+            self.logger.warning(f"[MEMORY] Failed to save entry {entry.key}: {e}")
+
+    def _delete_key(self, key: str):
+        """Delete a single row — O(1), no full rewrite."""
+        try:
+            with sqlite3.connect(self.DB_PATH) as conn:
+                conn.execute("DELETE FROM memories WHERE key = ?", (key,))
+        except Exception as e:
+            self.logger.warning(f"[MEMORY] Failed to delete {key}: {e}")
+
+    def _save(self):
+        """Persist memories to database (full sync; prefer _save_entry for single rows)."""
+        try:
+            with sqlite3.connect(self.DB_PATH) as conn:
+                conn.executemany("""
+                    INSERT OR REPLACE INTO memories
+                    (key, value, category, timestamp, source, confidence, importance, expiration, tags, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, [self._row_for(entry) for entry in self._entries.values()])
         except Exception as e:
             self.logger.warning(f"[MEMORY] Failed to save to DB: {e}")
 
@@ -174,8 +202,8 @@ class MemoryManager:
         source: str = "user",
         confidence: float = 1.0,
         importance: float = 0.5,
-        expiration: Optional[float] = None,
-        tags: Optional[List[str]] = None,
+        expiration: float | None = None,
+        tags: list[str] | None = None,
     ) -> bool:
         """Store a memory entry."""
         entry = MemoryEntry(
@@ -189,18 +217,19 @@ class MemoryManager:
             tags=tags or [],
         )
         self._entries[entry.key] = entry
-        self._save()
+        self._save_entry(entry)
         self.logger.info(f"[MEMORY] Stored: {entry.key} ({category.name})")
+        self.sync_markdown_wiki()
         return True
 
-    def recall(self, key: str) -> Optional[MemoryEntry]:
+    def recall(self, key: str) -> MemoryEntry | None:
         """Recall a specific memory by key."""
         entry = self._entries.get(key.lower().strip())
         if entry and not entry.is_expired:
             return entry
         return None
 
-    def search(self, query: str, category: Optional[MemoryCategory] = None, limit: int = 10) -> List[MemoryEntry]:
+    def search(self, query: str, category: MemoryCategory | None = None, limit: int = 10) -> list[MemoryEntry]:
         """Search memories by query string."""
         query_lower = query.lower()
         results = []
@@ -222,8 +251,9 @@ class MemoryManager:
         key = key.lower().strip()
         if key in self._entries:
             del self._entries[key]
-            self._save()
+            self._delete_key(key)
             self.logger.info(f"[MEMORY] Forgot: {key}")
+            self.sync_markdown_wiki()
             return True
         return False
 
@@ -232,28 +262,30 @@ class MemoryManager:
         keys = [k for k, v in self._entries.items() if v.category == category]
         for k in keys:
             del self._entries[k]
-        self._save()
+            self._delete_key(k)
         self.logger.info(f"[MEMORY] Forgot {len(keys)} entries in {category.name}")
+        if keys:
+            self.sync_markdown_wiki()
         return len(keys)
 
-    def get_by_category(self, category: MemoryCategory) -> List[MemoryEntry]:
+    def get_by_category(self, category: MemoryCategory) -> list[MemoryEntry]:
         """Get all memories in a category."""
         return [e for e in self._entries.values() if e.category == category and not e.is_expired]
 
-    def get_recent(self, limit: int = 10) -> List[MemoryEntry]:
+    def get_recent(self, limit: int = 10) -> list[MemoryEntry]:
         """Get most recent memories."""
         entries = [e for e in self._entries.values() if not e.is_expired]
         entries.sort(key=lambda e: e.timestamp, reverse=True)
         return entries[:limit]
 
-    def get_important(self, min_importance: float = 0.7, limit: int = 10) -> List[MemoryEntry]:
+    def get_important(self, min_importance: float = 0.7, limit: int = 10) -> list[MemoryEntry]:
         """Get high-importance memories."""
         entries = [e for e in self._entries.values()
                    if not e.is_expired and e.importance >= min_importance]
         entries.sort(key=lambda e: e.importance, reverse=True)
         return entries[:limit]
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get memory statistics."""
         active = [e for e in self._entries.values() if not e.is_expired]
         expired = [e for e in self._entries.values() if e.is_expired]
@@ -272,8 +304,7 @@ class MemoryManager:
         keys = [k for k, v in self._entries.items() if v.is_expired]
         for k in keys:
             del self._entries[k]
-        if keys:
-            self._save()
+            self._delete_key(k)
         return len(keys)
 
     def to_summary(self) -> str:
@@ -303,3 +334,64 @@ class MemoryManager:
             f"  Stored: {time.strftime('%Y-%m-%d %H:%M', time.localtime(entry.timestamp))}\n"
             f"  Tags: {', '.join(entry.tags) if entry.tags else 'none'}"
         )
+
+    def export_to_markdown(self, filepath: str | None = None) -> str:
+        """Export all structured memories to a clean, human-readable Markdown wiki."""
+        if filepath is None:
+            data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+            os.makedirs(data_dir, exist_ok=True)
+            filepath = os.path.join(data_dir, "MEMORY.md")
+
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            "# 🧠 Flexiee Personal Knowledge Wiki",
+            f"*Last synchronized: {now_str}*",
+            "",
+            "> Human-readable, Flexie memory wiki persistent across restarts.",
+            "",
+        ]
+
+        active_entries = [e for e in self._entries.values() if not e.is_expired]
+
+        sections = [
+            (MemoryCategory.PREFERENCES, "🌟 User Preferences & Personalization"),
+            (MemoryCategory.FACTS, "📌 Learned Facts & Knowledge"),
+            (MemoryCategory.WORKSPACE, "💻 Workspace & Project Context"),
+            (MemoryCategory.TASKS, "⚡ Task Execution Records"),
+            (MemoryCategory.CONVERSATION, "💬 Conversation Notes"),
+        ]
+
+        for cat, title in sections:
+            cat_entries = [e for e in active_entries if e.category == cat]
+            if cat_entries:
+                lines.append(f"## {title}")
+                for e in sorted(cat_entries, key=lambda x: x.importance, reverse=True):
+                    val_str = str(e.value).strip()
+                    lines.append(f"- **{e.key}**: {val_str}")
+                lines.append("")
+
+        content = "\n".join(lines)
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+        except Exception as err:
+            self.logger.warning(f"[MEMORY] Could not write markdown wiki to {filepath}: {err}")
+
+        # Also mirror to workspace/MEMORY.md if workspace directory exists
+        ws_dir = os.path.join(os.path.dirname(__file__), "..", "workspace")
+        if os.path.isdir(ws_dir):
+            try:
+                ws_file = os.path.join(ws_dir, "MEMORY.md")
+                with open(ws_file, "w", encoding="utf-8") as wf:
+                    wf.write(content)
+            except Exception:
+                pass
+
+        return content
+
+    def sync_markdown_wiki(self):
+        """Automatically keep the Markdown wiki up to date on disk."""
+        try:
+            self.export_to_markdown()
+        except Exception as _e:
+            self.logger.debug(f"[MEMORY] Markdown wiki sync failed: {_e}")

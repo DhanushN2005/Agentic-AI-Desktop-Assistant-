@@ -1,6 +1,7 @@
-from engines.memory import MemoryEngine
+from core.event_bus.bus import Event, EventBus
 from engines.long_term_memory import GlobalMemory
-from core.event_bus.bus import EventBus, Event
+from engines.memory import MemoryEngine
+
 
 class LegacyMemoryAdapter:
     """Bridges the SQLite MemoryEngine and GlobalMemory profile stores to standardized event notifications."""

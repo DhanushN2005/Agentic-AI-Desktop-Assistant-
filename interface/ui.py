@@ -1,29 +1,81 @@
 # Enhanced version with NEXT-GEN GLASSMORPHISM UI improvements
-import sys
-import psutil
-import time
+# Silence system-level rendering warnings from Qt C++ core
+import ctypes
+import logging
 import math
 import os
-import webbrowser
-import subprocess
-import threading
 import random
-from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QLabel, QFrame, QGraphicsDropShadowEffect, QSystemTrayIcon,
-                             QMenu, QSlider, QComboBox, QLineEdit, QPushButton, QProgressBar,
-                             QSizePolicy, QGridLayout, QTextBrowser, QDialog, QScrollArea, QTabWidget)
-from PyQt6.QtCore import (Qt, QTimer, QPropertyAnimation, QEasingCurve, 
-                           QRect, QRectF, pyqtProperty, QPoint, QPointF,
-                           QParallelAnimationGroup, QSequentialAnimationGroup, QSize)
-from PyQt6.QtGui import (QPainter, QColor, QRadialGradient, QLinearGradient, QBrush, QPen, 
-                          QIcon, QPixmap, QFont, QFontDatabase, QPainterPath)
-from PyQt6.QtCore import pyqtSignal, QThread
-from PyQt6.QtNetwork import QUdpSocket, QHostAddress
-# Silence system-level rendering warnings from Qt C++ core
-import os
+import subprocess
 import sys
-import ctypes
+import threading
+import time
+import webbrowser
 from ctypes import wintypes
+
+import psutil
+
+# ── Project root on sys.path ────────────────────────────────────────────────
+# This file is launched AS A SCRIPT (``python interface/ui.py``, spawned by
+# main.py), so Python puts ``interface/`` on sys.path — not the project root.
+# Without this bootstrap every in-function ``from utils...`` import below would
+# raise ModuleNotFoundError. That is fatal for connectivity: utils.udp_auth
+# would be unavailable, so commands would be sent to the orchestrator WITHOUT
+# the per-run token and silently rejected ("UDP: rejected message without valid
+# token") — i.e. typing into the assistant appeared to do nothing.
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT_DIR not in sys.path:
+    sys.path.insert(0, _ROOT_DIR)
+
+from PyQt6.QtCore import (
+    QEasingCurve,
+    QParallelAnimationGroup,
+    QPoint,
+    QPointF,
+    QPropertyAnimation,
+    QRect,
+    QRectF,
+    QSequentialAnimationGroup,
+    Qt,
+    QThread,
+    QTimer,
+    pyqtProperty,
+    pyqtSignal,
+)
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QRadialGradient,
+)
+from PyQt6.QtNetwork import QHostAddress, QUdpSocket
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSystemTrayIcon,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
+
 sys.stderr = open(os.devnull, 'w')
 
 class HotkeyListener(QThread):
@@ -34,7 +86,7 @@ class HotkeyListener(QThread):
         # Using ID 99 to avoid collisions
         if not user32.RegisterHotKey(None, 99, 0x0002, 0x46):
             return
-        
+
         try:
             msg = wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
@@ -47,13 +99,11 @@ class HotkeyListener(QThread):
 
 class FlexieConfig:
     MODES = {
-        "jarvis":       {"accent": "#00BFFF", "glow": 25, "speed": 2000, "bg_tint": (10, 20, 30, 220), "secondary": "#0080FF"},
-        "cyberpunk":    {"accent": "#FF00FF", "glow": 30, "speed": 1500, "bg_tint": (30, 10, 30, 220), "secondary": "#00FFFF"},
-        "matrix":       {"accent": "#00FF41", "glow": 20, "speed": 1800, "bg_tint": (5, 25, 5, 220),  "secondary": "#008F11"},
-        "tron":         {"accent": "#00FFFF", "glow": 25, "speed": 2200, "bg_tint": (5, 5, 25, 220),  "secondary": "#0088FF"},
-        "space":        {"accent": "#FFFFFF", "glow": 15, "speed": 3500, "bg_tint": (5, 5, 15, 230),  "secondary": "#A0A0FF"},
-        "neon":         {"accent": "#FF3366", "glow": 35, "speed": 1200, "bg_tint": (25, 5, 15, 220), "secondary": "#FF9933"},
-        "alert":        {"accent": "#FF3B30", "glow": 40, "speed": 500,  "bg_tint": (40, 5, 5, 230),  "secondary": "#FF6B6B"}
+        "professional": {"accent": "#00BFFF", "glow": 25, "speed": 2000, "bg_tint": (10, 20, 30, 220), "secondary": "#0080FF"},
+        "developer":    {"accent": "#00FF87", "glow": 25, "speed": 2200, "bg_tint": (5, 25, 18, 220), "secondary": "#00A85A"},
+        "hacker":       {"accent": "#FF003C", "glow": 35, "speed": 1200, "bg_tint": (25, 5, 10, 220), "secondary": "#8B0018"},
+        "minimal":      {"accent": "#C0C0C0", "glow": 20, "speed": 1800, "bg_tint": (15, 15, 15, 230), "secondary": "#707070"},
+        "focus":        {"accent": "#A970FF", "glow": 25, "speed": 2200, "bg_tint": (18, 10, 30, 220), "secondary": "#5B2EA6"},
     }
 
 class ModernSlider(QSlider):
@@ -110,20 +160,20 @@ class ApiKeysDialog(QDialog):
         self.setMinimumWidth(580)
         self.setMaximumWidth(660)
         self.setStyleSheet("""
-            QDialog { background: rgba(10,15,25,245); border-radius: 16px; }
+            QDialog { background: rgba(8,12,20,248); border-radius: 16px; border: 1px solid rgba(0,255,100,55); }
             QLabel { color: rgba(255,255,255,200); font-size: 11px; }
             QLabel#DialogTitle { color: #FFFFFF; font-size: 16px; font-weight: 800; letter-spacing: 2px; }
-            QLabel#Help { color: rgba(0,210,255,180); font-size: 10px; }
+            QLabel#Help { color: rgba(0,255,100,180); font-size: 10px; }
             QLabel#Status { color: #00FF41; font-size: 11px; font-weight: 600; }
-            QLineEdit { background: rgba(0,0,0,80); border: 1px solid rgba(255,255,255,15); border-radius: 8px; color: #FFFFFF; padding: 8px 10px; font-size: 11px; }
-            QLineEdit:focus { border: 1px solid #00D2FF; }
-            QComboBox { background: rgba(0,0,0,80); border: 1px solid rgba(255,255,255,15); border-radius: 8px; color: #FFFFFF; padding: 6px 10px; font-size: 11px; }
-            QComboBox:hover { border: 1px solid #00D2FF; }
-            QComboBox QAbstractItemView { background: rgba(15,20,35,250); color: #FFFFFF; selection-background-color: rgba(0,210,255,40); border: 1px solid rgba(255,255,255,15); }
-            QPushButton { background: rgba(255,255,255,8); color: #FFFFFF; border-radius: 8px; padding: 8px 14px; font-weight: 600; border: 1px solid rgba(255,255,255,12); }
-            QPushButton:hover { background: rgba(0,210,255,20); border: 1px solid rgba(0,210,255,50); }
-            QPushButton#SaveBtn { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #0095FF, stop:1 #0055FF); border: none; padding: 10px; font-size: 13px; }
-            QPushButton#SaveBtn:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #00A5FF, stop:1 #0065FF); }
+            QLineEdit { background: rgba(0,0,0,90); border: 1px solid rgba(0,255,100,22); border-radius: 8px; color: #FFFFFF; padding: 8px 10px; font-size: 11px; }
+            QLineEdit:focus { border: 1px solid rgba(0,255,100,90); background: rgba(0,255,100,6); }
+            QComboBox { background: rgba(0,0,0,90); border: 1px solid rgba(0,255,100,22); border-radius: 8px; color: #FFFFFF; padding: 6px 10px; font-size: 11px; }
+            QComboBox:hover { border: 1px solid rgba(0,255,100,70); }
+            QComboBox QAbstractItemView { background: rgba(8,14,22,252); color: #FFFFFF; selection-background-color: rgba(0,255,100,30); border: 1px solid rgba(0,255,100,30); }
+            QPushButton { background: rgba(0,255,100,6); color: #FFFFFF; border-radius: 8px; padding: 8px 14px; font-weight: 600; border: 1px solid rgba(0,255,100,18); }
+            QPushButton:hover { background: rgba(0,255,100,20); border: 1px solid rgba(0,255,100,60); }
+            QPushButton#SaveBtn { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #00CC55, stop:1 #006622); border: 1px solid rgba(0,255,100,60); padding: 10px; font-size: 13px; }
+            QPushButton#SaveBtn:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #00FF66, stop:1 #008833); }
         """)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
@@ -250,7 +300,8 @@ class ApiKeysDialog(QDialog):
                     if not has:
                         # Show saved state
                         try: from utils.config import Config as _C; has_saved = bool(_C.get_api_key(p)); d.setStyleSheet("color: #00FF41; font-size: 10px; background: transparent; border: none;" if has_saved else "color: rgba(255,255,255,40); font-size: 10px; background: transparent; border: none;")
-                        except: pass
+                        except Exception as _e:
+                            logging.debug("[interface/ui.py:291] Swallowed exception: %s: %s", type(_e).__name__, _e)
                         e.setStyleSheet("background: rgba(0,0,0,80); border: 1px solid rgba(255,255,255,15); border-radius: 8px;")
                     elif prefix and not txt.strip().startswith(prefix):
                         d.setStyleSheet("color: #FFD700; font-size: 10px; background: transparent; border: none;")
@@ -316,7 +367,8 @@ class ApiKeysDialog(QDialog):
                     from utils.config import SUPPORTED_PROVIDERS as _SP
                     meta = _SP[pid]
                     show = not q or q in pid or q in meta['label'].lower() or q in meta['env'].lower()
-                except: pass
+                except Exception as _e:
+                    logging.debug("[interface/ui.py:357] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 box.setVisible(show)
         self.search_edit.textChanged.connect(_filter)
         self._load_existing()
@@ -327,11 +379,12 @@ class ApiKeysDialog(QDialog):
                 if dot:
                     has = bool(_C.get_api_key(pid))
                     dot.setStyleSheet("color: #00FF41; font-size: 10px; background: transparent; border: none;" if has else "color: rgba(255,255,255,40); font-size: 10px; background: transparent; border: none;")
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:368] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def _load_existing(self):
         try:
-            from utils.config import Config, SUPPORTED_PROVIDERS
+            from utils.config import SUPPORTED_PROVIDERS, Config
             # Active provider
             active = getattr(Config, 'ACTIVE_PROVIDER', 'auto')
             idx = self.active_combo.findText(active, 0) if active != "auto" else 0
@@ -408,10 +461,12 @@ class ApiKeysDialog(QDialog):
             if ok:
                 try:
                     import socket
+                    from utils.udp_auth import pack as _udp_pack
                     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    s.sendto(b"RELOAD_BRAIN", ("127.0.0.1", 9887))
+                    s.sendto(_udp_pack("RELOAD_BRAIN").encode("utf-8"), ("127.0.0.1", 9887))
                     s.close()
-                except: pass
+                except Exception as _e:
+                    logging.debug("[interface/ui.py:452] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 self._show_status(f"Saved {len(updates)} change(s). Reloading brain…", "#00FF41")
                 from PyQt6.QtCore import QTimer
                 QTimer.singleShot(1200, self.accept)
@@ -445,37 +500,37 @@ class ApiKeysDialog(QDialog):
 class ControlPopup(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | 
-                            Qt.WindowType.WindowStaysOnTopHint | 
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint |
+                            Qt.WindowType.WindowStaysOnTopHint |
                             Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumWidth(340)
         self.setMaximumWidth(700) # Allow expansion for full text
-        
+
         QFontDatabase.addApplicationFont(":/fonts/SegoeUI.ttf")
-        
+
         self.container = QFrame(self)
         # Professional Minimalist Glassmorphism
         self.container.setStyleSheet("""
             QFrame#MainContainer {
-                background: rgba(10, 15, 25, 235);
-                border: 1px solid rgba(0, 210, 255, 45);
+                background: rgba(8, 12, 20, 242);
+                border: 1px solid rgba(0, 255, 100, 70);
                 border-radius: 18px;
             }
-            QLabel { 
-                color: rgba(255, 255, 255, 210); 
-                font-family: 'Inter', 'Segoe UI', sans-serif; 
-                font-size: 12px; 
+            QLabel {
+                color: rgba(255, 255, 255, 210);
+                font-family: 'Inter', 'Segoe UI', sans-serif;
+                font-size: 12px;
             }
-            QLabel#Title { 
-                color: #FFFFFF; 
-                font-size: 18px; 
-                font-weight: 800; 
+            QLabel#Title {
+                color: #FFFFFF;
+                font-size: 18px;
+                font-weight: 800;
                 background: transparent;
                 letter-spacing: 3px;
             }
             QLabel#SectionHeader {
-                color: rgba(0, 210, 255, 140);
+                color: rgba(0, 255, 100, 160);
                 font-size: 9px;
                 font-weight: 800;
                 text-transform: uppercase;
@@ -484,69 +539,69 @@ class ControlPopup(QWidget):
                 margin-bottom: 0px;
             }
             QPushButton {
-                background: rgba(255, 255, 255, 8);
-                color: #FFFFFF; 
-                border-radius: 10px; 
-                font-weight: 600; 
+                background: rgba(0, 255, 100, 6);
+                color: #FFFFFF;
+                border-radius: 10px;
+                font-weight: 600;
                 padding: 10px;
                 font-size: 12px;
-                border: 1px solid rgba(255,255,255,12);
+                border: 1px solid rgba(0, 255, 100, 18);
             }
-            QPushButton:hover { 
-                background: rgba(0, 210, 255, 25);
-                border: 1px solid rgba(0, 210, 255, 60);
+            QPushButton:hover {
+                background: rgba(0, 255, 100, 22);
+                border: 1px solid rgba(0, 255, 100, 65);
             }
             QPushButton#WakeButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0095FF, stop:1 #0055FF);
-                border: none;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #00CC55, stop:1 #006622);
+                border: 1px solid rgba(0,255,100,80);
                 padding: 12px;
                 font-size: 13px;
                 letter-spacing: 1px;
             }
             QPushButton#WakeButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #00A5FF, stop:1 #0065FF);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #00FF66, stop:1 #008833);
             }
-            QLineEdit { 
-                background: rgba(0, 0, 0, 80); 
-                border: 1px solid rgba(255, 255, 255, 15); 
-                border-radius: 10px; 
-                color: #FFFFFF; 
+            QLineEdit {
+                background: rgba(0, 0, 0, 90);
+                border: 1px solid rgba(0, 255, 100, 22);
+                border-radius: 10px;
+                color: #FFFFFF;
                 padding: 10px 12px;
                 font-size: 12px;
             }
             QLineEdit:focus {
-                border: 1px solid #00D2FF;
-                background: rgba(0, 210, 255, 5);
+                border: 1px solid rgba(0, 255, 100, 90);
+                background: rgba(0, 255, 100, 6);
             }
-            QComboBox { 
-                background: rgba(0, 0, 0, 80); 
-                color: white; 
-                border-radius: 8px; 
-                padding: 6px 10px; 
-                border: 1px solid rgba(255,255,255,15);
+            QComboBox {
+                background: rgba(0, 0, 0, 90);
+                color: white;
+                border-radius: 8px;
+                padding: 6px 10px;
+                border: 1px solid rgba(0, 255, 100, 22);
                 font-size: 11px;
             }
-            QComboBox:hover { border: 1px solid #00D2FF; }
+            QComboBox:hover { border: 1px solid rgba(0, 255, 100, 70); }
         """)
         self.container.setObjectName("MainContainer")
-        
+
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 10) # Shadow margins
         self.main_layout.addWidget(self.container)
-        
+
         layout = QVBoxLayout(self.container)
         layout.setContentsMargins(22, 22, 22, 22)
         layout.setSpacing(12)
-        
+
         # Header (Title + Waveform + Controls)
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0,0,0,5)
-        
+
         title = QLabel("FLEXIE")
         title.setObjectName("Title")
         header_layout.addWidget(title)
         header_layout.addStretch(1) # Expand
-        
+
         # New: Pin & Minimize Controls
         self.btn_pin = QPushButton("📌")
         self.btn_pin.setFixedSize(24, 24)
@@ -559,12 +614,12 @@ class ControlPopup(QWidget):
         self.btn_min.setFixedSize(24, 24)
         self.btn_min.setStyleSheet("padding: 2px; font-size: 14px; font-weight: bold; background: transparent; border: none;")
         header_layout.addWidget(self.btn_min)
-        
+
         self.status_indicator = QFrame()
         self.status_indicator.setFixedSize(8, 8)
         self.status_indicator.setStyleSheet("background-color: #00FF41; border-radius: 4px;")
         header_layout.addWidget(self.status_indicator)
-        
+
         self.header_container = QWidget() # WRAP HEADER IN WIDGET
         self.header_container.setLayout(header_layout)
         layout.addWidget(self.header_container)
@@ -612,17 +667,18 @@ class ControlPopup(QWidget):
                 self.provider_dots_widgets[_pid] = _lbl
                 self.provider_dots_row.addWidget(_lbl)
             self.provider_dots_row.addStretch()
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:653] Swallowed exception: %s: %s", type(_e).__name__, _e)
         self.dots_container = dots_container
         layout.addWidget(dots_container)
-        
+
         # System Metrics Panel
         self.metrics_frame = QFrame()
         self.metrics_frame.setStyleSheet("background: rgba(255,255,255,5); border-radius: 12px; border: 1px solid rgba(255,255,255,10);")
         metrics_layout = QVBoxLayout(self.metrics_frame)
         metrics_layout.setContentsMargins(14, 14, 14, 14)
         metrics_layout.setSpacing(10)
-        
+
         # Helper to create a stat row
         def create_stat(name, val="0%"):
             row = QHBoxLayout()
@@ -635,18 +691,18 @@ class ControlPopup(QWidget):
             row.addWidget(vlbl)
             bar = CustomProgressBar()
             return row, vlbl, bar
-            
+
         cpu_row, self.cpu_value, self.cpu_progress = create_stat("CPU")
         metrics_layout.addLayout(cpu_row); metrics_layout.addWidget(self.cpu_progress)
-        
+
         ram_row, self.ram_value, self.ram_progress = create_stat("RAM")
         metrics_layout.addLayout(ram_row); metrics_layout.addWidget(self.ram_progress)
-        
+
         batt_row, self.batt_value, self.batt_progress = create_stat("BATTERY")
         metrics_layout.addLayout(batt_row); metrics_layout.addWidget(self.batt_progress)
-        
+
         layout.addWidget(self.metrics_frame)
-        
+
         # Spotlight Input
         spotlight_layout = QHBoxLayout()
         self.spotlight = QLineEdit()
@@ -677,11 +733,11 @@ class ControlPopup(QWidget):
         self.result_area.setMaximumHeight(400) # Maximum reach
         self.result_area.setFixedHeight(0) # Initially collapsed
         layout.addWidget(self.result_area)
-        
+
         # Hardware section
         self.hardware_header = self._create_section("HARDWARE")
         layout.addWidget(self.hardware_header)
-        
+
         def create_slider_row(icon_text, init_val, mini, maxi):
             row = QHBoxLayout()
             icon = QLabel(icon_text)
@@ -692,22 +748,22 @@ class ControlPopup(QWidget):
             row.addWidget(icon)
             row.addWidget(slider)
             return row, slider
-            
+
         vol_row, self.vol_slider = create_slider_row("🔊", 50, 0, 100)
         bri_row, self.bri_slider = create_slider_row("☀️", 70, 0, 100)
-        
+
         self.vol_container = QWidget(); self.vol_container.setLayout(vol_row)
         self.bri_container = QWidget(); self.bri_container.setLayout(bri_row)
         layout.addWidget(self.vol_container)
         layout.addWidget(self.bri_container)
-        
+
         # AI Mode & Quick Actions
         self.ai_core_header = self._create_section("AI CORE")
         layout.addWidget(self.ai_core_header)
-        
+
         mode_layout = QHBoxLayout()
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Jarvis", "Cyberpunk", "Matrix", "Tron", "Space", "Neon"])
+        self.mode_combo.addItems(["Professional", "Developer", "Hacker", "Minimal", "Focus"])
         mode_layout.addWidget(QLabel("🧠"))
         mode_layout.addWidget(self.mode_combo, 1)
         self.mode_container = QWidget(); self.mode_container.setLayout(mode_layout)
@@ -755,7 +811,7 @@ class ControlPopup(QWidget):
         self.btn_keys = QPushButton("🔑 AI KEYS")
         self.btn_keys.setStyleSheet("background: rgba(255,215,0,15); color: #FFD700; border: 1px solid rgba(255,215,0,30);")
         layout.addWidget(self.btn_keys)
-        
+
         # Big Wake Button
         self.wake_btn = QPushButton("⚡ WAKE FLEXIE")
         self.wake_btn.setObjectName("WakeButton")
@@ -766,7 +822,7 @@ class ControlPopup(QWidget):
         self.ver_stamp.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.ver_stamp.setStyleSheet("color: rgba(255,255,255,60); font-size: 9px; letter-spacing: 2px; margin-top: 5px;")
         layout.addWidget(self.ver_stamp)
-        
+
         self._init_provider_quick_switch()
         self.refresh_provider_badge()
         self.container.adjustSize()
@@ -797,7 +853,8 @@ class ControlPopup(QWidget):
                         if cur and combo.findText(cur) == -1:
                             combo.addItem(cur)
                         combo.setCurrentText(cur)
-                    except: pass
+                    except Exception as _e:
+                        logging.debug("[interface/ui.py:838] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     combo.setEnabled(True)
             self.quick_provider_combo.currentTextChanged.connect(_on_provider_changed)
             # Init with current active
@@ -807,13 +864,16 @@ class ControlPopup(QWidget):
                 idx = self.quick_provider_combo.findText(active)
                 if idx >= 0: self.quick_provider_combo.setCurrentIndex(idx)
                 else: _on_provider_changed(active)
-            except: pass
-        except: pass
+            except Exception as _e:
+                logging.debug("[interface/ui.py:848] Swallowed exception: %s: %s", type(_e).__name__, _e)
+        except Exception as _e:
+            logging.debug("[interface/ui.py:849] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def refresh_provider_badge(self):
         """Update badge + dots from Config. Called on show and every _update_stats."""
         try:
-            from utils.config import Config as _C, SUPPORTED_PROVIDERS as _SP
+            from utils.config import SUPPORTED_PROVIDERS as _SP
+            from utils.config import Config as _C
             active = getattr(_C, 'ACTIVE_PROVIDER', 'auto')
             # Resolve display model
             if active == "auto":
@@ -842,7 +902,7 @@ class ControlPopup(QWidget):
                 # Highlight active with bold
                 if is_active:
                     lbl.setStyleSheet(lbl.styleSheet() + " font-weight: 700;")
-        except Exception as e:
+        except Exception:
             pass
         # Update quick combo current model display
         try:
@@ -850,8 +910,9 @@ class ControlPopup(QWidget):
             if hasattr(self, 'quick_provider_combo'):
                 # don't override if user is interacting
                 pass
-        except: pass
-    
+        except Exception as _e:
+            logging.debug("[interface/ui.py:892] Swallowed exception: %s: %s", type(_e).__name__, _e)
+
     def set_minimal_mode(self, minimal=True):
         """Toggles between full dashboard and minimal search popup."""
         self.header_container.setVisible(not minimal) # HIDE HEADER TOO
@@ -873,11 +934,11 @@ class ControlPopup(QWidget):
             self.btn_keys.setVisible(not minimal)
         self.wake_btn.setVisible(not minimal)
         self.ver_stamp.setVisible(not minimal)
-        
+
         # Adjust layout spacing
         self.container.layout().setSpacing(8 if minimal else 12) # Slightly more space
         self.container.layout().setContentsMargins(20, 20, 20, 20) # Restore breathing room
-        
+
         # Resize window for the new content
         self.container.adjustSize()
         self.setFixedHeight(self.container.sizeHint().height() + 20)
@@ -934,29 +995,42 @@ class ControlPopup(QWidget):
 
     def hide_animated(self):
         try: self.op_anim.finished.disconnect(self.hide)
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:976] Swallowed exception: %s: %s", type(_e).__name__, _e)
         self.op_anim.setDuration(250)
         self.op_anim.setEndValue(0.0)
         self.op_anim.finished.connect(self.hide)
         self.op_anim.start()
-        
+
     def paintEvent(self, event):
         # PERFORMANCE: Skip heavy grid rendering if CPU is pinned
         if hasattr(self, "_cpu_load") and self._cpu_load > 90:
             return
-            
-        # Draw some subtle tech grid lines behind the glass container
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.container.geometry()
-        
-        # Grid overlay on the frame
+
+        # Subtle neon-green grid overlay
         painter.setClipRect(rect)
-        painter.setPen(QPen(QColor(255,255,255,4), 1))
+        painter.setPen(QPen(QColor(0, 255, 100, 5), 1))
         for x in range(rect.left(), rect.right(), 20):
             painter.drawLine(x, rect.top(), x, rect.bottom())
         for y in range(rect.top(), rect.bottom(), 20):
             painter.drawLine(rect.left(), y, rect.right(), y)
+
+        # Corner accent glows (top-left and bottom-right)
+        painter.setClipping(False)
+        tl_g = QRadialGradient(QPointF(rect.left(), rect.top()), 60)
+        tl_g.setColorAt(0, QColor(0, 255, 100, 18))
+        tl_g.setColorAt(1, QColor(0, 255, 100, 0))
+        painter.setBrush(tl_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(rect.left(), rect.top()), 60, 60)
+        br_g = QRadialGradient(QPointF(rect.right(), rect.bottom()), 50)
+        br_g.setColorAt(0, QColor(0, 200, 80, 12))
+        br_g.setColorAt(1, QColor(0, 200, 80, 0))
+        painter.setBrush(br_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(rect.right(), rect.bottom()), 50, 50)
 
 class Particle:
     """A single floating micro-particle with fading trail and state-reactive behavior."""
@@ -1050,7 +1124,7 @@ class EnhancedFlexieOrb(QWidget):
         super().__init__(parent)
         self.setFixedSize(300, 300)
         self.state = "SLEEP"
-        self.mode  = "jarvis"
+        self.mode  = "professional"
 
         # core animation state
         self._scale         = 1.0
@@ -1153,10 +1227,9 @@ class EnhancedFlexieOrb(QWidget):
 
     def _get_face_path(self, center, offset, w, h):
         path = QPainterPath()
-        path.addRoundedRect(
+        path.addEllipse(
             QRectF(center.x() + offset.x() - w/2,
-                   center.y() + offset.y() - h/2, w, h),
-            35 * self._view_scale, 35 * self._view_scale)
+                   center.y() + offset.y() - h/2, w, h))
         return path
 
     # ── animation update ─────────────────────────────────────────────────────
@@ -1168,7 +1241,6 @@ class EnhancedFlexieOrb(QWidget):
         if not self.isVisible(): return
 
         t = time.time()
-        v  = self._view_scale
         st = self.state
 
         # ring rotation speed per state
@@ -1243,7 +1315,8 @@ class EnhancedFlexieOrb(QWidget):
         self.particles = [p for p in self.particles if p.life > 0]
 
         try: self.update()
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:1285] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     # ── state change ─────────────────────────────────────────────────────────
     def set_state(self, state):
@@ -1325,13 +1398,13 @@ class EnhancedFlexieOrb(QWidget):
         # LAYER 0 – Neural background (clipped to face shape)
         # ═══════════════════════════════════════════════════════════════════
         if v > 0.3:
-            clip = self._get_face_path(bg_c, QPointF(0,0), 110*scale, 95*scale)
+            clip = self._get_face_path(bg_c, QPointF(0,0), 96*scale, 96*scale)
             painter.setClipPath(clip)
             painter.setPen(QPen(QColor(ar, ag, ab, int(30*v)), 1))
             for i in range(10):
-                nx1 = bg_c.x() + math.sin(t*0.7 + i*0.9) * 50*scale
+                nx1 = bg_c.x() + math.sin(t*0.7 + i*0.9) * 45*scale
                 ny1 = bg_c.y() + math.cos(t*0.6 + i*1.1) * 45*scale
-                nx2 = bg_c.x() + math.sin(t*0.9 - i*0.7) * 50*scale
+                nx2 = bg_c.x() + math.sin(t*0.9 - i*0.7) * 45*scale
                 ny2 = bg_c.y() + math.cos(t*0.8 + i*0.8) * 45*scale
                 painter.drawLine(QPointF(nx1, ny1), QPointF(nx2, ny2))
             painter.setClipping(False)
@@ -1367,7 +1440,7 @@ class EnhancedFlexieOrb(QWidget):
         # ═══════════════════════════════════════════════════════════════════
         if v > 0.5 and st in ("LISTENING","SPEAKING","PROCESSING"):
             num_bars = 52
-            vis_r    = 108 * scale
+            vis_r    = 105 * scale
             for i in range(num_bars):
                 rad_a = math.radians((i / num_bars) * 360 + self._rot * 0.4)
                 if st == "PROCESSING":
@@ -1376,25 +1449,99 @@ class EnhancedFlexieOrb(QWidget):
                     val = abs(math.sin(t * 8 + i * 0.3)) * random.uniform(0.5, 1.0)
                 else:  # LISTENING
                     val = abs(math.sin(t * 4 + i * 0.4)) * random.uniform(0.1, 0.5)
-                blen = (8 + 22 * val) * scale
+                blen = (6 + 18 * val) * scale
                 p1 = QPointF(ring_c.x() + math.cos(rad_a) * vis_r,
                              ring_c.y() + math.sin(rad_a) * vis_r)
                 p2 = QPointF(ring_c.x() + math.cos(rad_a) * (vis_r + blen),
                              ring_c.y() + math.sin(rad_a) * (vis_r + blen))
                 bc = QColor(ar, ag, ab, int(210 * val * v))
-                painter.setPen(QPen(bc, 2.2*scale, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                painter.setPen(QPen(bc, 2.0*scale, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
                 painter.drawLine(p1, p2)
 
         # ═══════════════════════════════════════════════════════════════════
-        # LAYER 3 – Holographic rings (30% parallax)
+        # LAYER 3 – Holographic rings & HUD accents (30% parallax)
         # ═══════════════════════════════════════════════════════════════════
         if v > 0.45:
             ri = int(self._rot)
 
-            # outer dashed orbit ring
+            # 0. Outermost ambient ring with 8 glowing nodes
+            r_outer2 = 115 * scale
+            painter.setPen(QPen(QColor(ar, ag, ab, int(25*v)), 0.7*scale, Qt.PenStyle.DotLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(ring_c, r_outer2, r_outer2)
+            for node_i in range(8):
+                node_angle = math.radians((self._rot * 0.5 + node_i * 45) % 360)
+                nx = ring_c.x() + math.cos(node_angle) * r_outer2
+                ny = ring_c.y() + math.sin(node_angle) * r_outer2
+                node_pulse = int(80 * v * (0.5 + 0.5 * abs(math.sin(t * 2.2 + node_i * 0.78))))
+                nhalo = QRadialGradient(QPointF(nx, ny), 5 * scale)
+                nhalo.setColorAt(0, QColor(ar, ag, ab, node_pulse))
+                nhalo.setColorAt(1, QColor(ar, ag, ab, 0))
+                painter.setBrush(nhalo); painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(QPointF(nx, ny), 4*scale, 4*scale)
+
+            # 1. Inner concentric tech ring
+            r_inner = 65 * scale
+            painter.setPen(QPen(QColor(ar, ag, ab, int(65*v)), 1.0*scale, Qt.PenStyle.DashLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(ring_c, r_inner, r_inner)
+
+            # 6 rotating glowing orbital nodes with halos + cross-connections
+            node_positions = []
+            for node_i in range(6):
+                node_angle = math.radians((self._rot * 1.6 + node_i * 60) % 360)
+                nx = ring_c.x() + math.cos(node_angle) * r_inner
+                ny = ring_c.y() + math.sin(node_angle) * r_inner
+                node_positions.append(QPointF(nx, ny))
+                halo_r = 5 * scale
+                nhalo = QRadialGradient(QPointF(nx, ny), halo_r)
+                nhalo.setColorAt(0, QColor(ar, ag, ab, int(160 * v)))
+                nhalo.setColorAt(1, QColor(ar, ag, ab, 0))
+                painter.setBrush(nhalo); painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(QPointF(nx, ny), halo_r, halo_r)
+                painter.setBrush(QColor(ar, ag, ab, int(255*v)))
+                painter.drawEllipse(QPointF(nx, ny), 2.2*scale, 2.2*scale)
+            # Cross-connections between opposite nodes
+            for ci in range(3):
+                cj = ci + 3
+                painter.setPen(QPen(QColor(ar, ag, ab, int(35*v)), 0.6*scale))
+                painter.drawLine(node_positions[ci], node_positions[cj])
+
+            # 2. Middle concentric orbital ring with full-circumference tick marks
+            r_mid = 80 * scale
+            painter.setPen(QPen(QColor(ar, ag, ab, int(45*v)), 0.9*scale, Qt.PenStyle.SolidLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(ring_c, r_mid, r_mid)
+            for tick_i in range(60):
+                ta = math.radians(tick_i * 6 + self._rot * 0.15)
+                is_major = (tick_i % 5 == 0)
+                tlen = 5.0 * scale if is_major else 2.5 * scale
+                talpha = int(120 * v) if is_major else int(50 * v)
+                tp1 = QPointF(ring_c.x() + math.cos(ta) * (r_mid - tlen),
+                              ring_c.y() + math.sin(ta) * (r_mid - tlen))
+                tp2 = QPointF(ring_c.x() + math.cos(ta) * r_mid,
+                              ring_c.y() + math.sin(ta) * r_mid)
+                painter.setPen(QPen(QColor(ar, ag, ab, talpha),
+                                    1.0*scale if is_major else 0.6*scale))
+                painter.drawLine(tp1, tp2)
+
+            # 3. Outer dashed orbit ring with outward-facing radial ticks
+            r_outer = 97 * scale
             painter.setPen(QPen(QColor(ar, ag, ab, int(55*v)), 1.0*scale, Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(ring_c, 97*scale, 97*scale)
+            painter.drawEllipse(ring_c, r_outer, r_outer)
+            for tick_i in range(60):
+                ta = math.radians(tick_i * 6 - self._rot * 0.1)
+                is_major = (tick_i % 10 == 0)
+                tlen = 6.0 * scale if is_major else 2.5 * scale
+                talpha = int(110 * v) if is_major else int(38 * v)
+                tp1 = QPointF(ring_c.x() + math.cos(ta) * r_outer,
+                              ring_c.y() + math.sin(ta) * r_outer)
+                tp2 = QPointF(ring_c.x() + math.cos(ta) * (r_outer + tlen),
+                              ring_c.y() + math.sin(ta) * (r_outer + tlen))
+                painter.setPen(QPen(QColor(ar, ag, ab, talpha),
+                                    1.0*scale if is_major else 0.5*scale))
+                painter.drawLine(tp1, tp2)
 
             if st == "PROCESSING":
                 # Three stacked rotating arcs at different speeds
@@ -1420,7 +1567,7 @@ class EnhancedFlexieOrb(QWidget):
 
             # LISTENING – radar sweep
             if st == "LISTENING":
-                sweep_r = 112 * scale
+                sweep_r = 108 * scale
                 sweep_end = QPointF(
                     ring_c.x() + math.cos(math.radians(self._radar_angle)) * sweep_r,
                     ring_c.y() + math.sin(math.radians(self._radar_angle)) * sweep_r)
@@ -1439,11 +1586,13 @@ class EnhancedFlexieOrb(QWidget):
                                 int((self._radar_angle - 30) * 16), 30*16)
 
         # ═══════════════════════════════════════════════════════════════════
-        # LAYER 4 – Particles with fading trails (50% parallax)
+        # LAYER 4 – Particles with fading trails & connection lines (50% parallax)
         # ═══════════════════════════════════════════════════════════════════
         if v > 0.4:
+            p_coords = []
             for p in self.particles:
                 px, py = p.update(st, part_c.x(), part_c.y())
+                p_coords.append((px, py, p.life))
                 if len(p.history) > 1:
                     for k in range(len(p.history)-1):
                         seg_alpha = int(max(0, p.life) * 90 * (k / len(p.history)))
@@ -1454,91 +1603,127 @@ class EnhancedFlexieOrb(QWidget):
                 painter.setBrush(dot_c); painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(QPointF(px, py), p.size*scale, p.size*scale)
 
+            # Subtle animated connection lines between nearby orbital particles
+            num_pts = min(len(p_coords), 24)
+            thresh_sq = (30 * scale) ** 2
+            for i in range(num_pts):
+                x1, y1, l1 = p_coords[i]
+                for j in range(i + 1, num_pts):
+                    x2, y2, l2 = p_coords[j]
+                    d2 = (x1 - x2)**2 + (y1 - y2)**2
+                    if d2 < thresh_sq:
+                        prox = 1.0 - math.sqrt(d2) / (30 * scale)
+                        line_a = int(min(l1, l2) * prox * 65 * v)
+                        painter.setPen(QPen(QColor(ar, ag, ab, line_a), 0.8 * scale))
+                        painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+
         # ═══════════════════════════════════════════════════════════════════
-        # LAYER 5 – Face body + energy core (70% parallax)
+        # LAYER 5 – Face body + spherical lighting (70% parallax)
         # ═══════════════════════════════════════════════════════════════════
-        face_w = 102 * scale; face_h = 87 * scale
-        face_rect = QRectF(face_c.x() - face_w/2, face_c.y() - face_h/2, face_w, face_h)
+        orb_size = 98 * scale
+        orb_r = orb_size / 2
+        face_rect = QRectF(face_c.x() - orb_r, face_c.y() - orb_r, orb_size, orb_size)
 
         # energy core (behind face body)
-        core_r = face_w * 0.55 * self._core_pulse
+        core_r = orb_size * 0.55 * self._core_pulse
         cg = QRadialGradient(face_c, core_r)
         cg.setColorAt(0, QColor(ar, ag, ab, int(80 * self._glow_intensity * self._core_pulse)))
         cg.setColorAt(0.4, QColor(ar, ag, ab, int(30 * self._core_pulse * v)))
         cg.setColorAt(1, Qt.GlobalColor.transparent)
         painter.setBrush(cg); painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(face_c, core_r*1.4, core_r*1.4)
+        painter.drawEllipse(face_c, core_r*1.3, core_r*1.3)
 
-        # face body gradient
-        bg_tint_c = QColor(8, 18, 8, int(210 * v))   # deep dark green-tinted bg
-        bg2 = QRadialGradient(face_c, face_w)
-        bg2.setColorAt(0,   QColor(bg_tint_c.red(), bg_tint_c.green(), bg_tint_c.blue(), int(210*v)))
-        bg2.setColorAt(0.65,QColor(secondary.red(), secondary.green(), secondary.blue(), int(60*v)))
-        bg2.setColorAt(1,   QColor(2, 8, 2, int(180*v)))
+        # face body gradient (deep black and dark-green spherical glass)
+        bg2 = QRadialGradient(QPointF(face_c.x(), face_c.y() - orb_r * 0.25), orb_size * 1.05)
+        bg2.setColorAt(0.0,  QColor(4, 20, 10, int(225 * v)))
+        bg2.setColorAt(0.60, QColor(2, 10, 5, int(240 * v)))
+        bg2.setColorAt(0.85, QColor(secondary.red(), secondary.green(), secondary.blue(), int(55 * v)))
+        bg2.setColorAt(1.0,  QColor(0, 4, 2, int(255 * v)))
         painter.setBrush(bg2)
-        border_a = int(130*v + self._pulse * 0.9)
-        painter.setPen(QPen(QColor(ar, ag, ab, border_a), 2.5*scale))
-        painter.drawRoundedRect(face_rect, 35*v, 35*v)
+        border_a = int(140*v + self._pulse * 0.9)
+        painter.setPen(QPen(QColor(ar, ag, ab, border_a), 2.4*scale))
+        painter.drawEllipse(face_c, orb_r, orb_r)
 
-        # SPEAKING – mouth pulse bar at bottom of face
-        if st == "SPEAKING" and v > 0.5:
-            mouth_y  = face_c.y() + face_h * 0.3
-            mouth_w  = face_w * 0.5 * (0.5 + self._mouth_open * 0.5)
-            mouth_h  = max(2.0, 6 * scale * self._mouth_open)
-            mc = QColor(ar, ag, ab, int(200 * self._mouth_open * v))
-            painter.setBrush(mc); painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(
-                QRectF(face_c.x() - mouth_w/2, mouth_y - mouth_h/2, mouth_w, mouth_h),
-                3, 3)
+        # Bottom rim bounce light (subtle spherical glass refraction)
+        painter.setClipPath(self._get_face_path(face_c, QPointF(0,0), orb_size, orb_size))
+        rim_g = QLinearGradient(QPointF(face_c.x(), face_c.y() + orb_r * 0.2),
+                                QPointF(face_c.x(), face_c.y() + orb_r))
+        rim_g.setColorAt(0.0, Qt.GlobalColor.transparent)
+        rim_g.setColorAt(1.0, QColor(ar, ag, ab, int(65 * v)))
+        painter.setBrush(rim_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(face_c, orb_r - 1.5, orb_r - 1.5)
 
         # PROCESSING – scan line inside face
         if st == "PROCESSING" and v > 0.35:
-            painter.setClipPath(self._get_face_path(face_c, QPointF(0,0), face_w, face_h))
             scan_a = int(50 * v)
-            scan_y = face_c.y() - face_h/2 + (self._scan_line % face_h)
+            scan_y = face_c.y() - orb_r + (self._scan_line % orb_size)
             painter.setPen(QPen(QColor(ar, ag, ab, scan_a), 2.5))
-            painter.drawLine(QPointF(face_c.x() - face_w/2, scan_y),
-                             QPointF(face_c.x() + face_w/2, scan_y))
-            flg = QRadialGradient(QPointF(face_c.x(), scan_y), face_w*0.75)
+            painter.drawLine(QPointF(face_c.x() - orb_r, scan_y),
+                             QPointF(face_c.x() + orb_r, scan_y))
+            flg = QRadialGradient(QPointF(face_c.x(), scan_y), orb_size*0.75)
             flg.setColorAt(0, QColor(ar, ag, ab, int(70*v)))
             flg.setColorAt(1, Qt.GlobalColor.transparent)
             painter.setBrush(flg); painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(QPointF(face_c.x(), scan_y), face_w*0.55, 5)
-            painter.setClipping(False)
+            painter.drawEllipse(QPointF(face_c.x(), scan_y), orb_size*0.5, 5)
 
-        # ── Glass reflection (top-left sheen) ───────────────────────────────
-        hl = QPainterPath()
-        hl.addRoundedRect(QRectF(face_rect.x(), face_rect.y(),
-                                  face_rect.width(), face_rect.height()*0.38),
-                           35*v, 35*v)
-        hl_g = QLinearGradient(face_rect.topLeft(),
-                                QPointF(face_rect.left(), face_rect.center().y()))
-        hl_g.setColorAt(0, QColor(255, 255, 255, int(70*v)))
-        hl_g.setColorAt(1, QColor(255, 255, 255, 0))
+        # ── Glass reflection (curved forehead sheen — enhanced) ─────────────
+        hl_g = QLinearGradient(QPointF(face_c.x() - orb_r*0.25, face_c.y() - orb_r),
+                               QPointF(face_c.x(), face_c.y() - orb_r * 0.05))
+        hl_g.setColorAt(0.0, QColor(255, 255, 255, int(120*v)))
+        hl_g.setColorAt(0.45, QColor(255, 255, 255, int(45*v)))
+        hl_g.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.setBrush(hl_g); painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawPath(hl)
+        painter.drawEllipse(QPointF(face_c.x() - orb_r*0.12, face_c.y() - orb_r * 0.44),
+                           orb_r * 0.72, orb_r * 0.38)
+        # Small bright specular dot (top-left quadrant)
+        spec_g = QRadialGradient(QPointF(face_c.x() - orb_r*0.28, face_c.y() - orb_r*0.52), orb_r*0.22)
+        spec_g.setColorAt(0.0, QColor(255, 255, 255, int(180*v)))
+        spec_g.setColorAt(0.5, QColor(255, 255, 255, int(55*v)))
+        spec_g.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setBrush(spec_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(face_c.x() - orb_r*0.28, face_c.y() - orb_r*0.52),
+                           orb_r*0.22, orb_r*0.14)
 
-        # moving holographic sheen (diagonal shimmer)
+        # Moving holographic sheen (diagonal shimmer)
         sheen_phase = (t * 0.5) % 2.0 - 1.0
-        sheen_x = face_rect.left() + face_rect.width() * (0.5 + sheen_phase * 0.6)
-        sheen_g = QLinearGradient(QPointF(sheen_x - 30, face_rect.top()),
-                                   QPointF(sheen_x + 30, face_rect.bottom()))
+        sheen_x = face_c.x() + orb_size * (sheen_phase * 0.6)
+        sheen_g = QLinearGradient(QPointF(sheen_x - 30, face_c.y() - orb_r),
+                                   QPointF(sheen_x + 30, face_c.y() + orb_r))
         sheen_g.setColorAt(0, QColor(255,255,255, 0))
-        sheen_g.setColorAt(0.5, QColor(255,255,255, int(28*v)))
+        sheen_g.setColorAt(0.5, QColor(255,255,255, int(30*v)))
         sheen_g.setColorAt(1, QColor(255,255,255, 0))
         painter.setBrush(sheen_g); painter.setPen(Qt.PenStyle.NoPen)
-        painter.setClipPath(self._get_face_path(face_c, QPointF(0,0), face_w, face_h))
-        painter.drawRect(face_rect)
+        painter.drawEllipse(face_c, orb_r, orb_r)
         painter.setClipping(False)
+
+        # ── Subtle curved mouth (expressive AI face) ────────────────────
+        if st == "SPEAKING" and v > 0.5:
+            mouth_y  = face_c.y() + orb_size * 0.22
+            mouth_w  = orb_size * 0.36 * (0.5 + self._mouth_open * 0.5)
+            mouth_h  = max(2.5, 6 * scale * self._mouth_open)
+            mc = QColor(ar, ag, ab, int(210 * self._mouth_open * v))
+            painter.setBrush(mc); painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(
+                QRectF(face_c.x() - mouth_w/2, mouth_y - mouth_h/2, mouth_w, mouth_h),
+                mouth_h/2, mouth_h/2)
+        elif not is_sleep and v > 0.4:
+            mouth_y  = face_c.y() + orb_size * 0.22
+            mouth_w  = 18 * scale
+            m_path = QPainterPath()
+            m_path.moveTo(face_c.x() - mouth_w/2, mouth_y)
+            m_path.quadTo(face_c.x(), mouth_y + 3.2 * scale, face_c.x() + mouth_w/2, mouth_y)
+            painter.setPen(QPen(QColor(ar, ag, ab, int(130 * v)), 1.6 * scale, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(m_path)
 
         # ═══════════════════════════════════════════════════════════════════
         # LAYER 6 – Eyes (100% parallax)
         # ═══════════════════════════════════════════════════════════════════
-        eye_gap = 30 * scale
+        eye_gap = 25 * scale
         eye_cx_l = eye_c.x() - eye_gap
         eye_cx_r = eye_c.x() + eye_gap
-        eye_cy   = eye_c.y() - 8 * scale
-        eye_w    = 26 * scale
+        eye_cy   = eye_c.y() - 1 * scale
+        eye_w    = 23 * scale
 
         if is_sleep or self._eye_openness < 0.05:
             # sleeping slit
@@ -1558,20 +1743,29 @@ class EnhancedFlexieOrb(QWidget):
                 p_dx = (self._mouse_pos.x() - center.x()) / 150.0 * (eye_w * 0.18)
                 p_dy = (self._mouse_pos.y() - center.y()) / 150.0 * (eye_h * 0.18)
 
+            # Unified soft ambient visor glow across eye region (eliminates dark center pinch)
+            visor_g = QRadialGradient(QPointF(eye_c.x(), eye_cy), 44 * scale)
+            visor_g.setColorAt(0.0, QColor(ar, ag, ab, int(85 * self._eye_openness * v)))
+            visor_g.setColorAt(0.6, QColor(ar, ag, ab, int(30 * self._eye_openness * v)))
+            visor_g.setColorAt(1.0, Qt.GlobalColor.transparent)
+            painter.setBrush(visor_g); painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QPointF(eye_c.x(), eye_cy), 44 * scale, 18 * scale)
+
             for ecx in (eye_cx_l, eye_cx_r):
-                # eye glow halo
-                eg = QRadialGradient(QPointF(ecx, eye_cy), 30*scale)
-                eg.setColorAt(0,   QColor(ar, ag, ab, int(230 * self._eye_openness)))
-                eg.setColorAt(0.5, QColor(ar, ag, ab, int(90  * self._eye_openness)))
+                # eye glow halo (soft circular glow per eye)
+                glow_r = 18 * scale
+                eg = QRadialGradient(QPointF(ecx, eye_cy), glow_r)
+                eg.setColorAt(0,   QColor(ar, ag, ab, int(220 * self._eye_openness * v)))
+                eg.setColorAt(0.5, QColor(ar, ag, ab, int(70  * self._eye_openness * v)))
                 eg.setColorAt(1,   Qt.GlobalColor.transparent)
                 painter.setBrush(eg); painter.setPen(Qt.PenStyle.NoPen)
-                painter.drawEllipse(QPointF(ecx, eye_cy), 30*scale, 20*scale)
+                painter.drawEllipse(QPointF(ecx, eye_cy), glow_r, glow_r)
 
-                # eye body
+                # eye body (smooth rounded capsule)
                 painter.setBrush(accent)
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawRoundedRect(
-                    QRectF(ecx-eye_w/2, eye_cy-eye_h/2, eye_w, eye_h), 6, 6)
+                    QRectF(ecx-eye_w/2, eye_cy-eye_h/2, eye_w, eye_h), eye_h/2, eye_h/2)
 
                 # PROCESSING – iris spinner
                 if st == "PROCESSING":
@@ -1586,8 +1780,8 @@ class EnhancedFlexieOrb(QWidget):
                         int(self._rot*16 + 180*16), 100*16)
 
                 # pupil highlight (tracks mouse / scan)
-                hw = eye_w * 0.24; hh = eye_h * 0.32
-                painter.setBrush(QColor(255, 255, 255, int(230 * self._eye_openness)))
+                hw = eye_w * 0.22; hh = eye_h * 0.30
+                painter.setBrush(QColor(255, 255, 255, int(240 * self._eye_openness)))
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(
                     QPointF(ecx + eye_w*0.14 + p_dx, eye_cy - eye_h*0.14 + p_dy),
@@ -1596,48 +1790,48 @@ class EnhancedFlexieOrb(QWidget):
 class FlexieUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | 
-                           Qt.WindowType.WindowStaysOnTopHint | 
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint |
+                           Qt.WindowType.WindowStaysOnTopHint |
                            Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
+
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(10)
-        
+
         self.orb = EnhancedFlexieOrb()
         self.layout.addWidget(self.orb)
         self.setFixedSize(300, 300)
-        
+
         self.drag_pos = QPoint()
         self._last_activity = time.time()
-        
+
         self.udp_sock = QUdpSocket(self)
         self.udp_sock.bind(QHostAddress.SpecialAddress.LocalHost, 9886)
         self.udp_sock.readyRead.connect(self._process_udp)
-        
+
         self.panel = ControlPopup()
         self._connect_signals()
-        
+
         # Center on screen
         screen = QApplication.primaryScreen().geometry()
         self.move(screen.center() - self.rect().center())
-        
+
         self.idle_timer = QTimer(self)
         self.idle_timer.timeout.connect(self._handle_idle)
         self.idle_timer.start(10000)
-        
+
         self.stats_timer = QTimer(self)
         self.stats_timer.timeout.connect(self._update_stats)
         self.stats_timer.start(2000)
-        
+
         self._setup_tray()
-        
+
         # Start global hotkey listener
         self.hotkey_thread = HotkeyListener(self)
         self.hotkey_thread.hotkey_signal.connect(self._handle_hotkey)
         self.hotkey_thread.start()
-        
+
         self.show()
 
     def _handle_hotkey(self):
@@ -1646,7 +1840,7 @@ class FlexieUI(QWidget):
             self.panel.hide_animated()
         else:
             self.panel.set_minimal_mode(True) # MINIMAL MODE ON HOTKEY
-            self.panel.result_area.hide() 
+            self.panel.result_area.hide()
             self.panel.result_area.setFixedHeight(0) # Collapse result area
             self._reflow_ui()
             self.panel.show_animated(self.pos() + QPoint(290, -100))
@@ -1689,7 +1883,7 @@ class FlexieUI(QWidget):
         p.drawText(QRect(4, 4, 24, 24), Qt.AlignmentFlag.AlignCenter, "F")
         p.end()
         self.tray.setIcon(QIcon(px))
-        
+
         menu = QMenu()
         show_action = menu.addAction("Show Controls")
         show_action.triggered.connect(lambda: self.panel.show_animated(self.pos() + QPoint(290, -100)))
@@ -1700,8 +1894,40 @@ class FlexieUI(QWidget):
         self.tray.setContextMenu(menu)
         self.tray.show()
 
-    def _send_udp(self, msg: str):
-        self.udp_sock.writeDatagram(msg.encode('utf-8'), QHostAddress.SpecialAddress.LocalHost, 9887)
+    def _send_udp(self, msg: str) -> bool:
+        """Send a command to the orchestrator on 127.0.0.1:9887.
+
+        FAIL CLOSED: the orchestrator rejects any datagram that is not
+        token-signed, so sending it anyway only makes the UI look dead. When the
+        auth helper is unavailable we report the failure and send nothing.
+        """
+        try:
+            from utils.udp_auth import pack as _udp_pack
+        except Exception as e:
+            logging.error("[interface/ui.py:_send_udp] UDP auth unavailable: %s: %s", type(e).__name__, e)
+            self._show_link_error("AUTH UNAVAILABLE")
+            return False
+        try:
+            self.udp_sock.writeDatagram(
+                _udp_pack(msg).encode('utf-8'),
+                QHostAddress.SpecialAddress.LocalHost,
+                9887,
+            )
+            return True
+        except Exception as e:
+            logging.error("[interface/ui.py:_send_udp] UDP send failed: %s: %s", type(e).__name__, e)
+            self._show_link_error("SEND FAILED")
+            return False
+
+    def _show_link_error(self, detail: str = ""):
+        """Surface a connectivity problem on the panel instead of failing silently."""
+        try:
+            label = getattr(self.panel, "status_label", None)
+            if label is not None:
+                label.setText(f"STATUS: ⚠ LINK ERROR ({detail})" if detail else "STATUS: ⚠ LINK ERROR")
+        except Exception as _e:
+            logging.debug("[interface/ui.py:_show_link_error] Swallowed exception: %s: %s", type(_e).__name__, _e)
+
 
     def _wake(self):
         self._send_udp("wake up")
@@ -1709,24 +1935,65 @@ class FlexieUI(QWidget):
         self.orb.set_state("WAKE")
 
     def _open_dashboard(self):
+        """Open the web dashboard, auto-starting the bridge if it is not running.
+
+        The page MUST be fetched from the bridge's own HTTP server: that is the
+        only place where the per-run WebSocket auth token is injected into
+        ``web_ui.html``. Opening the file (or the wrong port) yields an
+        un-substituted token, so every command typed there is dropped.
+        """
         bridge_path = os.path.join(os.path.dirname(__file__), "web_ui_bridge.py")
-        dashboard_url = "http://localhost:7860/web_ui.html"
-        def _start():
+        # Keep in sync with web_ui_bridge.HTTP_PORT.
+        dashboard_url = "http://localhost:8766/"
+
+        def _http_alive() -> bool:
             try:
                 import socket
-                s = socket.create_connection(("127.0.0.1", 8765), timeout=0.5)
-                s.close(); webbrowser.open(dashboard_url)
-            except Exception:
-                subprocess.Popen([sys.executable, bridge_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                time.sleep(1.5); webbrowser.open(dashboard_url)
+                s = socket.create_connection(("127.0.0.1", 8766), timeout=0.5)
+                s.close()
+                return True
+            except OSError:
+                return False
+
+        def _start():
+            try:
+                if not _http_alive():
+                    env = os.environ.copy()
+                    if not env.get("FLEXIE_UDP_TOKEN"):
+                        # Hand the bridge the same token the orchestrator uses,
+                        # otherwise it generates its own and every relayed
+                        # command is rejected. See utils/udp_auth.py.
+                        try:
+                            from utils.udp_auth import get_token
+                            env["FLEXIE_UDP_TOKEN"] = get_token()
+                        except Exception as _e:
+                            logging.error("[interface/ui.py:_open_dashboard] token unavailable: %s: %s",
+                                          type(_e).__name__, _e)
+                    subprocess.Popen([sys.executable, bridge_path],
+                                     stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL,
+                                     env=env)
+                    # Wait up to ~5s for the bridge HTTP server before opening.
+                    for _ in range(25):
+                        if _http_alive():
+                            break
+                        time.sleep(0.2)
+                webbrowser.open(dashboard_url)
+            except Exception as e:
+                logging.error("[interface/ui.py:_open_dashboard] %s: %s", type(e).__name__, e)
+
         threading.Thread(target=_start, daemon=True).start()
         self.panel.btn_dash.setText("⏳ LOADING...")
         QTimer.singleShot(2500, lambda: self.panel.btn_dash.setText("🌐 DASHBOARD"))
 
     def _send_spotlight(self):
-        txt = self.panel.spotlight.text()
-        if txt:
-            self._send_udp(f"DEEP_SEARCH:{txt[1:].strip()}" if txt.startswith("?") else txt)
+        txt = self.panel.spotlight.text().strip()
+        if not txt:
+            return
+        payload = f"DEEP_SEARCH:{txt[1:].strip()}" if txt.startswith("?") else txt
+        # Only clear the input when the command actually reached the wire, so a
+        # connectivity failure can never silently eat what the user typed.
+        if self._send_udp(payload):
             self.panel.spotlight.clear()
             self.orb.set_state("PROCESSING")
             self._set_activity()
@@ -1758,7 +2025,7 @@ class FlexieUI(QWidget):
         self.panel.refresh_provider_badge()
         self.panel.status_label.setText("STATUS: KEYS UPDATED")
 
-    def _set_volume(self, val): 
+    def _set_volume(self, val):
         self._send_udp(f"SET_VOLUME:{val}")
         if val == 0: self.panel.btn_mute.setText("🔊 UNMUTE")
         else: self.panel.btn_mute.setText("🔇 MUTE")
@@ -1769,7 +2036,7 @@ class FlexieUI(QWidget):
         """Visual-only update (no UDP) — shared by local and remote mode changes."""
         mode_key = mode.lower().strip()
         self.orb.mode = mode_key
-        cfg = FlexieConfig.MODES.get(mode_key, FlexieConfig.MODES["jarvis"])
+        cfg = FlexieConfig.MODES.get(mode_key, FlexieConfig.MODES["professional"])
         accent = cfg["accent"]
         secondary = cfg.get("secondary", accent)
         bg_tint = cfg.get("bg_tint", (10, 15, 25, 235))
@@ -1787,12 +2054,14 @@ class FlexieUI(QWidget):
             """)
             self.panel.container.setObjectName("MainContainer")
             self.panel.container.style().unpolish(self.panel.container); self.panel.container.style().polish(self.panel.container)
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:1829] Swallowed exception: %s: %s", type(_e).__name__, _e)
         try:
             self.panel.status_indicator.setStyleSheet(f"background-color: {accent}; border-radius: 6px; border: 1px solid {secondary};")
             self.panel.provider_badge.setStyleSheet(f"background: rgba(255,255,255,6); border: 1px solid {accent}; border-radius: 10px;")
             self.panel.wake_btn.setStyleSheet(f"QPushButton#WakeButton {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {accent}, stop:1 {secondary}); border: none; padding: 12px; font-size: 13px; letter-spacing: 1px; border-radius: 10px; color: #FFFFFF; font-weight: 600; }}")
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:1834] Swallowed exception: %s: %s", type(_e).__name__, _e)
         try:
             if self.orb.state in ("IDLE","SLEEP","MINIMIZED"):
                 self.orb._accent_from = self.orb._accent_to
@@ -1800,20 +2069,22 @@ class FlexieUI(QWidget):
                 self.orb._accent_to = QColor(accent)
                 self.orb._secondary_to = QColor(secondary)
                 self.orb.color_anim.stop(); self.orb._color_blend = 0.0; self.orb.color_anim.start()
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:1842] Swallowed exception: %s: %s", type(_e).__name__, _e)
         self.orb.set_state(self.orb.state)
         try: self.panel.refresh_provider_badge()
-        except: pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:1845] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def _change_mode(self, mode, send_udp=True):
         self._apply_mode_visuals(mode)
-        self.panel.status_label.setText(f"MODE → {mode.upper()}  •  {FlexieConfig.MODES.get(mode.lower().strip(), FlexieConfig.MODES['jarvis'])['accent']}")
+        self.panel.status_label.setText(f"MODE → {mode.upper()}  •  {FlexieConfig.MODES.get(mode.lower().strip(), FlexieConfig.MODES['professional'])['accent']}")
         if send_udp:
             self._send_udp(f"mode:{mode}")
 
     def _process_udp(self):
         while self.udp_sock.hasPendingDatagrams():
-            data, _, _ = self.udp_sock.readDatagram(1024)
+            data, _, _ = self.udp_sock.readDatagram(65535)
             if not data: continue
             msg = data.decode('utf-8')
             if ":" in msg:
@@ -1827,12 +2098,15 @@ class FlexieUI(QWidget):
                     self.panel.status_indicator.setStyleSheet(f"background-color: {accent}; border-radius: 6px;")
                 elif tag == "MODE":
                     try: self.panel.mode_combo.blockSignals(True)
-                    except: pass
+                    except Exception as _e:
+                        logging.debug("[interface/ui.py:1869] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.panel.mode_combo.setCurrentText(val.capitalize())
                     try: self.panel.mode_combo.blockSignals(False)
-                    except: pass
+                    except Exception as _e:
+                        logging.debug("[interface/ui.py:1872] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     try: self._apply_mode_visuals(val)
-                    except: pass
+                    except Exception as _e:
+                        logging.debug("[interface/ui.py:1874] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.panel.status_label.setText(f"MODE → {val.upper()}")
                 elif tag == "QUIT":
                     QApplication.quit()
@@ -1842,17 +2116,17 @@ class FlexieUI(QWidget):
                     self.panel.result_area.show()
                     # Pulse the orb to indicate info received
                     self.orb.set_state("SPEAKING")
-                    
+
                     # Force UI REFLOW (CRITICAL FOR MINIMAL MODE)
-                    QTimer.singleShot(50, lambda: self._reflow_ui()) 
-                    
+                    QTimer.singleShot(50, lambda: self._reflow_ui())
+
                     self._set_activity()
                     QTimer.singleShot(2000, lambda: self.orb.set_state("IDLE"))
 
     def _reflow_ui(self):
         """Forces the glass container to recalculate its dimensions based on content."""
         if not self.panel: return
-        
+
         # 1. Adjust the result area to its document content (adaptive width AND height)
         if self.panel.result_area.isVisible():
             doc = self.panel.result_area.document()
@@ -1860,7 +2134,7 @@ class FlexieUI(QWidget):
             doc.setTextWidth(550) # Max internal text width
             ideal_w = int(doc.idealWidth()) + 50
             h = int(doc.size().height()) + 30
-            
+
             self.panel.result_area.setFixedHeight(min(500, max(50, h)))
             self.panel.result_area.setMinimumWidth(min(600, max(300, ideal_w)))
         else:
@@ -1869,7 +2143,7 @@ class FlexieUI(QWidget):
         # 2. Reflow standard widgets
         self.panel.container.adjustSize()
         hint = self.panel.container.sizeHint()
-        
+
         # 3. Smooth resize the panel horizontally and vertically
         self.panel.setFixedHeight(hint.height() + 25)
         self.panel.setFixedWidth(max(340, hint.width() + 20))
@@ -1880,22 +2154,23 @@ class FlexieUI(QWidget):
                 cpu = psutil.cpu_percent()
                 ram = psutil.virtual_memory().percent
                 batt = psutil.sensors_battery().percent if psutil.sensors_battery() else 100
-                
+
                 self.panel.cpu_value.setText(f"{cpu}%")
                 self.panel.cpu_progress.setValue(int(cpu))
                 self.panel.cpu_progress.setStyleSheet(f"QProgressBar::chunk {{ background: {'#FF3B30' if cpu > 80 else '#FFD700' if cpu > 60 else '#00D2FF'}; }}")
-                
+
                 self.panel.ram_value.setText(f"{ram}%")
                 self.panel.ram_progress.setValue(int(ram))
                 self.panel.ram_progress.setStyleSheet(f"QProgressBar::chunk {{ background: {'#FF3B30' if ram > 80 else '#FFD700' if ram > 60 else '#00D2FF'}; }}")
-                
+
                 self.panel.batt_value.setText(f"{batt}%")
                 self.panel.batt_progress.setValue(int(batt))
                 self.panel.batt_progress.setStyleSheet(f"QProgressBar::chunk {{ background: {'#FF3B30' if batt < 20 else '#FFD700' if batt < 50 else '#00FF41'}; }}")
                 # Refresh provider badge every ~6s
                 if int(time.time()) % 3 == 0:
                     self.panel.refresh_provider_badge()
-            except: pass
+            except Exception as _e:
+                logging.debug("[interface/ui.py:1937] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def _scan_clipboard(self):
         """Action for the CLIP button."""
@@ -1928,7 +2203,7 @@ class FlexieUI(QWidget):
             self.drag_pos = event.globalPosition().toPoint() - self.pos()
         elif event.button() == Qt.MouseButton.RightButton:
             if self.panel.isVisible(): self.panel.hide_animated()
-            else: 
+            else:
                 self.panel.set_minimal_mode(False) # FULL MODE ON ORB CLICK
                 self.panel.show_animated(self.pos() + QPoint(290, -100))
                 self._reflow_ui()

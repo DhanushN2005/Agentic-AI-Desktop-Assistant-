@@ -9,24 +9,22 @@ Tests for the Flexie 2.0 upgrade systems:
   - LLM Provider Config
   - Memory Manager
 """
-import pytest
-import time
+import logging
 import os
 import sys
-import logging
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.action_result import ActionResult
-from core.tool_registry import ToolRegistry, ToolSpec, ToolSchema, PermissionLevel, registry
-from core.permission_system import PermissionSystem
-from core.goal_planner import GoalPlanner, TaskGraph, TaskStep, StepStatus, VerificationStrategy
-from core.hybrid_router import HybridRouter
 from core.agent_executor import AgentExecutor
 from core.desktop_control import DesktopControl
-from core.llm_providers import LLMProviderManager, LLMProvider, ProviderStatus
-from core.memory_manager import MemoryManager, MemoryCategory, MemoryEntry
-
+from core.goal_planner import GoalPlanner, StepStatus, TaskGraph, TaskStep, VerificationStrategy
+from core.hybrid_router import HybridRouter
+from core.llm_providers import LLMProvider, LLMProviderManager, ProviderStatus
+from core.memory_manager import MemoryCategory, MemoryManager
+from core.permission_system import PermissionSystem
+from core.tool_registry import PermissionLevel, ToolRegistry, ToolSchema, ToolSpec
 
 # =============================================================================
 # ACTION RESULT TESTS
@@ -395,7 +393,7 @@ class TestDesktopControl:
 
     def test_permission_check(self):
         ps = PermissionSystem()
-        dc = DesktopControl(permission_system=ps)
+        DesktopControl(permission_system=ps)
         # Read-only should be allowed
         allowed, _, _ = ps.check_permission("vision.screenshot", "screenshot")
         # This depends on default permission level

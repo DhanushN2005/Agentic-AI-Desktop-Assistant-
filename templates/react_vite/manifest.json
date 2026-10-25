@@ -1,0 +1,50 @@
+{
+  "name": "react_vite",
+  "title": "React + Vite Modern Web App",
+  "keywords": [
+    "react",
+    "vite",
+    "jsx",
+    "spa",
+    "frontend framework",
+    "component",
+    "dashboard"
+  ],
+  "stack": "react-vite",
+  "run_command": "npm run dev",
+  "test_command": "npm run build",
+  "acceptance_criteria": [
+    "Vite dev server compiles cleanly without syntax errors",
+    "React root component mounts correctly",
+    "Package.json defines modern React 18+ and Vite dependencies",
+    "Interactive UI responds to state changes",
+    "npm run build succeeds without errors"
+  ],
+  "dependencies": [
+    "react",
+    "react-dom",
+    "vite"
+  ],
+  "files": [
+    {
+      "name": "package.json",
+      "purpose": "Node dependencies and build scripts"
+    },
+    {
+      "name": "vite.config.js",
+      "purpose": "Vite bundler configuration with React plugin"
+    },
+    {
+      "name": "index.html",
+      "purpose": "Vite HTML host page"
+    },
+    {
+      "name": "src/main.jsx",
+      "purpose": "React DOM bootstrap entry point"
+    },
+    {
+      "name": "src/App.jsx",
+      "purpose": "Main React application component"
+    }
+  ]
+}

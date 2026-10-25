@@ -1,17 +1,18 @@
 import concurrent.futures
 import logging
-from typing import List, Callable
+from collections.abc import Callable
 
 # FIX 10: Import ActionResult for structured task results.
 # Imported here so DAGPlanner can surface failures to execute_graph.
 try:
     from core.action_result import ActionResult
-except ImportError:
+except ImportError as _e:
+    logging.debug("[core/dag_planner.py:9] Swallowed exception: %s: %s", type(_e).__name__, _e)
     ActionResult = None  # Graceful degradation if module not yet present
 
 
 class DAGTask:
-    def __init__(self, task_id: str, command: str, dependencies: List[str] = None):
+    def __init__(self, task_id: str, command: str, dependencies: list[str] = None):
         self.task_id = task_id
         self.command = command
         self.dependencies = dependencies or []
@@ -38,7 +39,7 @@ class DAGPlanner:
         # executor_callback must be a blocking call — see docstring above.
         self.executor_callback = executor_callback
 
-    def execute_graph(self, tasks: List[DAGTask]):
+    def execute_graph(self, tasks: list[DAGTask]):
         self.logger.info(f"[DAG] Starting DAG execution with {len(tasks)} tasks.")
 
         task_dict = {t.task_id: t for t in tasks}
@@ -53,15 +54,14 @@ class DAGPlanner:
                 for task_id, task in task_dict.items():
                     if task.status == "PENDING":
                         # Check dependencies
-                        if all(dep in completed for dep in task.dependencies):
-                            if any(dep in failed for dep in task.dependencies):
-                                task.status = "CANCELLED"
-                                failed.add(task_id)
-                                self.logger.warning(f"[DAG] Task {task_id} cancelled due to failed dependency.")
-                            else:
-                                task.status = "RUNNING"
-                                self.logger.info(f"[DAG] Scheduling {task_id}: {task.command}")
-                                futures[executor.submit(self._run_task, task)] = task_id
+                        if any(dep in failed for dep in task.dependencies):
+                            task.status = "CANCELLED"
+                            failed.add(task_id)
+                            self.logger.warning(f"[DAG] Task {task_id} cancelled due to failed dependency.")
+                        elif all(dep in completed for dep in task.dependencies):
+                            task.status = "RUNNING"
+                            self.logger.info(f"[DAG] Scheduling {task_id}: {task.command}")
+                            futures[executor.submit(self._run_task, task)] = task_id
 
                 # Wait for at least one to finish
                 if futures:

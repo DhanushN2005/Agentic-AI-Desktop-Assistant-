@@ -1,5 +1,6 @@
 from enum import Enum, auto
 
+
 class TaskType(Enum):
     GOAL = auto()
     ACTION = auto()
@@ -18,7 +19,7 @@ class TaskClassifier:
     """
     def __init__(self, atomic_actions_set):
         self.atomic_actions = atomic_actions_set
-        
+
     def classify(self, intent: str, is_subcommand: bool) -> TaskType:
         """
         Classify intent based on subcommand status and atomic registries.

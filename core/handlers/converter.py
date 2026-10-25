@@ -1,4 +1,5 @@
 import re
+import logging
 
 _CURRENCY_USD = {
     "usd": 1.0, "dollar": 1.0, "dollars": 1.0, "us": 1.0,
@@ -73,7 +74,8 @@ def handle_convert(orch, c):
         return True
     try:
         value = float(m.group(1).replace(",", ""))
-    except ValueError:
+    except ValueError as _e:
+        logging.debug("[core/handlers/converter.py:76] Swallowed exception: %s: %s", type(_e).__name__, _e)
         orch.speak("I couldn't read the number to convert.")
         return True
     src, dst = m.group(2), m.group(3)

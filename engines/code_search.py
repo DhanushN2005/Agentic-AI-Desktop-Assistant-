@@ -5,10 +5,9 @@ Searches the project workspace for code patterns, function definitions,
 class definitions, and text matches. Returns structured results with
 file paths, line numbers, and content snippets.
 """
+import logging
 import os
 import re
-import logging
-from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 
 
@@ -37,9 +36,9 @@ class CodeMatch:
 class SearchResult:
     """Aggregated search results."""
     query: str
-    matches: List[CodeMatch] = field(default_factory=list)
+    matches: list[CodeMatch] = field(default_factory=list)
     total_matches: int = 0
-    search_paths: List[str] = field(default_factory=list)
+    search_paths: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -108,13 +107,14 @@ class CodeSearchEngine:
     Searches the local codebase for code patterns.
     
     Usage:
-        engine = CodeSearchEngine(workspace_path="E:\\HACKATHON\\flexiee\\flexie_v2")
+        engine = CodeSearchEngine()  # defaults to project root
+        engine = CodeSearchEngine(workspace_path="/path/to/project")
         results = engine.search("binary search")
         results = engine.find_function("binary_search")
         results = engine.find_class("SearchEngine")
     """
 
-    def __init__(self, workspace_path: Optional[str] = None):
+    def __init__(self, workspace_path: str | None = None):
         self.logger = logging.getLogger("Flexie.CodeSearch")
         if workspace_path:
             self.workspace = workspace_path
@@ -125,7 +125,7 @@ class CodeSearchEngine:
     def search(
         self,
         query: str,
-        extensions: Optional[List[str]] = None,
+        extensions: list[str] | None = None,
         max_results: int = 50,
         context_lines: int = 2,
     ) -> SearchResult:
@@ -142,10 +142,11 @@ class CodeSearchEngine:
             SearchResult with structured matches
         """
         result = SearchResult(query=query, search_paths=[self.workspace])
-        
+
         try:
             pattern = re.compile(query, re.IGNORECASE)
-        except re.error:
+        except re.error as _e:
+            logging.debug("[engines/code_search.py:147] Swallowed exception: %s: %s", type(_e).__name__, _e)
             # If regex is invalid, use literal search
             pattern = re.compile(re.escape(query), re.IGNORECASE)
 
@@ -153,28 +154,28 @@ class CodeSearchEngine:
         for root, dirs, files in os.walk(self.workspace):
             # Skip excluded directories
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
-            
+
             for fname in files:
                 ext = os.path.splitext(fname)[1].lower()
                 if extensions and ext not in extensions:
                     continue
                 if ext not in CODE_EXTENSIONS:
                     continue
-                    
+
                 filepath = os.path.join(root, fname)
                 rel_path = os.path.relpath(filepath, self.workspace)
-                
+
                 try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    with open(filepath, encoding="utf-8", errors="ignore") as f:
                         lines = f.readlines()
-                    
+
                     for i, line in enumerate(lines):
                         if pattern.search(line):
                             # Get context
                             start = max(0, i - context_lines)
                             end = min(len(lines), i + context_lines + 1)
                             content = "".join(lines[start:end])
-                            
+
                             match = CodeMatch(
                                 file=rel_path,
                                 line_start=i + 1,
@@ -185,18 +186,20 @@ class CodeSearchEngine:
                             )
                             result.matches.append(match)
                             result.total_matches += 1
-                            
+
                             if len(result.matches) >= max_results:
                                 return result
                 except Exception as e:
                     self.logger.debug(f"[CODE_SEARCH] Error reading {filepath}: {e}")
+                searched += 1
 
+        self.logger.debug(f"[CODE_SEARCH] Searched {searched} files, found {result.total_matches} matches for '{query}'")
         return result
 
     def find_function(
         self,
         name: str,
-        extensions: Optional[List[str]] = None,
+        extensions: list[str] | None = None,
         max_results: int = 20,
     ) -> SearchResult:
         """Find function definitions by name."""
@@ -206,21 +209,21 @@ class CodeSearchEngine:
         def_pattern = r"\bdef\s+" + escaped + r"\s*\("
         func_pattern = r"\bfunction\s+" + escaped + r"\s*\("
         assign_pattern = r"\b" + escaped + r"\s*=\s*(?:function|lambda|\()"
-        
+
         combined = "|".join([def_pattern, func_pattern, assign_pattern])
         result = self.search(combined, extensions=extensions, max_results=max_results)
         result.query = f"function:{name}"
-        
+
         # Mark as function matches
         for match in result.matches:
             match.match_type = "function"
-        
+
         return result
 
     def find_class(
         self,
         name: str,
-        extensions: Optional[List[str]] = None,
+        extensions: list[str] | None = None,
         max_results: int = 20,
     ) -> SearchResult:
         """Find class definitions by name."""
@@ -228,20 +231,20 @@ class CodeSearchEngine:
             rf"\bclass\s+{re.escape(name)}\s*[\(:]",
             rf"\bclass\s+{re.escape(name)}\s*$",
         ]
-        
+
         combined = "|".join(patterns)
         result = self.search(combined, extensions=extensions, max_results=max_results)
         result.query = f"class:{name}"
-        
+
         for match in result.matches:
             match.match_type = "class"
-        
+
         return result
 
     def find_symbol(
         self,
         name: str,
-        extensions: Optional[List[str]] = None,
+        extensions: list[str] | None = None,
         max_results: int = 30,
     ) -> SearchResult:
         """Find any symbol (function, class, variable) by name."""
@@ -250,23 +253,24 @@ class CodeSearchEngine:
         result.query = f"symbol:{name}"
         return result
 
-    def read_file(self, filepath: str, start_line: int = 1, end_line: Optional[int] = None) -> str:
+    def read_file(self, filepath: str, start_line: int = 1, end_line: int | None = None) -> str:
         """Read content from a file, optionally with line range."""
         # Handle both absolute and relative paths
         if not os.path.isabs(filepath):
             filepath = os.path.join(self.workspace, filepath)
-        
+
         if not os.path.exists(filepath):
             return f"File not found: {filepath}"
-        
+
         try:
-            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            with open(filepath, encoding="utf-8", errors="ignore") as f:
                 lines = f.readlines()
-            
+
             if end_line is None:
                 end_line = len(lines)
-            
+
             content = "".join(lines[start_line - 1:end_line])
             return content
         except Exception as e:
+            logging.debug("[engines/code_search.py:270] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Error reading file: {e}"

@@ -1,5 +1,4 @@
 import re
-import webbrowser
 
 
 def handle_qr(orch, c):

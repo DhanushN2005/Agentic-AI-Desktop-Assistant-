@@ -1,5 +1,5 @@
 import re
-import json
+import logging
 
 
 def handle_json(orch, c):
@@ -20,7 +20,8 @@ def handle_json(orch, c):
             else:
                 orch.speak("I need JSON text to process. Paste or provide valid JSON.")
                 return True
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/handlers/json_fmt.py:22] Swallowed exception: %s: %s", type(_e).__name__, _e)
             orch.speak("I need JSON text to process.")
             return True
     else:

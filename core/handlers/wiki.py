@@ -1,5 +1,4 @@
 import re
-from utils.config import Config
 
 
 def handle_wiki(orch, c):

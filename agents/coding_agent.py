@@ -1,8 +1,9 @@
-import logging
-import os
-from typing import Dict, Any
+from typing import Any
+
 from agents.base import BaseAgent
 from engines.developer import DeveloperEngine
+import logging
+
 
 class CodingAgent(BaseAgent):
     """Coding agent handling developer scripts execution, compilation, and sandboxing checks."""
@@ -10,7 +11,7 @@ class CodingAgent(BaseAgent):
         super().__init__("coding", "Software Engineering & Compilation Agent")
         self.dev = dev_engine
 
-    def execute_task(self, payload: Dict[str, Any]) -> str:
+    def execute_task(self, payload: dict[str, Any]) -> str:
         action = payload.get("action", "").lower().strip()
         code = payload.get("code", "").strip()
         script_path = payload.get("script_path", "").strip()
@@ -19,7 +20,7 @@ class CodingAgent(BaseAgent):
 
         # If a sandbox executor class exists (Phase 3), delegate process isolation to it
         use_sandbox = payload.get("sandbox", True)
-        
+
         if use_sandbox:
             try:
                 from sandbox.executor import SandboxExecutor
@@ -34,6 +35,7 @@ class CodingAgent(BaseAgent):
             except ImportError:
                 self.logger.warning("SandboxExecutor unavailable. Falling back to host execution.")
             except Exception as se:
+                logging.debug("[agents/coding_agent.py:36] Swallowed exception: %s: %s", type(se).__name__, se)
                 return f"Sandbox execution failure: {se}"
 
         # Fallback to legacy developer engine host execution if sandbox isn't used or loaded
@@ -44,6 +46,7 @@ class CodingAgent(BaseAgent):
                     py_compile.compile(script_path, doraise=True)
                     return f"Successfully compiled {script_path}."
                 except Exception as compile_err:
+                    logging.debug("[agents/coding_agent.py:46] Swallowed exception: %s: %s", type(compile_err).__name__, compile_err)
                     return f"Compilation failed: {compile_err}"
             elif action == "execute" and script_path:
                 return self.dev.execute_terminal_command(f"python {script_path}")
@@ -55,5 +58,5 @@ class CodingAgent(BaseAgent):
                 return self.dev.audit_repository()
             elif action == "test_generator":
                 return self.dev.generate_tests()
-        
+
         return "Developer operations unavailable or command unrecognized."

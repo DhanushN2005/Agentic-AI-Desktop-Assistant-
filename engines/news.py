@@ -1,7 +1,7 @@
-import requests
-import re
 import xml.etree.ElementTree as ET
-from typing import List, Dict
+
+import requests
+import logging
 
 
 class NewsEngine:
@@ -20,7 +20,7 @@ class NewsEngine:
     def __init__(self):
         self._cache = {}
 
-    def _fetch_feed(self, category: str = "general", limit: int = 5) -> List[Dict]:
+    def _fetch_feed(self, category: str = "general", limit: int = 5) -> list[dict]:
         url = self.FEEDS.get(category, self.FEEDS["general"])
         try:
             resp = requests.get(url, timeout=10)
@@ -36,7 +36,8 @@ class NewsEngine:
                     "link": link.text if link is not None else "",
                 })
             return items
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/news.py:38] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return []
 
     def get_headlines(self, category: str = "general", limit: int = 5) -> str:
@@ -54,4 +55,4 @@ class NewsEngine:
         for i, item in enumerate(items):
             desc = item["description"][:100] + "..." if len(item["description"]) > 100 else item["description"]
             lines.append(f"{i+1}. {item['title']}. {desc}")
-        return f"News summary: " + " ".join(lines)
+        return "News summary: " + " ".join(lines)

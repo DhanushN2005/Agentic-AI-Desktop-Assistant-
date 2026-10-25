@@ -4,10 +4,10 @@ Goal Completion Evaluator — verifies that the original user goal was achieved.
 Compares ORIGINAL_USER_GOAL against EXECUTION_STATE to determine if
 the task is truly complete. Prevents premature success reporting.
 """
-import os
 import logging
-from typing import Any, Dict, List, Optional
+import os
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -23,7 +23,7 @@ class GoalEvaluation:
     """Result of evaluating goal completion."""
     original_goal: str
     complete: bool
-    checks: List[GoalCheck] = field(default_factory=list)
+    checks: list[GoalCheck] = field(default_factory=list)
     summary: str = ""
 
     def to_dict(self) -> dict:
@@ -56,7 +56,7 @@ class GoalEvaluator:
     def __init__(self):
         self.logger = logging.getLogger("Flexie.GoalEvaluator")
 
-    def evaluate(self, original_goal: str, execution_state: Dict[str, Any]) -> GoalEvaluation:
+    def evaluate(self, original_goal: str, execution_state: dict[str, Any]) -> GoalEvaluation:
         """
         Evaluate if the original goal was achieved.
         
@@ -69,7 +69,7 @@ class GoalEvaluator:
         """
         checks = []
         goal_lower = original_goal.lower()
-        
+
         # Extract intent components from the goal
         wants_search = any(w in goal_lower for w in ["search", "find", "look for", "locate"])
         wants_local = any(w in goal_lower for w in ["code", "my code", "project", "codebase", "local", "this project"])
@@ -77,7 +77,7 @@ class GoalEvaluator:
         wants_save = any(w in goal_lower for w in ["save", "write", "create file", "store"])
         wants_extract = any(w in goal_lower for w in ["extract", "get", "pull", "copy"])
         wants_verify = any(w in goal_lower for w in ["verify", "check", "confirm"])
-        
+
         # Check: Search was performed
         if wants_search:
             searched = execution_state.get("searched_code", False) or execution_state.get("searched_web", False)
@@ -86,7 +86,7 @@ class GoalEvaluator:
                 passed=searched,
                 details=execution_state.get("search_method", "unknown"),
             ))
-        
+
         # Check: Local search was used (not web) when user said "search the code"
         if wants_search and wants_local and not wants_web:
             used_local = execution_state.get("search_method", "") in ("local", "code_search", "file_search")
@@ -95,7 +95,7 @@ class GoalEvaluator:
                 passed=used_local,
                 details=f"Search method: {execution_state.get('search_method', 'unknown')}",
             ))
-        
+
         # Check: Results were found
         if wants_search:
             found = execution_state.get("found_implementation", False) or execution_state.get("results_found", False)
@@ -104,7 +104,7 @@ class GoalEvaluator:
                 passed=found,
                 details=f"Found: {execution_state.get('results_count', 0)} matches",
             ))
-        
+
         # Check: Content was extracted
         if wants_extract or (wants_save and wants_search):
             extracted = execution_state.get("content_extracted", False)
@@ -113,7 +113,7 @@ class GoalEvaluator:
                 passed=extracted,
                 details=execution_state.get("extraction_method", "unknown"),
             ))
-        
+
         # Check: File was saved
         if wants_save:
             saved = execution_state.get("file_saved", False)
@@ -123,7 +123,7 @@ class GoalEvaluator:
                 passed=saved,
                 details=f"Path: {file_path}" if file_path else "No path recorded",
             ))
-        
+
         # Check: File is in correct location
         if wants_save:
             file_path = execution_state.get("file_path", "")
@@ -144,7 +144,7 @@ class GoalEvaluator:
                 passed=correct_location,
                 details=f"Path: {file_path}" if file_path else "No path",
             ))
-        
+
         # Check: File was verified
         if wants_save or wants_verify:
             file_path = execution_state.get("file_path", "")
@@ -156,13 +156,19 @@ class GoalEvaluator:
                     passed=size > 0,
                     details=f"Size: {size} bytes",
                 ))
+                if wants_verify:
+                    checks.append(GoalCheck(
+                        description="File verified by execution state",
+                        passed=verified,
+                        details="file_verified flag was set" if verified else "file_verified flag not set",
+                    ))
             elif file_path:
                 checks.append(GoalCheck(
                     description="File exists and has content",
                     passed=False,
                     details=f"File not found: {file_path}",
                 ))
-        
+
         # Check: Appropriate filename
         if wants_save:
             file_path = execution_state.get("file_path", "")
@@ -174,13 +180,13 @@ class GoalEvaluator:
                     passed=has_name,
                     details=f"Filename: {filename}",
                 ))
-        
+
         # Determine overall completion
         if not checks:
             complete = True
         else:
             complete = all(c.passed for c in checks)
-        
+
         # Generate summary
         passed_count = sum(1 for c in checks if c.passed)
         total_count = len(checks)
@@ -189,7 +195,7 @@ class GoalEvaluator:
         else:
             failed = [c for c in checks if not c.passed]
             summary = f"Goal incomplete: {passed_count}/{total_count} checks passed. Failed: {', '.join(c.description for c in failed)}"
-        
+
         return GoalEvaluation(
             original_goal=original_goal,
             complete=complete,

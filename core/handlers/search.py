@@ -2,33 +2,103 @@ import re
 import subprocess
 import urllib.parse
 import webbrowser
+import logging
+
+
+_BROWSER_NAMES = ("chrome", "edge", "firefox", "browser", "opera", "brave")
+
+_IN_BROWSER_PATTERNS = [
+    r"\bin\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\b",
+    r"\bon\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\b",
+    r"\busing\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\b",
+    r"\bwith\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\b",
+    r"\bbrowser automation\b",
+    r"\busing playwright\b",
+]
+
+
+def _wants_browser_search(c: str, orch) -> bool:
+    """True when the command explicitly targets an open browser or context shows one is active."""
+    cl = c.lower()
+    if any(re.search(p, cl) for p in _IN_BROWSER_PATTERNS):
+        return True
+    # Situation-aware: browser was opened earlier this session
+    ctx = getattr(orch, "ctx", None)
+    if ctx and getattr(ctx, "browser_open", False):
+        return True
+    return False
 
 
 def handle_search(orch, c):
-    # 1. Clean query trigger words with absolute precision
-    clean_query = re.sub(r"^(?:(?:search on chrome for|search on chrome|search for|search|google|look up|go to|find)\s+)+", "", c).strip()
-    # 2. Extract specific search targets and remove browser names
-    clean_query = re.sub(r"\b(in chrome|on chrome|with chrome|in browser|using browser|on edge|in edge)\b", "", clean_query).strip()
+    cl = c.lower()
 
-    if not clean_query and "chrome" in c:
+    # 1. Strip "in the opened chrome/browser/edge" phrasing from the raw command first
+    clean_query = re.sub(
+        r"\bin\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\s*",
+        "", cl
+    ).strip()
+    clean_query = re.sub(
+        r"\b(?:on|using|with)\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\b",
+        "", clean_query
+    ).strip()
+
+    # 2. Strip leading trigger words
+    clean_query = re.sub(
+        r"^(?:(?:search on chrome for|search on chrome|search for|search|google|look up|go to|find)\s+)+",
+        "", clean_query
+    ).strip()
+
+    # 3. Also strip remaining trailing browser/platform words
+    clean_query = re.sub(
+        r"\b(in chrome|on chrome|with chrome|in browser|using browser|on edge|in edge)\b",
+        "", clean_query
+    ).strip()
+
+    if not clean_query and any(b in cl for b in _BROWSER_NAMES):
         orch.speak("Opening your Google Chrome.")
         try:
             subprocess.Popen(['start', 'chrome', 'https://www.google.com'], shell=True)
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/handlers/search.py] Swallowed exception: %s: %s", type(_e).__name__, _e)
             webbrowser.open("https://www.google.com")
         return True
 
     if clean_query:
         orch.send_to_ui("STATE", "PROCESSING")
-        summary = orch.brain.ask(f"Query: {clean_query}. Give a concise Answer/Summary for active user.")
-        orch.ctx.update(query=clean_query, last_response=summary)
-        orch.speak(summary)  # Re-speaking the summary
+        use_browser = _wants_browser_search(c, orch)
 
-        # Open browser for deep research
+        if use_browser:
+            # Fast path: speak immediately, open Google — no LLM call needed
+            orch.speak(f"Searching for {clean_query} in Chrome.")
+            orch.ctx.update(query=clean_query, last_search=clean_query)
+            url = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean_query)}"
+            # Try Playwright first (keeps same tab), fall back to OS launch
+            if hasattr(orch, "browser") and orch.browser:
+                try:
+                    orch.browser.navigate(url)
+                    return True
+                except Exception as _be:
+                    logging.debug("BrowserEngine navigate failed, using OS: %s", _be)
+            try:
+                subprocess.Popen(['start', 'chrome', url], shell=True)
+            except Exception as _e:
+                logging.debug("[core/handlers/search.py] OS launch error: %s", _e)
+                webbrowser.open(url)
+            return True
+
+        # Knowledge search: ask the brain, then open a browser tab
+        summary = orch.brain.ask(
+            f"Query: {clean_query}. Give a concise Answer/Summary in 2-3 sentences for a voice assistant.",
+            max_tokens=200,
+        )
+        orch.ctx.update(query=clean_query, last_response=summary)
+        orch.speak(summary)
+
         url = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean_query)}"
         try:
             subprocess.Popen(['start', 'chrome', url], shell=True)
-        except Exception:
+        except Exception as _e:
+            logging.debug("[core/handlers/search.py] Swallowed exception: %s: %s", type(_e).__name__, _e)
             webbrowser.open(url)
     else:
         orch.speak("What should I search for?")

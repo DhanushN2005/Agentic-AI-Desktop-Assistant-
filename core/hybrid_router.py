@@ -10,12 +10,11 @@ This module wraps it and adds escalation logic.
 """
 import logging
 import re
-from typing import Optional
-from core.router import IntentRouter
-from core.context_memory import ContextMemory
-from core.tool_registry import ToolRegistry, PermissionLevel
-from core.permission_system import PermissionSystem
 
+from core.context_memory import ContextMemory
+from core.permission_system import PermissionSystem
+from core.router import IntentRouter
+from core.tool_registry import ToolRegistry
 
 # Commands that are ALWAYS simple (never escalate to planner)
 ALWAYS_SIMPLE_INTENTS = {
@@ -57,9 +56,9 @@ class HybridRouter:
     def __init__(
         self,
         intent_router: IntentRouter,
-        tool_registry: Optional[ToolRegistry] = None,
-        permission_system: Optional[PermissionSystem] = None,
-        ctx: Optional[ContextMemory] = None,
+        tool_registry: ToolRegistry | None = None,
+        permission_system: PermissionSystem | None = None,
+        ctx: ContextMemory | None = None,
     ):
         self.router = intent_router
         self.tool_registry = tool_registry

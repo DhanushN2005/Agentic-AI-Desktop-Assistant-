@@ -1,21 +1,16 @@
 """
 Tests for goal preservation, local code search, and planning depth fixes.
 """
-import pytest
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from core.action_result import ActionResult
-from core.tool_registry import ToolRegistry, ToolSpec, ToolSchema, PermissionLevel
-from core.permission_system import PermissionSystem
-from core.goal_planner import GoalPlanner, TaskGraph, TaskStep, StepStatus
+from core.goal_evaluator import GoalEvaluator
+from core.goal_planner import GoalPlanner, TaskStep
 from core.hybrid_router import HybridRouter
-from core.goal_evaluator import GoalEvaluator, GoalCheck, GoalEvaluation
+from engines.code_search import CodeSearchEngine
 from utils.path_resolver import PathResolver
-from engines.code_search import CodeSearchEngine, SearchResult
-
 
 # =============================================================================
 # GOAL PRESERVATION TESTS
@@ -61,7 +56,7 @@ class TestLocalCodeSearch:
         """'search my code for X' should route to local_code_search."""
         from core.router import IntentRouter
         router = IntentRouter()
-        
+
         commands = [
             "search my code for binary search",
             "search the code for algorithm",
@@ -69,7 +64,7 @@ class TestLocalCodeSearch:
             "search code for function",
             "find function binary_search",
         ]
-        
+
         for cmd in commands:
             intent, confidence = router.route(cmd.lower())
             assert intent == "local_code_search", f"'{cmd}' routed to {intent}, expected local_code_search"
@@ -78,12 +73,12 @@ class TestLocalCodeSearch:
         """'search the web for X' should NOT route to local_code_search."""
         from core.router import IntentRouter
         router = IntentRouter()
-        
+
         commands = [
             "search the web for binary search",
             "google binary search",
         ]
-        
+
         for cmd in commands:
             intent, confidence = router.route(cmd.lower())
             assert intent != "local_code_search", f"'{cmd}' should not route to local_code_search"
@@ -93,7 +88,7 @@ class TestLocalCodeSearch:
         from core.router import IntentRouter
         router = IntentRouter()
         hr = HybridRouter(router)
-        
+
         mode = hr.classify("search my code for binary search")
         assert mode == "simple"
 
@@ -235,7 +230,7 @@ class TestGoalEvaluator:
             }
         )
         # Check that key logical checks pass (search, local preference, save)
-        key_checks = [c for c in evaluation.checks if any(k in c.description.lower() 
+        key_checks = [c for c in evaluation.checks if any(k in c.description.lower()
                       for k in ["search", "local", "saved", "found", "extracted"])]
         assert all(c.passed for c in key_checks)
 
@@ -291,13 +286,13 @@ class TestIntegration:
         """Test complete goal flow: plan → search → save → verify."""
         planner = GoalPlanner()
         evaluator = GoalEvaluator()
-        
+
         goal = "search code for binary search and save to Downloads/result.py"
         graph = planner.decompose(goal)
-        
+
         # Verify goal is preserved
         assert graph.original_goal == goal
-        
+
         # Simulate execution state
         execution_state = {
             "searched_code": True,
@@ -308,10 +303,10 @@ class TestIntegration:
             "file_path": "C:/Users/Dhanush/Downloads/result.py",
             "file_verified": True,
         }
-        
+
         evaluation = evaluator.evaluate(goal, execution_state)
         # Check that key logical checks pass
-        key_checks = [c for c in evaluation.checks if any(k in c.description.lower() 
+        key_checks = [c for c in evaluation.checks if any(k in c.description.lower()
                       for k in ["search", "local", "saved", "found", "extracted"])]
         assert all(c.passed for c in key_checks)
 
@@ -319,11 +314,11 @@ class TestIntegration:
         """Compound commands should be classified correctly."""
         from core.router import IntentRouter
         router = IntentRouter()
-        
+
         # This should NOT be classified as search (web)
         intent, confidence = router.route("search my code for binary search")
         assert intent == "local_code_search"
-        
+
         # This SHOULD be classified as search (web)
         intent, confidence = router.route("search for binary search on google")
         # Might be "search" or something else, but NOT "local_code_search"

@@ -1,12 +1,13 @@
 import time
 import sqlite3
 import threading
-from typing import List, Optional
+import logging
 
 try:
     import pyperclip
     _CLIP_OK = True
-except ImportError:
+except ImportError as _e:
+    logging.debug("[engines/clipboard_mgr.py:9] Swallowed exception: %s: %s", type(_e).__name__, _e)
     _CLIP_OK = False
 
 
@@ -43,7 +44,8 @@ class ClipboardManagerEngine:
                         if current and current != self._last_content and len(current.strip()) > 0:
                             self._last_content = current
                             self._add(current)
-                except Exception:
+                except Exception as _e:
+                    logging.debug("[engines/clipboard_mgr.py:46] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass
                 time.sleep(2)
         t = threading.Thread(target=_monitor, daemon=True)

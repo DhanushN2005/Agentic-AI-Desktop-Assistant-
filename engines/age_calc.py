@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import logging
 
 
 class AgeCalculatorEngine:
@@ -22,7 +23,8 @@ class AgeCalculatorEngine:
             total_hours = total_days * 24
             return (f"Age: {years} years, {months} months, {days} days. "
                     f"That's {total_days:,} days, {total_weeks:,} weeks, or {total_hours:,} hours.")
-        except ValueError:
+        except ValueError as _e:
+            logging.debug("[engines/age_calc.py:25] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Invalid date format. Use {fmt} (e.g., 1990-05-15)."
 
     def age_from_parts(self, year: int, month: int, day: int) -> str:
@@ -41,7 +43,8 @@ class AgeCalculatorEngine:
             total_days = (today - born).days
             return (f"Age: {years} years, {months} months, {days} days. "
                     f"That's {total_days:,} days.")
-        except ValueError:
+        except ValueError as _e:
+            logging.debug("[engines/age_calc.py:44] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Invalid date."
 
     def days_between(self, date1: str, date2: str, fmt: str = "%Y-%m-%d") -> str:
@@ -52,7 +55,8 @@ class AgeCalculatorEngine:
             weeks = diff // 7
             months = diff // 30
             return f"Days between: {diff} days ({weeks} weeks, ~{months} months)"
-        except ValueError:
+        except ValueError as _e:
+            logging.debug("[engines/age_calc.py:55] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Invalid date format. Use {fmt}."
 
     def add_days(self, date: str, days: int, fmt: str = "%Y-%m-%d") -> str:
@@ -60,7 +64,8 @@ class AgeCalculatorEngine:
             d = datetime.strptime(date, fmt)
             result = d + timedelta(days=days)
             return f"{date} + {days} days = {result.strftime(fmt)}"
-        except ValueError:
+        except ValueError as _e:
+            logging.debug("[engines/age_calc.py:63] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Invalid date format. Use {fmt}."
 
     def subtract_days(self, date: str, days: int, fmt: str = "%Y-%m-%d") -> str:
@@ -68,7 +73,8 @@ class AgeCalculatorEngine:
             d = datetime.strptime(date, fmt)
             result = d - timedelta(days=days)
             return f"{date} - {days} days = {result.strftime(fmt)}"
-        except ValueError:
+        except ValueError as _e:
+            logging.debug("[engines/age_calc.py:71] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Invalid date format. Use {fmt}."
 
     def next_birthday(self, birthdate: str, fmt: str = "%Y-%m-%d") -> str:
@@ -83,7 +89,8 @@ class AgeCalculatorEngine:
             days_until = (next_bday - today).days
             age_next = next_bday.year - born.year
             return f"Next birthday: {next_bday.strftime('%B %d, %Y')}. {days_until} days away. You'll be {age_next}."
-        except ValueError:
+        except ValueError as _e:
+            logging.debug("[engines/age_calc.py:86] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Invalid date format. Use {fmt}."
 
     def zodiac(self, birthdate: str, fmt: str = "%Y-%m-%d") -> str:
@@ -108,5 +115,6 @@ class AgeCalculatorEngine:
                 if (month == sm and day >= sd) or (month == em and day <= ed):
                     return f"Zodiac: {name} ({symbol})"
             return "Zodiac: Capricorn (The Sea-Goat)"
-        except ValueError:
+        except ValueError as _e:
+            logging.debug("[engines/age_calc.py:111] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Invalid date format. Use {fmt}."

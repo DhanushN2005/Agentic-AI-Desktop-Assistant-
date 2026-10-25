@@ -1,8 +1,9 @@
 import importlib
-import pkgutil
 import logging
 import os
-from core.capability_registry import CapabilityRegistry, Capability
+
+from core.capability_registry import CapabilityRegistry
+
 
 class PluginDiscovery:
     """
@@ -14,7 +15,7 @@ class PluginDiscovery:
         self.registry = registry
         self.plugins_dir = plugins_dir
         self.logger = logging.getLogger("Flexie.PluginDiscovery")
-        
+
     def discover_and_register(self):
         """
         Looks for Python modules inside the plugins directory that expose a
@@ -23,8 +24,8 @@ class PluginDiscovery:
         if not os.path.exists(self.plugins_dir):
             self.logger.warning(f"[PLUGIN] Directory '{self.plugins_dir}' does not exist.")
             return
-            
-        for root, dirs, files in os.walk(self.plugins_dir):
+
+        for _root, _dirs, files in os.walk(self.plugins_dir):
             for file in files:
                 if file.endswith(".py") and file != "__init__.py":
                     module_name = f"{self.plugins_dir}.{file[:-3]}"

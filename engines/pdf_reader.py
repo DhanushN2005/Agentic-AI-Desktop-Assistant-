@@ -1,11 +1,12 @@
 import os
 import re
-from typing import Optional
+import logging
 
 try:
     import fitz  # PyMuPDF
     _PDF_OK = True
-except ImportError:
+except ImportError as _e:
+    logging.debug("[engines/pdf_reader.py:7] Swallowed exception: %s: %s", type(_e).__name__, _e)
     _PDF_OK = False
 
 
@@ -15,7 +16,7 @@ class PDFReaderEngine:
     def __init__(self):
         self._available = _PDF_OK
 
-    def _check(self) -> Optional[str]:
+    def _check(self) -> str | None:
         if not self._available:
             return "PDF reader not available. Install with: pip install pymupdf"
         return None
@@ -41,6 +42,7 @@ class PDFReaderEngine:
                 full_text = full_text[:3000] + "\n... [truncated]"
             return f"PDF content ({len(text_parts)} pages):\n{full_text}"
         except Exception as e:
+            logging.debug("[engines/pdf_reader.py:42] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Error reading PDF: {e}"
 
     def summarize_pdf(self, filepath: str, max_pages: int = 5) -> str:
@@ -68,6 +70,7 @@ class PDFReaderEngine:
                 summary = summary[:500] + "..."
             return f"Summary of {os.path.basename(filepath)}: {summary}."
         except Exception as e:
+            logging.debug("[engines/pdf_reader.py:69] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Error summarizing PDF: {e}"
 
     def get_info(self, filepath: str) -> str:
@@ -87,4 +90,5 @@ class PDFReaderEngine:
             doc.close()
             return f"PDF Info: {info['pages']} pages, title: {info['title']}, author: {info['author']}, size: {info['size']}."
         except Exception as e:
+            logging.debug("[engines/pdf_reader.py:88] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Error reading PDF info: {e}"

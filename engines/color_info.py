@@ -1,5 +1,6 @@
-import urllib.request
 import json
+import urllib.request
+import logging
 
 
 class ColorInfoEngine:
@@ -26,7 +27,8 @@ class ColorInfoEngine:
                 if cmyk:
                     parts.append(f"CMYK: {cmyk.get('c', 0)}, {cmyk.get('m', 0)}, {cmyk.get('y', 0)}, {cmyk.get('k', 0)}")
                 return ". ".join(parts)
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/color_info.py:29] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Could not look up color '{color}'."
 
     def from_hex(self, hex_code: str) -> str:
@@ -38,7 +40,8 @@ class ColorInfoEngine:
                 name = data.get("name", {}).get("value", "Unknown")
                 rgb = data.get("rgb", {})
                 return f"Hex {hex_code}: {name}. RGB: {rgb.get('r', 0)}, {rgb.get('g', 0)}, {rgb.get('b', 0)}"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/color_info.py:41] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Could not look up hex '{hex_code}'."
 
     def random_color(self) -> str:
@@ -49,7 +52,8 @@ class ColorInfoEngine:
             b = random.randint(0, 255)
             hex_val = f"#{r:02x}{g:02x}{b:02x}"
             return self.from_hex(hex_val)
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/color_info.py:52] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Could not generate random color."
 
     def complementary(self, hex_code: str) -> str:
@@ -63,5 +67,6 @@ class ColorInfoEngine:
             comp_b = 255 - b
             comp_hex = f"#{comp_r:02x}{comp_g:02x}{comp_b:02x}"
             return f"Complementary color: {comp_hex} (RGB: {comp_r}, {comp_g}, {comp_b})"
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/color_info.py:66] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Invalid hex code."

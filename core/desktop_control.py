@@ -14,12 +14,11 @@ Every action passes through the permission system.
 Scattered pyautogui calls are replaced with this safe abstraction.
 """
 import logging
-import time
 import os
-from typing import Optional, Tuple, List
+import time
+
 from core.action_result import ActionResult
 from core.permission_system import PermissionSystem
-from core.tool_registry import PermissionLevel
 
 
 class DesktopControl:
@@ -30,7 +29,7 @@ class DesktopControl:
     Each action checks permissions before execution.
     """
 
-    def __init__(self, permission_system: Optional[PermissionSystem] = None):
+    def __init__(self, permission_system: PermissionSystem | None = None):
         self.permissions = permission_system or PermissionSystem()
         self.logger = logging.getLogger("Flexie.DesktopControl")
         self._pyautogui = None
@@ -45,8 +44,8 @@ class DesktopControl:
                 pyautogui.FAILSAFE = True
                 pyautogui.PAUSE = 0.1
                 self._pyautogui = pyautogui
-            except ImportError:
-                raise RuntimeError("pyautogui not installed")
+            except ImportError as err:
+                raise RuntimeError("pyautogui not installed") from err
         return self._pyautogui
 
     def _get_pyperclip(self):
@@ -54,13 +53,13 @@ class DesktopControl:
             try:
                 import pyperclip
                 self._pyperclip = pyperclip
-            except ImportError:
-                raise RuntimeError("pyperclip not installed")
+            except ImportError as err:
+                raise RuntimeError("pyperclip not installed") from err
         return self._pyperclip
 
     # --- SCREEN OPERATIONS ---
 
-    def screenshot(self, region: Optional[Tuple[int, int, int, int]] = None) -> ActionResult:
+    def screenshot(self, region: tuple[int, int, int, int] | None = None) -> ActionResult:
         """Take a screenshot. Returns path to saved image."""
         allowed, reason, _ = self.permissions.check_permission("vision.screenshot", "screenshot")
         if not allowed:
@@ -78,6 +77,7 @@ class DesktopControl:
             self.logger.info(f"[DESKTOP] Screenshot saved: {path}")
             return ActionResult.ok(message=path, intent="screenshot", data={"path": path})
         except Exception as e:
+            logging.debug("[core/desktop_control.py:79] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="screenshot")
 
     def get_screen_size(self) -> ActionResult:
@@ -91,6 +91,7 @@ class DesktopControl:
                 data={"width": w, "height": h}
             )
         except Exception as e:
+            logging.debug("[core/desktop_control.py:92] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="screen_size")
 
     def get_pixel_color(self, x: int, y: int) -> ActionResult:
@@ -106,6 +107,7 @@ class DesktopControl:
                 data={"r": pixel[0], "g": pixel[1], "b": pixel[2], "hex": hex_color}
             )
         except Exception as e:
+            logging.debug("[core/desktop_control.py:107] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="pixel_color")
 
     # --- MOUSE OPERATIONS ---
@@ -122,6 +124,7 @@ class DesktopControl:
             self.logger.info(f"[DESKTOP] Click at ({x}, {y}) button={button}")
             return ActionResult.ok(message=f"Clicked ({x}, {y})", intent="click")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:123] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="click")
 
     def double_click(self, x: int, y: int) -> ActionResult:
@@ -136,6 +139,7 @@ class DesktopControl:
             self.logger.info(f"[DESKTOP] Double-click at ({x}, {y})")
             return ActionResult.ok(message=f"Double-clicked ({x}, {y})", intent="double_click")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:137] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="double_click")
 
     def move_mouse(self, x: int, y: int, duration: float = 0.3) -> ActionResult:
@@ -145,6 +149,7 @@ class DesktopControl:
             pag.moveTo(x, y, duration=duration)
             return ActionResult.ok(message=f"Moved to ({x}, {y})", intent="move_mouse")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:146] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="move_mouse")
 
     def get_mouse_position(self) -> ActionResult:
@@ -158,9 +163,10 @@ class DesktopControl:
                 data={"x": x, "y": y}
             )
         except Exception as e:
+            logging.debug("[core/desktop_control.py:159] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="mouse_pos")
 
-    def scroll(self, amount: int, x: Optional[int] = None, y: Optional[int] = None) -> ActionResult:
+    def scroll(self, amount: int, x: int | None = None, y: int | None = None) -> ActionResult:
         """Scroll by amount (positive = up, negative = down)."""
         allowed, reason, _ = self.permissions.check_permission("desktop.scroll", "scroll")
         if not allowed:
@@ -176,6 +182,7 @@ class DesktopControl:
             self.logger.info(f"[DESKTOP] Scrolled {direction} by {abs(amount)}")
             return ActionResult.ok(message=f"Scrolled {direction}", intent="scroll")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:177] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="scroll")
 
     # --- KEYBOARD OPERATIONS ---
@@ -192,6 +199,7 @@ class DesktopControl:
             self.logger.info(f"[DESKTOP] Typed: {text[:30]}...")
             return ActionResult.ok(message=f"Typed {len(text)} chars", intent="type_text")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:193] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="type_text")
 
     def press_key(self, key: str) -> ActionResult:
@@ -206,6 +214,7 @@ class DesktopControl:
             self.logger.info(f"[DESKTOP] Pressed: {key}")
             return ActionResult.ok(message=f"Pressed {key}", intent="press_key")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:207] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="press_key")
 
     def hotkey(self, *keys: str) -> ActionResult:
@@ -221,6 +230,7 @@ class DesktopControl:
             self.logger.info(f"[DESKTOP] Hotkey: {combo}")
             return ActionResult.ok(message=f"Hotkey: {combo}", intent="hotkey")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:222] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="hotkey")
 
     def key_down(self, key: str) -> ActionResult:
@@ -230,6 +240,7 @@ class DesktopControl:
             pag.keyDown(key)
             return ActionResult.ok(message=f"Key down: {key}", intent="key_down")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:231] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="key_down")
 
     def key_up(self, key: str) -> ActionResult:
@@ -239,6 +250,7 @@ class DesktopControl:
             pag.keyUp(key)
             return ActionResult.ok(message=f"Key up: {key}", intent="key_up")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:240] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="key_up")
 
     # --- CLIPBOARD OPERATIONS ---
@@ -255,6 +267,7 @@ class DesktopControl:
             self.logger.info(f"[DESKTOP] Clipboard copy: {len(text)} chars")
             return ActionResult.ok(message=f"Copied {len(text)} chars", intent="clipboard_copy")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:256] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="clipboard_copy")
 
     def clipboard_paste(self) -> ActionResult:
@@ -265,6 +278,7 @@ class DesktopControl:
             self.logger.info(f"[DESKTOP] Clipboard paste: {len(text)} chars")
             return ActionResult.ok(message=text, intent="clipboard_paste", data={"text": text})
         except Exception as e:
+            logging.debug("[core/desktop_control.py:266] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="clipboard_paste")
 
     def clipboard_clear(self) -> ActionResult:
@@ -274,6 +288,7 @@ class DesktopControl:
             clip.copy("")
             return ActionResult.ok(message="Clipboard cleared", intent="clipboard_clear")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:275] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="clipboard_clear")
 
     # --- WINDOW OPERATIONS ---
@@ -292,12 +307,14 @@ class DesktopControl:
                 )
             return ActionResult.ok(message="No active window", intent="active_window")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:293] Swallowed exception: %s: %s", type(e).__name__, e)
             # Fallback to system engine
             try:
                 from engines.system import SystemCtrl
                 title = SystemCtrl.get_active_window_title()
                 return ActionResult.ok(message=title, intent="active_window")
-            except Exception:
+            except Exception as _e:
+                logging.debug("[core/desktop_control.py:299] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 return ActionResult.fail(message=str(e), intent="active_window")
 
     def list_windows(self) -> ActionResult:
@@ -312,6 +329,7 @@ class DesktopControl:
                 data={"windows": visible}
             )
         except Exception as e:
+            logging.debug("[core/desktop_control.py:313] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="list_windows")
 
     def focus_window(self, title: str) -> ActionResult:
@@ -332,6 +350,7 @@ class DesktopControl:
                 return ActionResult.ok(message=f"Focused: {win.title}", intent="focus_window")
             return ActionResult.fail(message=f"No window matching '{title}'", intent="focus_window")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:333] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="focus_window")
 
     def close_window(self, title: str) -> ActionResult:
@@ -349,6 +368,7 @@ class DesktopControl:
                 return ActionResult.ok(message=f"Closed: {title}", intent="close_window")
             return ActionResult.fail(message=f"No window matching '{title}'", intent="close_window")
         except Exception as e:
+            logging.debug("[core/desktop_control.py:350] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="close_window")
 
     # --- UTILITY ---

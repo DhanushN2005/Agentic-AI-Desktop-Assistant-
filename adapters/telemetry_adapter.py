@@ -1,5 +1,6 @@
+from core.event_bus.bus import Event, EventBus
 from core.telemetry import Telemetry
-from core.event_bus.bus import EventBus, Event
+
 
 class LegacyTelemetryAdapter:
     """Links telemetry logger metrics directly into the new async observability layer."""

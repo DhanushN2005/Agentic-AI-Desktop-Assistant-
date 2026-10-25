@@ -2,19 +2,13 @@ import logging
 import threading
 import time
 import socket
-import datetime
-import os
-import sys
 import re
-import subprocess
-import webbrowser
 import atexit
 import queue
-from typing import Dict, Optional, List
-import urllib.parse
+from typing import List
 import json
 from core.capability_registry import CapabilityRegistry
-from core.task_classifier import TaskClassifier, TaskType, TaskState
+from core.task_classifier import TaskClassifier, TaskType
 from core.workflow_parser import WorkflowParser
 from core.workflow_gatekeeper import WorkflowGatekeeper, ClassificationType
 from voice.tts_guard import TTSGuard
@@ -22,28 +16,28 @@ from verification.strict_validator import StrictValidator
 from verification.capability_validator import CapabilityValidator
 from core.task_critic import TaskCritic
 from core.agent_arbitrator import AgentArbitrator
-from core.dag_planner import DAGPlanner, DAGTask
+from core.dag_planner import DAGPlanner
 from verification.semantic_validator import SemanticValidator
 from core.capability_provider import PluginDiscovery
-from core.execution_graph import ExecutionGraph, ExecutionNode
+from core.execution_graph import ExecutionGraph
 from core.adaptive_router import AdaptiveRouter
 from core.action_result import ActionResult
 from core.context_memory import ContextMemory
 from core.workflow_executor import WorkflowExecutor
 from core.handlers import dispatch_intent, handle_context_command
-import uuid
 
 MAX_PLANNING_DEPTH = 2
 
 # Try to import winsound for Windows beeps
 try:
     import winsound
-except ImportError:
+except ImportError as _e:
+    logging.debug("[core/orchestrator.py:41] Swallowed exception: %s: %s", type(_e).__name__, _e)
     winsound = None
 
 # Engine Imports
 from utils.config import Config
-from utils.helpers import get_numbers, is_online
+from utils.helpers import is_online
 from core.brain import Brain
 from core.router import IntentRouter
 from engines.memory import MemoryEngine
@@ -78,6 +72,10 @@ class FlexieOrchestrator:
             from core.memory_manager import MemoryManager
             self.memory_manager = MemoryManager()
             self.brain.memory_manager = self.memory_manager
+            try:
+                self.brain.ensure_maintenance_thread()
+            except Exception as _e:
+                logging.debug("[core/orchestrator.py:maintenance] Swallowed exception: %s: %s", type(_e).__name__, _e)
             logging.info("MemoryManager wired to orchestrator and brain")
         except Exception as e:
             self.memory_manager = None
@@ -97,6 +95,10 @@ class FlexieOrchestrator:
         self.execution_graph = ExecutionGraph()
         self.adaptive_router = AdaptiveRouter()
         self.workflow = WorkflowExecutor(self)
+        # LRU route cache: skips regex+LLM routing for recently-seen commands.
+        # Key: normalised command string. Value: (intent, confidence).
+        self._route_cache: dict[str, tuple[str, float]] = {}
+        self._route_cache_max = 64
         # Hybrid routing + Goal planning (deferred wiring until ToolRegistry is ready)
         self.hybrid_router = None
         self.goal_planner = None
@@ -145,7 +147,8 @@ class FlexieOrchestrator:
         try:
             from engines.automation import AutomationScheduler
             self.automation = AutomationScheduler(self)
-        except:
+        except Exception as _e:
+            logging.debug("[core/orchestrator.py:148] Swallowed exception: %s: %s", type(_e).__name__, _e)
             self.automation = None
         # Desktop control + Agent executor + Coding tools
         try:
@@ -154,15 +157,51 @@ class FlexieOrchestrator:
             from core.tool_registry import ToolRegistry
             from core.permission_system import PermissionSystem
             from core.coding_tools import register_coding_tools
-            self.desktop_control = DesktopControl()
+            self.permission_system = PermissionSystem()
+            self.desktop_control = DesktopControl(permission_system=self.permission_system)
             self.tool_registry = ToolRegistry()
-            self.agent_executor = AgentExecutor(self.tool_registry, PermissionSystem(), self.execution_graph, speak_fn=self.speak, orch=self)
+            self.agent_executor = AgentExecutor(self.tool_registry, self.permission_system, self.execution_graph, speak_fn=self.speak, orch=self)
+            def _on_approval_event(req):
+                import json
+                try:
+                    self.send_to_ui("APPROVAL_REQUEST", json.dumps({
+                        "id": req.get("id"),
+                        "action": req.get("action"),
+                        "level": req.get("level").name if hasattr(req.get("level"), "name") else str(req.get("level"))
+                    }))
+                except Exception as _e:
+                    logging.debug("[orchestrator:approval_event] %s: %s", type(_e).__name__, _e)
+            self.permission_system.set_approval_callback(_on_approval_event)
             # Register autonomous coding tools (file.read/write/patch, code.search, git, terminal, test, python.exec)
             try:
                 n = register_coding_tools(self.tool_registry, self)
                 logging.info(f"CodingTools registered: {n} tools")
             except Exception as ce:
                 logging.warning(f"CodingTools registration failed: {ce}")
+            # Register browser automation and communication tools (navigate, search, click, fill, email)
+            try:
+                from core.browser_and_comm_tools import register_browser_and_comm_tools
+                nb = register_browser_and_comm_tools(self.tool_registry, self)
+                logging.info(f"Browser & Comm tools registered: {nb} tools")
+            except Exception as bce:
+                logging.warning(f"Browser & Comm tools registration failed: {bce}")
+            # MCP Client Adapter (standard Model Context Protocol server support)
+            try:
+                from core.mcp_adapter import MCPManager
+                self.mcp_manager = MCPManager(self.tool_registry)
+                self.mcp_manager.start_configured_servers()
+                logging.info("MCPManager wired to ToolRegistry")
+            except Exception as me:
+                self.mcp_manager = None
+                logging.warning(f"MCPManager wiring failed: {me}")
+            # Multi-Agent Team (Lead, Coder, Researcher, System)
+            try:
+                from core.specialists import AgentTeam
+                self.agent_team = AgentTeam(self.tool_registry, self.brain, speak_fn=self.speak)
+                logging.info("AgentTeam initialized with Lead, Coder, Researcher, and System specialists")
+            except Exception as ate:
+                self.agent_team = None
+                logging.warning(f"AgentTeam initialization failed: {ate}")
             # Wire GoalPlanner with brain + registry after registry is ready (fixes None brain bug)
             try:
                 from core.goal_planner import GoalPlanner
@@ -253,13 +292,14 @@ class FlexieOrchestrator:
         self.active = False
         self.undo_stack: List[tuple] = []
         self._setup_networking()
-        
+
         # Register cleanup for Playwright and other engines
         atexit.register(self.cleanup)
 
     def cleanup(self):
         """Universal cleanup on exit."""
         self.logger.info("Flexie orchestrator cleaning up...")
+        if hasattr(self, 'mcp_manager') and self.mcp_manager: self.mcp_manager.shutdown()
         if hasattr(self, 'yt'): self.yt.cleanup()
         if hasattr(self, 'browser'): self.browser.cleanup()
         if hasattr(self, 'voice'): self.voice.stop_speech = True
@@ -277,6 +317,10 @@ class FlexieOrchestrator:
     def _setup_networking(self):
         self._udp_out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._udp_in = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Per-run UDP control-plane token (shared via FLEXIE_UDP_TOKEN env).
+        # Every inbound datagram must carry it — see _network_loop.
+        from utils.udp_auth import get_token
+        self.udp_token = get_token()
         try:
             self._udp_in.bind(('127.0.0.1', Config.UDP_PORT_ASSISTANT))
             self._udp_in.setblocking(False)
@@ -287,15 +331,93 @@ class FlexieOrchestrator:
         try:
             msg = f"{tag}:{value}"
             self._udp_out.sendto(msg.encode('utf-8'), ('127.0.0.1', Config.UDP_PORT_UI))
-        except: pass
+        except Exception as _e:
+            logging.debug("[core/orchestrator.py:290] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
-    def speak(self, text: str, silent: bool = False):
+    def get_conversation_history(self, current_query=None, limit=None):
+        getter = getattr(self.memory, "get_conversation_messages", None)
+        if not callable(getter):
+            getter = getattr(self.memory, "get_chat_messages", None)
+        if not callable(getter):
+            return []
+        if limit is None:
+            limit = Config.CONVERSATION_HISTORY_TURNS
+        history = getter(limit=limit, max_chars=Config.CONVERSATION_HISTORY_CHARS)
+        if current_query and history:
+            current = str(current_query).strip().lower()
+            last = history[-1]
+            if last.get("role") == "user" and str(last.get("content", "")).strip().lower() == current:
+                history = history[:-1]
+        return history
+
+    @staticmethod
+    def _format_conversation_history(history):
+        return "\n".join(
+            f"{item.get('role', 'user').capitalize()}: {item.get('content', '')}"
+            for item in history
+            if item.get("content")
+        )
+
+    def _record_text(self, text: str, conversation=True):
+        if not text:
+            return
+        self.memory.add_chat("Flexie", text)
+        if conversation:
+            add_turn = getattr(self.memory, "add_conversation_turn", None)
+            if callable(add_turn):
+                add_turn("assistant", text)
+        if hasattr(self, 'memory_manager') and self.memory_manager:
+            try:
+                from core.memory_manager import MemoryCategory
+                self.memory_manager.remember(text[:60], text, MemoryCategory.CONVERSATION, importance=0.2)
+            except Exception as _e:
+                logging.debug("[core/orchestrator.py:325] Swallowed exception: %s: %s", type(_e).__name__, _e)
+
+    def record_response(self, text: str):
+        self._record_text(text, conversation=True)
+
+    def _async_memory_write(self, c: str):
+        """Fire-and-forget background writer for structured memory and vector store.
+
+        Runs in a daemon thread so it never blocks the routing hot path (Fix #4).
+        """
+        if not (hasattr(self, 'memory_manager') and self.memory_manager):
+            return
+        try:
+            from core.memory_manager import MemoryCategory
+            self.memory_manager.remember(c[:80], c, MemoryCategory.CONVERSATION, importance=0.3, tags=["voice"])
+            low = c.lower()
+            if any(p in low for p in ["my name is", "i like", "i love", "my favorite", "remember that", "i prefer"]):
+                key = c[:40].strip()
+                importance = 0.8 if "remember that" in low else 0.6
+                cat = MemoryCategory.FACTS if "remember" in low else MemoryCategory.PREFERENCES
+                self.memory_manager.remember(f"fact:{key}", c, cat, importance=importance, tags=["auto"])
+                try:
+                    self.brain.vector_store.add_episode(f"fact_{int(time.time())}", c, {"source": "auto-extract"})
+                except Exception as _e:
+                    logging.debug("[core/orchestrator.py:async_memory] vector_store failed: %s: %s", type(_e).__name__, _e)
+        except Exception as _e:
+            logging.debug("[core/orchestrator.py:async_memory] Swallowed: %s: %s", type(_e).__name__, _e)
+
+    def speak(self, text: str, silent: bool = False, record_chat: bool = True):
         if not text: return
         
-        # Length Safety Guard: Prevent hallucination playback of large logs
+        # Length Safety Guard: Prevent hallucination playback of large logs.
+        # Truncates at a SENTENCE boundary so speech never cuts off mid-thought;
+        # long content is spoken as a summary offer instead of a wall of text.
+        # The UI always receives the FULL text (SAY below), so the spoken
+        # "I've posted the full text to your screen" claim stays TRUE.
+        full_text = text
         if len(text) > 300:
-            self.logger.warning(f"[TTS GUARD] Truncating massively long TTS message ({len(text)} chars).")
-            text = text[:300] + "... [Text Truncated for Voice Output]"
+            self.logger.warning(f"[TTS GUARD] Long TTS message ({len(text)} chars) — trimming to sentence boundary.")
+            cut = text[:300]
+            # Prefer the last sentence end within the cut; fall back to last space.
+            sentence_ends = [m.end() for m in re.finditer(r"[.!?](?=\s|$)", cut)]
+            if sentence_ends:
+                text = cut[:sentence_ends[-1]].strip()
+            else:
+                text = cut[:cut.rfind(" ")].strip() + "…"
+            text += " I've posted the full text to your screen."
         
         # Modular TTS Deduplication Layer
         if not self.tts_guard.should_speak(text):
@@ -303,14 +425,10 @@ class FlexieOrchestrator:
             return
             
         self.send_to_ui("STATE", "SPEAKING")
-        self.send_to_ui("SAY", text)
+        self.send_to_ui("SAY", full_text)
         self.logger.info(f"Speaking: {text}")
-        self.memory.add_chat("Flexie", text) # Persistence
-        if hasattr(self, 'memory_manager') and self.memory_manager:
-            try:
-                from core.memory_manager import MemoryCategory
-                self.memory_manager.remember(text[:60], text, MemoryCategory.CONVERSATION, importance=0.2)
-            except: pass
+        if record_chat:
+            self._record_text(full_text)
         if not silent:
             # FIX 12: Non-blocking — dispatch to dedicated speech queue so TTS
             # never blocks the action worker thread.
@@ -331,13 +449,12 @@ class FlexieOrchestrator:
                 parts = re.split(r'(?<=[.!?])\s+', buf)
                 for p in parts[:-1]:
                     if p.strip():
-                        self.speak(p.strip())
+                        self.speak(p.strip(), record_chat=False)
                 buf = parts[-1] if parts else ""
         if buf.strip():
-            self.speak(buf.strip())
-        # Persist full stream
+            self.speak(buf.strip(), record_chat=False)
         if full.strip():
-            self.memory.add_chat("Flexie", full.strip())
+            self.record_response(full.strip())
         return full.strip()
 
     def handle_command(self, cmd: str, is_subcommand=False, silent=False, source: str = "user", depth: int = 0):
@@ -384,8 +501,13 @@ class FlexieOrchestrator:
                 # Try to route compound command semantically first if online and ambiguous
                 try:
                     self.send_to_ui("STATE", "THINKING")
-                    context = self.memory.get_context(limit=5)
+                    context = self._format_conversation_history(self.get_conversation_history(current_query=cmd, limit=Config.ROUTING_CONTEXT_TURNS))
                     intent, confidence, params = self.router.route_dynamic(cmd, self.brain, context=context)
+                    # Short-circuit for job-system intents — never decompose into workflow steps
+                    if intent in ("dev_build", "build_project", "job_resume", "fix_build", "resume_build"):
+                        from core.jobs.handler import handle_job_intent
+                        handle_job_intent(self, intent, cmd)
+                        return
                     if intent == "complex" and confidence >= 0.5 and "steps" in params and params["steps"]:
                         self.logger.info(f"[PLANNER] Compound command routed semantically. Confidence: {confidence:.2f}")
                         self.execute_workflow(params["steps"])
@@ -444,7 +566,14 @@ class FlexieOrchestrator:
         c = cmd.strip().lower()
         c = re.sub(r"^(flexi|flexie|hey flexie|ok flexie)\b", "", c).strip()
         c = re.sub(r"^[,\.\!\?\s]+", "", c).strip()
-        
+
+        # Drop obvious garbage: single very-short tokens that aren't real commands
+        # Prevents "ng", "do", "uh" etc. from triggering 15-75s brain.ask() cascades
+        _SHORT_REAL = {"hi", "hey", "yes", "no", "ok", "bye", "run", "go"}
+        if len(c.split()) == 1 and len(c) <= 3 and c not in _SHORT_REAL:
+            self.logger.debug("[orchestrator] Discarding garbage input: %r", c)
+            return
+
         # Intercept Register Storage Command
         if any(x in c for x in ["save the response in", "save this in", "store this in", "store response in", "save it in"]):
             match = re.search(r"(?:in|to)\s+(?:my\s+)?(\w+)(?:\s+register)?", c)
@@ -461,37 +590,27 @@ class FlexieOrchestrator:
         if any(word in c for word in Config.RESTRICTED_WORDS):
             feedback("Content filtered for safety."); return
 
-        self.memory.add_chat("Dhanush", c) # Context Persistence
-        # Persistent structured memory with auto-extract
-        if hasattr(self, 'memory_manager') and self.memory_manager:
-            try:
-                from core.memory_manager import MemoryCategory
-                import time
-                self.memory_manager.remember(c[:80], c, MemoryCategory.CONVERSATION, importance=0.3, tags=["voice"])
-                # Auto-extract preferences/facts: "my X is Y", "I like X", "remember that"
-                low = c.lower()
-                if any(p in low for p in ["my name is", "i like", "i love", "my favorite", "remember that", "i prefer"]):
-                    # Extract key: after "my " or "i like "
-                    key = c[:40].strip()
-                    expiration = None
-                    # Short-term for "remember this" without importance
-                    if "remember that" in low:
-                        importance = 0.8
-                    else:
-                        importance = 0.6
-                    self.memory_manager.remember(f"fact:{key}", c, MemoryCategory.FACTS if "remember" in low else MemoryCategory.PREFERENCES, importance=importance, tags=["auto"])
-                    # Also add to VectorStore for semantic search
-                    try:
-                        self.brain.vector_store.add_episode(f"fact_{int(time.time())}", c, {"source": "auto-extract"})
-                    except: pass
-            except: pass
+        self.memory.add_chat("Dhanush", c)
+        add_turn = getattr(self.memory, "add_conversation_turn", None)
+        if callable(add_turn):
+            add_turn("user", c)
+        # Persistent structured memory — fire-and-forget background thread so
+        # SQLite + vector writes never block the routing hot path (Fix #4).
+        threading.Thread(target=self._async_memory_write, args=(c,), daemon=True).start()
         
-        # Check Adaptive Router cache first
-        intent = self.adaptive_router.get_cached_route(c)
-        if intent:
+        # Check LRU route cache first (Fix #9) then adaptive router then Tier-1 regex.
+        if c in self._route_cache:
+            intent, confidence = self._route_cache[c]
+            self.logger.debug(f"[ROUTE CACHE HIT] '{c}' -> {intent} ({confidence:.2f})")
+        elif self.adaptive_router.get_cached_route(c):
+            intent = self.adaptive_router.get_cached_route(c)
             confidence = 1.0
         else:
             intent, confidence = self.router.route(c)
+            # Populate LRU cache (evict oldest when full)
+            if len(self._route_cache) >= self._route_cache_max:
+                self._route_cache.pop(next(iter(self._route_cache)))
+            self._route_cache[c] = (intent, confidence)
         params = {}
 
         # 1b. CONTEXT OVERRIDE: If YouTube is active, redirect ambiguous commands to YouTube control
@@ -505,10 +624,11 @@ class FlexieOrchestrator:
         # Invoke AI reasoning for low confidence OR complex multi-step prompts
         # Skip length check if it is already a generated subcommand, or if confidence is extremely high (Tier 1 match)
         
-        # HybridRouter escalation: check if command is complex via deterministic patterns
+        # HybridRouter escalation: classify ONCE and cache for reuse at line 591 (Fix #5)
+        hr_mode = None
         if hasattr(self, 'hybrid_router') and self.hybrid_router and not is_subcommand and depth < MAX_PLANNING_DEPTH:
             try:
-                hr_mode = self.hybrid_router.classify(c)
+                hr_mode = self.hybrid_router.classify(c)  # single call — reused below
                 if hr_mode == "complex":
                     # Try GoalPlanner decomposition for richer task graph
                     if hasattr(self, 'goal_planner') and self.goal_planner:
@@ -524,14 +644,21 @@ class FlexieOrchestrator:
         task_type = self.task_classifier.classify(intent, is_subcommand)
         
         needs_dynamic = confidence < 0.8
-        # Hybrid escalation: confidence<0.7 or len>8 -> planner
-        if hasattr(self, 'hybrid_router') and self.hybrid_router and not is_subcommand:
-            if (confidence < 0.7 or len(c.split()) > 8) and self.hybrid_router.classify(c) == "complex":
+        artifact_followup = False
+        if intent == "calc" and not is_subcommand:
+            artifact_getter = getattr(getattr(self, "ctx", None), "get_artifact", None)
+            if callable(artifact_getter) and artifact_getter():
+                if re.search(r"\b(add|change|update|modify|edit|fix|improve|enhance|insert|append)\b", c):
+                    artifact_followup = True
+        # Hybrid escalation: reuse hr_mode from above — no second classify() call (Fix #5)
+        # Threshold raised: >10 words + confidence<0.75 (was >7/<0.9) — Fix #6
+        if hr_mode is not None and not is_subcommand:
+            if (confidence < 0.7 or len(c.split()) > 10) and hr_mode == "complex" and confidence < 0.75:
                 needs_dynamic = True
         # FIX: Never re-plan subcommands — they are already planned steps
         if is_subcommand:
             needs_dynamic = False
-        elif len(c.split()) > 7 and confidence < 0.9:
+        elif len(c.split()) > 10 and confidence < 0.75:  # was >7 / <0.9 — Fix #6
             needs_dynamic = True
             
         # Block planner if it's not a GOAL
@@ -542,13 +669,21 @@ class FlexieOrchestrator:
         if depth >= MAX_PLANNING_DEPTH:
             needs_dynamic = False
             self.logger.info(f"[PLANNER] Max planning depth ({MAX_PLANNING_DEPTH}) reached. Executing directly.")
-            
+        if artifact_followup and not is_subcommand and depth < MAX_PLANNING_DEPTH:
+            needs_dynamic = True
+
         if needs_dynamic:
             self.send_to_ui("STATE", "THINKING")
             # Inject Short-term context for follow-up recognition
-            context = self.memory.get_context(limit=5)
+            context = self._format_conversation_history(self.get_conversation_history(current_query=c, limit=5))
             intent, confidence, params = self.router.route_dynamic(c, self.brain, context=context)
-            
+
+            # Short-circuit: if dynamic router returns a job-system intent, dispatch immediately
+            if intent in ("dev_build", "build_project", "job_resume", "fix_build", "resume_build"):
+                from core.jobs.handler import handle_job_intent
+                handle_job_intent(self, intent, c)
+                return
+
         # 3. AGENTIC EXECUTION (Complex Multi-step)
         if intent == "complex":
             if is_subcommand or depth >= MAX_PLANNING_DEPTH:
@@ -564,10 +699,6 @@ class FlexieOrchestrator:
 
         # Atomic Action / Goal Classification Trace
         self.logger.info(f"[{task_type.name}] {cmd} (Intent: {intent})")
-
-        # 4. DATA ENRICHMENT: Use extracted params to refine the command
-        if params:
-            c = params.get("target") or params.get("query") or c
 
         self.logger.info(f"[ROUTING] Input: '{c}' | Intent: {intent} | Confidence: {confidence:.2f} | Silent: {silent}")
 
@@ -618,8 +749,7 @@ class FlexieOrchestrator:
                 self.speak("Okay, let's cancel that or try again.")
                 return
 
-        if dispatch_intent(self, intent, c, silent):
-            return
+        return dispatch_intent(self, intent, c, silent)
     
     def _parse_tool_call(self, response: str) -> bool:
         """Check if AI provided a JSON tool call and execute silently (hacker mode)."""
@@ -727,7 +857,8 @@ class FlexieOrchestrator:
                 text = self._speech_queue.get(timeout=1)
                 self.voice.speak(text)
                 self._speech_queue.task_done()
-            except queue.Empty:
+            except queue.Empty as _e:
+                logging.debug("[core/orchestrator.py:730] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 continue
             except Exception as e:
                 self.logger.error(f"[SPEECH WORKER] TTS error: {e}")
@@ -744,10 +875,12 @@ class FlexieOrchestrator:
         threading.Thread(target=self._speech_worker_loop, daemon=True).start() # FIX 12: Async TTS
         try:
             if self.automation: self.automation.start()
-        except: pass
+        except Exception as _e:
+            logging.debug("[core/orchestrator.py:747] Swallowed exception: %s: %s", type(_e).__name__, _e)
         # Ensure system volume is up for voice
         try: SystemCtrl.set_volume(80)
-        except: pass
+        except Exception as _e:
+            logging.debug("[core/orchestrator.py:750] Swallowed exception: %s: %s", type(_e).__name__, _e)
         
         self.speak("Flexie 2.0 Web Automation systems are live and ready, Dhanush.")
         while True:
@@ -774,7 +907,7 @@ class FlexieOrchestrator:
                 
                 if text == "[error_offline]":
                     self.speak("I'm having trouble connecting to my voice recognition service. Please check your internet connection, or use the text interface.")
-                    time.sleep(1) # Breathe
+                    time.sleep(0.3) # Breathe
                     continue
                 
                 # INTERRUPTION CHECK: If processing, look for emergency stop words
@@ -837,7 +970,8 @@ class FlexieOrchestrator:
             try:
                 try:
                     item = self.cmd_queue.get(timeout=1)
-                except queue.Empty:
+                except queue.Empty as _e:
+                    logging.debug("[core/orchestrator.py:840] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     continue
 
                 # FIX 3: Unpack item — support both plain string and blocking tuple
@@ -860,7 +994,7 @@ class FlexieOrchestrator:
                         # marked as executed for DAG/blocking callers.
                         if result_holder is not None:
                             status = result if isinstance(result, str) else "executed"
-                            if status in ("blocked", "awaiting_confirmation", "failed", "delegated"):
+                            if result is False or status in ("blocked", "awaiting_confirmation", "failed", "delegated"):
                                 result_holder.append(ActionResult.fail(message=status, intent=cmd))
                             else:
                                 result_holder.append(ActionResult.ok(message="Executed", intent=cmd))
@@ -877,7 +1011,7 @@ class FlexieOrchestrator:
                             done_event.set()
             except Exception as e:
                 self.logger.critical(f"Action Worker Loop Crash: {e}")
-                time.sleep(1)
+                time.sleep(0.5)
 
     def _watchdog_loop(self):
         """Monitors command execution to prevent deadlocks or hangs."""
@@ -885,7 +1019,7 @@ class FlexieOrchestrator:
             try:
                 if self.is_processing:
                     elapsed = time.time() - getattr(self, "last_command_time", time.time())
-                    if elapsed > 45: # 45 seconds execution watchdog limit
+                    if elapsed > 90:  # 90 sec watchdog — LLM generation + confirm can exceed 45s
                         cmd = getattr(self, "last_command_name", "Unknown")
                         self.logger.critical(f"[WATCHDOG] Command execution hung detected: '{cmd}' ({elapsed:.1f}s elapsed).")
                         
@@ -928,6 +1062,24 @@ class FlexieOrchestrator:
                 self.logger.error(f"Monitor loop error: {e}")
             time.sleep(6) # Optimized: Increased sleep to 6s to reduce idle CPU consumption
 
+    def _note_auth_rejection(self):
+        """Log a dropped datagram and surface it to the UI (rate-limited).
+
+        A token mismatch used to be completely invisible from the user's side —
+        typing into the assistant simply did nothing. Telling them makes the
+        failure diagnosable ("restart Flexie") instead of silent.
+        """
+        self.logger.warning("UDP: rejected message without valid token")
+        now = time.time()
+        if now - getattr(self, "_last_auth_notice", 0.0) < 30:
+            return
+        self._last_auth_notice = now
+        self.send_to_ui(
+            "SAY",
+            "⚠ Ignored a UI command: authentication token mismatch. Restart Flexie "
+            "so the UI/bridge and the orchestrator share this run's token.",
+        )
+
     def _network_loop(self):
         """Handle incoming commands from UDP (Legacy/Simple) or WebUI."""
         import select
@@ -936,8 +1088,16 @@ class FlexieOrchestrator:
                 # Use select to wait for socket data with timeout to reduce idle CPU cycles
                 ready = select.select([self._udp_in], [], [], 2.0)
                 if ready[0]:
-                    data, _ = self._udp_in.recvfrom(1024)
-                    msg = data.decode('utf-8').strip()
+                    data, _ = self._udp_in.recvfrom(65535)
+                    raw = data.decode('utf-8').strip()
+                    if not raw: continue
+                    # Authenticate: reject anything without the per-run token.
+                    from utils.udp_auth import unpack as _udp_unpack
+                    msg = _udp_unpack(raw)
+                    if msg is None:
+                        self._note_auth_rejection()
+                        continue
+                    msg = msg.strip()
                     if not msg: continue
                     
                     if msg == "wake up": 
@@ -998,22 +1158,65 @@ class FlexieOrchestrator:
                             self.send_to_ui("SAY", f"✅ Active provider: {prov}")
                         except Exception as e:
                             self.logger.error(f"SET_ACTIVE_PROVIDER error: {e}")
-                    elif msg.startswith("mode:"): # Old UI format
-                        self.current_mode = msg.split(":")[1].lower()
-                        self.logger.info(f"Mode switched via UDP: {self.current_mode}")
+                    elif msg.startswith("mode:"): # UI / voice mode change
+                        mode = msg.split(":")[1].strip().lower()
+                        if mode in Config.MODES:
+                            self.current_mode = mode
+                            self.send_to_ui("MODE", mode)
+                            self.logger.info(f"Mode switched via UDP: {self.current_mode}")
+                        else:
+                            self.logger.info(f"Mode switch ignored (unknown): {mode}")
                     elif msg.startswith("SET_VOLUME:"): # UI Slider
                         try:
                             v = int(msg.split(":")[1])
                             SystemCtrl.set_volume(v)
-                        except: pass
+                        except Exception as _e:
+                            logging.debug("[core/orchestrator.py:1008] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                    elif msg.startswith("SET_BRIGHTNESS:"): # UI Slider
+                        try:
+                            v = int(msg.split(":")[1])
+                            SystemCtrl.set_brightness(v)
+                        except Exception as _e:
+                            logging.debug("[core/orchestrator.py:1006] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                    elif msg.startswith("DEEP_SEARCH:"):
+                        # PyQt spotlight "?query" → full web research (the UI used
+                        # to send this prefix verbatim, so the LLM received the
+                        # literal string "DEEP_SEARCH:…" instead of researching).
+                        query = msg.split(":", 1)[1].strip()
+                        if query:
+                            self.cmd_queue.put(f"research {query}")
                     elif msg in ("STOP", "CANCEL", "stop", "cancel"):
                         self.stop_event.set()
+                        if hasattr(self, 'controller') and self.controller and self.controller.pending_confirmation:
+                            self.controller._handle_confirmation("cancel")
+                        elif hasattr(self, 'permission_system') and self.permission_system:
+                            self.permission_system.reject_request()
                         self.speak("Task cancelled from UI.")
+                    elif msg in ("CONFIRM", "confirm", "APPROVE", "approve") or msg.startswith(("CONFIRM:", "APPROVE:")):
+                        req_id = msg.split(":", 1)[1].strip() if ":" in msg else None
+                        handled = False
+                        if hasattr(self, 'controller') and self.controller and self.controller.pending_confirmation:
+                            self.controller._handle_confirmation("confirm")
+                            handled = True
+                        elif hasattr(self, 'permission_system') and self.permission_system:
+                            handled = self.permission_system.approve_request(req_id)
+                        if handled:
+                            self.send_to_ui("APPROVAL_RESOLVED", "approved")
+                            self.speak("Action approved.")
+                    elif msg.startswith(("REJECT:", "DENY:")):
+                        req_id = msg.split(":", 1)[1].strip()
+                        if hasattr(self, 'controller') and self.controller and self.controller.pending_confirmation:
+                            self.controller._handle_confirmation("cancel")
+                        elif hasattr(self, 'permission_system') and self.permission_system:
+                            self.permission_system.reject_request(req_id)
+                        self.send_to_ui("APPROVAL_RESOLVED", "rejected")
+                        self.speak("Action rejected.")
                     else: 
                         # New UI sends direct commands like "volume 50" or "mode hacker"
                         self.cmd_queue.put(msg)
             except Exception as e:
-                time.sleep(0.5)
+                logging.debug("[core/orchestrator.py:1015] Swallowed exception: %s: %s", type(e).__name__, e)
+                time.sleep(0.1)
 
     def _auto_save_loop(self):
         """Background thread that saves work periodically if enabled."""
@@ -1024,7 +1227,8 @@ class FlexieOrchestrator:
                     if not self.is_processing:
                         SystemCtrl.save_active_file()
                         self.logger.info("Auto-save: Ctrl+S sent to active window.")
-            except: pass
+            except Exception as _e:
+                logging.debug("[core/orchestrator.py:1027] Swallowed exception: %s: %s", type(_e).__name__, _e)
             time.sleep(60) # Wait 1 minute
 
     def _reminder_loop(self):
@@ -1034,7 +1238,8 @@ class FlexieOrchestrator:
                 if not self.is_processing:
                     for task in self.memory.due_reminders():
                         self.speak(f"Reminder: {task}")
-            except Exception:
+            except Exception as _e:
+                logging.debug("[core/orchestrator.py:1037] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 pass
             time.sleep(20) # Poll every 20 seconds
 
@@ -1042,12 +1247,13 @@ class FlexieOrchestrator:
         """Periodically analyze context to offer proactive suggestions."""
         while True:
             try:
-                # Only suggest if the user has been active and we are IDLE
-                if self.active and not self.is_processing:
+                # DND in focus mode: never surface proactive suggestions.
+                if self.current_mode != "focus" and self.active and not self.is_processing:
                     suggestion = self.intel.analyze_context()
                     if suggestion:
                         self.speak(f"Quick suggestion: {suggestion}")
-            except: pass
+            except Exception as _e:
+                logging.debug("[core/orchestrator.py:1050] Swallowed exception: %s: %s", type(_e).__name__, _e)
             time.sleep(600) # Every 10 minutes to avoid being annoying
 
     def _get_briefing(self) -> str:
@@ -1058,8 +1264,8 @@ class FlexieOrchestrator:
             batt = SystemCtrl.battery_status()
             brief.append(f"System Check: {batt}")
             
-            # 2. Weather & News (via Brain/Search)
-            if is_online():
+            # 2. Weather & News (via Brain/Search) — suppressed in focus mode
+            if is_online() and self.current_mode != "focus":
                 # Use a timeout or short prompt for speed
                 weather = self.brain.ask("Brief weather update for current location (10 words max).")
                 news = self.brain.ask("Top Indian news headline today (10 words max).")
@@ -1071,7 +1277,8 @@ class FlexieOrchestrator:
                     emails = self.email.get_unread_emails(count=1)
                     if emails and "credentials" not in emails[0] and "Could not" not in emails[0]:
                         brief.append(f"Recent Email: {emails[0]}")
-                except: pass
+                except Exception as _e:
+                    logging.debug("[core/orchestrator.py:1074] Swallowed exception: %s: %s", type(_e).__name__, _e)
             else:
                 brief.append("I'm currently offline, so I can't fetch live weather or news.")
         except Exception as e:

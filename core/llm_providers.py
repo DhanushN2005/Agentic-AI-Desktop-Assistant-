@@ -16,9 +16,11 @@ import os
 import time
 import logging
 import json
-from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, field
+from typing import Optional, List
+from dataclasses import dataclass
 from enum import Enum, auto
+
+from utils.config import Config
 
 
 class ProviderStatus(Enum):
@@ -92,56 +94,11 @@ class LLMProviderManager:
     # Default provider configurations — priority = fallback order
     # Groq (fast+free) -> OpenAI -> DeepSeek -> Gemini -> Anthropic -> Mistral -> Ollama fallback handled in Brain
     DEFAULT_PROVIDERS = [
-        LLMProvider(
-            name="groq",
-            api_key_env="GROQ_API_KEY",
-            model="openai/gpt-oss-20b",
-            priority=1,
-            timeout=15.0,
-            max_tokens=2048,
-            supports_vision=False,
-            supports_streaming=True,
-        ),
-        LLMProvider(
-            name="openai",
-            api_key_env="OPENAI_API_KEY",
-            model="gpt-4o-mini",
-            priority=2,
-            timeout=20.0,
-            max_tokens=2048,
-            supports_vision=True,
-            supports_streaming=True,
-        ),
-        LLMProvider(
-            name="deepseek",
-            api_key_env="DEEPSEEK_API_KEY",
-            model="deepseek-chat",
-            priority=3,
-            timeout=20.0,
-            max_tokens=2048,
-            supports_vision=False,
-            supports_streaming=True,
-        ),
-        LLMProvider(
-            name="gemini",
-            api_key_env="GEMINI_API_KEY",
-            model="gemini-1.5-flash",
-            priority=4,
-            timeout=20.0,
-            max_tokens=2048,
-            supports_vision=True,
-            supports_streaming=True,
-        ),
-        LLMProvider(
-            name="anthropic",
-            api_key_env="ANTHROPIC_API_KEY",
-            model="claude-3-5-sonnet-20241022",
-            priority=5,
-            timeout=25.0,
-            max_tokens=2048,
-            supports_vision=True,
-            supports_streaming=False,
-        ),
+        LLMProvider(name="groq", api_key_env="GROQ_API_KEY", model="openai/gpt-oss-20b", priority=1, timeout=8.0, max_tokens=2048, supports_vision=False, supports_streaming=True),
+        LLMProvider(name="openai", api_key_env="OPENAI_API_KEY", model="gpt-4o-mini", priority=2, timeout=8.0, max_tokens=2048, supports_vision=True, supports_streaming=True),
+        LLMProvider(name="deepseek", api_key_env="DEEPSEEK_API_KEY", model="deepseek-chat", priority=3, timeout=8.0, max_tokens=2048, supports_vision=False, supports_streaming=True),
+        LLMProvider(name="gemini", api_key_env="GEMINI_API_KEY", model="gemini-1.5-flash", priority=4, timeout=8.0, max_tokens=2048, supports_vision=True, supports_streaming=True),
+        LLMProvider(name="anthropic", api_key_env="ANTHROPIC_API_KEY", model="claude-3-5-sonnet-20241022", priority=5, timeout=8.0, max_tokens=2048, supports_vision=True, supports_streaming=False),
         LLMProvider(
             name="mistral",
             api_key_env="MISTRAL_API_KEY",
@@ -168,7 +125,6 @@ class LLMProviderManager:
         for p in self.DEFAULT_PROVIDERS:
             # Hot-override model from Config / env (e.g. GROQ_MODEL)
             try:
-                from utils.config import Config as C
                 env_model = os.getenv(p.api_key_env.replace("_API_KEY", "_MODEL"), "")
                 # Also try SUPPORTED_PROVIDERS mapping
                 if not env_model:
@@ -177,7 +133,8 @@ class LLMProviderManager:
                         me = SP.get(p.name, {}).get("model_env")
                         if me:
                             env_model = os.getenv(me, "")
-                    except: pass
+                    except Exception as _e:
+                        logging.debug("[core/llm_providers.py:180] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 if env_model:
                     p.model = env_model.strip()
                 # Respect ACTIVE_PROVIDER filtering: if ACTIVE_PROVIDER != auto, disable others
@@ -185,7 +142,8 @@ class LLMProviderManager:
                 if active != "auto" and active != p.name:
                     # Keep but mark as not priority — we filter later, just log
                     pass
-            except: pass
+            except Exception as _e:
+                logging.debug("[core/llm_providers.py:188] Swallowed exception: %s: %s", type(_e).__name__, _e)
             self.providers.append(p)
 
     def _load_config(self):
@@ -226,7 +184,8 @@ class LLMProviderManager:
                 env_model = os.getenv(p.api_key_env.replace("_API_KEY", "_MODEL"), "")
                 if env_model and env_model.strip() != p.model:
                     p.model = env_model.strip()
-            except: pass
+            except Exception as _e:
+                logging.debug("[core/llm_providers.py:229] Swallowed exception: %s: %s", type(_e).__name__, _e)
             available.append(p)
         return sorted(available, key=lambda x: x.priority)
 
@@ -239,7 +198,8 @@ class LLMProviderManager:
                 try:
                     from utils.config import Config as C
                     C.set_model(provider_name, model.strip())
-                except: pass
+                except Exception as _e:
+                    logging.debug("[core/llm_providers.py:242] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 return True
         return False
 
@@ -302,14 +262,31 @@ class LLMProviderManager:
             # Generic OpenAI-compatible fallback
             return self._call_openai_compatible(provider, prompt, system_override, **kwargs)
 
+    @staticmethod
+    def _messages(prompt: str, system_override: Optional[str], history=None):
+        messages = []
+        if system_override:
+            messages.append({"role": "system", "content": system_override})
+        prompt_text = str(prompt or "").strip()
+        if isinstance(history, str):
+            history = []
+        limit = getattr(Config, "CONVERSATION_HISTORY_TURNS", 20)
+        for item in (history or [])[-limit:]:
+            role = item.get("role", "user")
+            content = str(item.get("content", "")).strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+            if role == "user" and content == prompt_text:
+                continue
+            messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": prompt})
+        return messages
+
     def _call_groq(self, provider: LLMProvider, prompt: str, system_override: Optional[str] = None, **kwargs) -> str:
         """Call Groq API."""
         from groq import Groq
         client = Groq(api_key=provider.api_key)
-        messages = []
-        if system_override:
-            messages.append({"role": "system", "content": system_override})
-        messages.append({"role": "user", "content": prompt})
+        messages = self._messages(prompt, system_override, kwargs.get("history"))
         
         response = client.chat.completions.create(
             model=provider.model,
@@ -325,15 +302,12 @@ class LLMProviderManager:
         try:
             from openai import OpenAI
         except ImportError:
-            raise ImportError("openai package not installed. Run: pip install openai")
+            raise ImportError("openai package not installed. Run: pip install openai") from None
         client_kwargs = {"api_key": provider.api_key}
         if base_url:
             client_kwargs["base_url"] = base_url
         client = OpenAI(**client_kwargs)
-        messages = []
-        if system_override:
-            messages.append({"role": "system", "content": system_override})
-        messages.append({"role": "user", "content": prompt})
+        messages = self._messages(prompt, system_override, kwargs.get("history"))
         resp = client.chat.completions.create(
             model=provider.model,
             messages=messages,
@@ -348,14 +322,14 @@ class LLMProviderManager:
         try:
             import anthropic
         except ImportError:
-            raise ImportError("anthropic package not installed. Run: pip install anthropic")
+            raise ImportError("anthropic package not installed. Run: pip install anthropic") from None
         client = anthropic.Anthropic(api_key=provider.api_key)
         resp = client.messages.create(
             model=provider.model,
             max_tokens=kwargs.get("max_tokens", provider.max_tokens),
             temperature=kwargs.get("temperature", provider.temperature),
             system=system_override or "",
-            messages=[{"role": "user", "content": prompt}],
+            messages=self._messages(prompt, None, kwargs.get("history")),
         )
         return "".join([b.text for b in resp.content if hasattr(b, 'text')])
 
@@ -367,7 +341,16 @@ class LLMProviderManager:
         model_config = {"system_instruction": system_override} if system_override else {}
         model = genai.GenerativeModel(provider.model, **model_config)
         
-        content = [prompt]
+        history = kwargs.get("history") or []
+        history_text = "\n".join(
+            f"{item.get('role', 'user').capitalize()}: {item.get('content', '')}"
+            for item in history
+            if item.get("content")
+        )
+        model_prompt = prompt
+        if history_text:
+            model_prompt = f"Recent conversation:\n{history_text}\n\nUser: {prompt}"
+        content = [model_prompt]
         if img_path:
             from PIL import Image
             img = Image.open(img_path)

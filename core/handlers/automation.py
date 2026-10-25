@@ -1,5 +1,6 @@
 import re
 
+
 def handle_automation(orch, c):
     cmd = c.lower().strip()
     if any(x in cmd for x in ["list", "show"]):

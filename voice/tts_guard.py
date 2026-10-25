@@ -1,5 +1,6 @@
 import time
 
+
 class TTSGuard:
     """
     TTS Deduplication layer to prevent flooding the voice queue
@@ -16,20 +17,20 @@ class TTSGuard:
         """
         if not text:
             return False
-            
+
         now = time.time()
-        
+
         # Check cache
         if text in self._spoken_cache:
             if now - self._spoken_cache[text] < self.cache_timeout:
                 return False
-                
+
         # Register in cache
         self._spoken_cache[text] = now
-        
+
         # Cleanup old entries to prevent memory leak
         keys_to_delete = [k for k, v in self._spoken_cache.items() if now - v > (self.cache_timeout * 1.5)]
         for k in keys_to_delete:
             del self._spoken_cache[k]
-            
+
         return True

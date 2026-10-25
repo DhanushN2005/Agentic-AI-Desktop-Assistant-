@@ -1,5 +1,6 @@
-import urllib.request
 import json
+import urllib.request
+import logging
 
 
 class DictionaryEngine:
@@ -32,9 +33,11 @@ class DictionaryEngine:
                 phonetic_str = f" ({phonetic})" if phonetic else ""
                 output = f"{word_text}{phonetic_str}\n" + "\n".join(results[:4])
                 return output
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as _e:
+            logging.debug("[engines/dictionary.py:35] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"No definition found for '{word}'."
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/dictionary.py:37] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Could not look up '{word}'."
 
     def synonyms(self, word: str) -> str:
@@ -55,7 +58,8 @@ class DictionaryEngine:
                 if synonyms:
                     return f"Synonyms for '{word}': {', '.join(list(synonyms)[:10])}"
                 return f"No synonyms found for '{word}'."
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/dictionary.py:58] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Could not look up synonyms for '{word}'."
 
     def antonyms(self, word: str) -> str:
@@ -76,5 +80,6 @@ class DictionaryEngine:
                 if antonyms:
                     return f"Antonyms for '{word}': {', '.join(list(antonyms)[:10])}"
                 return f"No antonyms found for '{word}'."
-        except Exception:
+        except Exception as _e:
+            logging.debug("[engines/dictionary.py:79] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return f"Could not look up antonyms for '{word}'."

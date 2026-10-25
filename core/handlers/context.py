@@ -3,6 +3,7 @@ import re
 import time
 
 from engines.system import SystemCtrl
+import logging
 
 
 def handle_paste_context_response(orch):
@@ -178,7 +179,8 @@ def handle_continue_context_query(orch, cmd):
         if wins:
             wins[0].activate()
             time.sleep(0.3)
-    except Exception:
+    except Exception as _e:
+        logging.debug("[core/handlers/context.py:181] Swallowed exception: %s: %s", type(_e).__name__, _e)
         pass
 
     # Verify clipboard and paste content
@@ -220,4 +222,7 @@ def handle_context_command(orch, cmd, silent=False):
         return handle_write_context_query(orch, cmd)
     if cmd.startswith("continue_context_query:"):
         return handle_continue_context_query(orch, cmd)
+    if cmd.startswith(("artifact_open:", "artifact_run:", "artifact_edit:", "artifact_extend:")):
+        from core.handlers.code_gen import handle_artifact_command
+        return handle_artifact_command(orch, cmd)
     return False

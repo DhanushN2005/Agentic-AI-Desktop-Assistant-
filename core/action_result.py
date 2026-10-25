@@ -8,7 +8,6 @@ Backward compatible: ActionResult is truthy when successful (__bool__),
 so existing code that does `if result:` continues to work.
 """
 import time
-from typing import Any, Optional
 
 
 class ActionResult:
@@ -20,7 +19,7 @@ class ActionResult:
         message: str = "",
         duration: float = 0.0,
         intent: str = "",
-        data: Optional[dict] = None
+        data: dict | None = None
     ):
         self.success = success
         self.message = message
@@ -48,7 +47,7 @@ class ActionResult:
     def ok(
         message: str = "",
         intent: str = "",
-        data: Optional[dict] = None,
+        data: dict | None = None,
         duration: float = 0.0
     ) -> "ActionResult":
         """Convenience factory for a successful result."""
@@ -61,7 +60,7 @@ class ActionResult:
     def fail(
         message: str = "",
         intent: str = "",
-        data: Optional[dict] = None,
+        data: dict | None = None,
         duration: float = 0.0
     ) -> "ActionResult":
         """Convenience factory for a failed result."""

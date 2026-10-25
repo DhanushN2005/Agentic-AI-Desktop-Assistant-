@@ -1,8 +1,10 @@
 import os
 import re
-import requests
 import webbrowser
 from urllib.parse import quote_plus
+
+import requests
+import logging
 
 
 class ImageGenEngine:
@@ -34,6 +36,7 @@ class ImageGenEngine:
                 return f"Image saved to {filepath}"
             return f"Image generation failed (status {resp.status_code})."
         except Exception as e:
+            logging.debug("[engines/image_gen.py:37] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Image generation error: {e}"
 
     def open_in_browser(self, prompt: str) -> str:
@@ -44,4 +47,4 @@ class ImageGenEngine:
         encoded = quote_plus(clean)
         url = f"{self.API_URL}{encoded}?width=1024&height=1024&nologo=true"
         webbrowser.open(url)
-        return f"Opening generated image in browser."
+        return "Opening generated image in browser."

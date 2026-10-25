@@ -1,9 +1,10 @@
-import re
 import json
 import logging
-from typing import Dict, Any, List
+import re
+
 from core.brain import Brain
-from core.event_bus.bus import EventBus, Event
+from core.event_bus.bus import Event, EventBus
+
 
 class SDDEngineer:
     """Autonomous engineering engine generating software specifications, patches, and automated tests."""
@@ -37,14 +38,14 @@ class SDDEngineer:
         
         Return ONLY valid JSON.
         """
-        
+
         try:
-            res_raw = self.brain.ask(prompt, system_override="You are a principal systems engineer. Return ONLY JSON.")
+            res_raw = self.brain.ask(prompt, system_override="You are a principal systems engineer. Return ONLY JSON.", use_rag=False)
             cleaned = res_raw.strip()
             if cleaned.startswith("```"):
                 match = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL)
                 if match: cleaned = match.group(1).strip()
-            
+
             spec = json.loads(cleaned)
             self.bus.publish(Event("sdd.prd.parsed", {"title": spec.get("title")}))
             return spec
@@ -52,7 +53,7 @@ class SDDEngineer:
             self.logger.error(f"PRD parsing failed: {e}")
             raise e
 
-    def generate_task_graph(self, spec: dict) -> List[dict]:
+    def generate_task_graph(self, spec: dict) -> list[dict]:
         """Generates a structured topological coding implementation graph."""
         self.logger.info("Generating coding task graph...")
         prompt = f"""
@@ -72,12 +73,12 @@ class SDDEngineer:
         Return ONLY valid JSON.
         """
         try:
-            res_raw = self.brain.ask(prompt, system_override="You are a task planner. Return ONLY JSON.")
+            res_raw = self.brain.ask(prompt, system_override="You are a task planner. Return ONLY JSON.", use_rag=False)
             cleaned = res_raw.strip()
             if cleaned.startswith("```"):
                 match = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL)
                 if match: cleaned = match.group(1).strip()
-                
+
             task_graph = json.loads(cleaned)
             self.bus.publish(Event("sdd.graph.generated", {"tasks_count": len(task_graph)}))
             return task_graph
@@ -100,12 +101,12 @@ class SDDEngineer:
         
         Return ONLY the updated python code file. Do not write explanation, and do not wrap in markdown code blocks.
         """
-        res = self.brain.ask(prompt)
+        res = self.brain.ask(prompt, use_rag=False)
         # Strip markdown wrappers if LLM still returned them
         res_clean = res.strip()
         if res_clean.startswith("```"):
             match = re.search(r"```(?:python)?\s*(.*?)\s*```", res_clean, re.DOTALL)
             if match: res_clean = match.group(1).strip()
-            
+
         self.bus.publish(Event("sdd.patch.generated", {}))
         return res_clean
