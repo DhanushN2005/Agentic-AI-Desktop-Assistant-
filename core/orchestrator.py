@@ -295,7 +295,6 @@ class FlexieOrchestrator:
 
         # Pre-warm the Playwright/YouTube browser session in background
         # so the first "play X on YouTube" command doesn't pay cold-start cost
-        import threading
         threading.Thread(target=self._prewarm_browser, daemon=True).start()
 
         # Register cleanup for Playwright and other engines
