@@ -67,23 +67,33 @@ def handle_search(orch, c):
         orch.send_to_ui("STATE", "PROCESSING")
         use_browser = _wants_browser_search(c, orch)
 
-        if use_browser and hasattr(orch, "browser") and orch.browser:
-            # Situation-aware: search DIRECTLY in the open browser via Playwright
+        if use_browser:
+            # Fast path: speak immediately, open Google — no LLM call needed
+            orch.speak(f"Searching for {clean_query} in Chrome.")
+            orch.ctx.update(query=clean_query, last_search=clean_query)
+            url = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean_query)}"
+            # Try Playwright first (keeps same tab), fall back to OS launch
+            if hasattr(orch, "browser") and orch.browser:
+                try:
+                    orch.browser.navigate(url)
+                    return True
+                except Exception as _be:
+                    logging.debug("BrowserEngine navigate failed, using OS: %s", _be)
             try:
-                orch.speak(f"Searching for '{clean_query}' in your open browser.")
-                browser_res = orch.browser.search_in_browser(clean_query)
-                orch.ctx.update(query=clean_query, last_search=clean_query)
-                orch.send_to_ui("SAY", browser_res)
-                return True
-            except Exception as _be:
-                logging.debug("BrowserEngine search failed, falling back: %s", _be)
+                subprocess.Popen(['start', 'chrome', url], shell=True)
+            except Exception as _e:
+                logging.debug("[core/handlers/search.py] OS launch error: %s", _e)
+                webbrowser.open(url)
+            return True
 
-        # Default: ask the brain for a knowledge answer
-        summary = orch.brain.ask(f"Query: {clean_query}. Give a concise Answer/Summary for active user.")
+        # Knowledge search: ask the brain, then open a browser tab
+        summary = orch.brain.ask(
+            f"Query: {clean_query}. Give a concise Answer/Summary in 2-3 sentences for a voice assistant.",
+            max_tokens=200,
+        )
         orch.ctx.update(query=clean_query, last_response=summary)
         orch.speak(summary)
 
-        # Also open browser tab for deeper exploration
         url = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean_query)}"
         try:
             subprocess.Popen(['start', 'chrome', url], shell=True)

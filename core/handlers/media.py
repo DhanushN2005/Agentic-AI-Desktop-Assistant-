@@ -3,6 +3,8 @@ import urllib.parse
 
 
 def handle_play_youtube(orch, c):
+    import threading
+
     if any(k in c for k in ["app", "build", "task", "project", "code"]):
         return False
     if any(x in c for x in ["next", "skip", "kip"]):
@@ -10,14 +12,9 @@ def handle_play_youtube(orch, c):
         orch.speak(orch.yt.control_player("next"))
         return True
 
-    # Only strip the core command parts, keep the descriptive parts (like 'song')
-    # 1. Strip common leading command starters
     clean_c = re.sub(r"^(play|search|open|start|watch|find)\s+", "", c).strip()
-    # 2. Strip common YouTube connectors/targets
     clean_c = re.sub(r"\b(on youtube|on results|in youtube|from youtube|on yt)\b", "", clean_c).strip()
-    # 3. Strip trailing fillers but keep middle ones
     clean_c = re.sub(r"\s+(on|it|now|for me)$", "", clean_c).strip()
-    # 4. Final safety strip for specific triggers if they were at edges
     clean_c = re.sub(r"\b(the|a|some)\b", "", clean_c).strip()
 
     if not clean_c and orch.ctx.last_query:
@@ -25,8 +22,20 @@ def handle_play_youtube(orch, c):
 
     if clean_c:
         orch.ctx.update(query=clean_c, engine="youtube", yt_query=clean_c)
+        # Acknowledge immediately — don't block TTS on Playwright startup
         orch.speak(f"Playing {clean_c} on YouTube.")
-        orch.speak(orch.yt.play_video(clean_c))
+
+        def _play_bg():
+            try:
+                result = orch.yt.play_video(clean_c)
+                # Only speak result if it's an error
+                if result and ("error" in result.lower() or "could not" in result.lower()):
+                    orch.speak(result)
+            except Exception as e:
+                import logging
+                logging.debug("YouTube play background error: %s", e)
+
+        threading.Thread(target=_play_bg, daemon=True).start()
     else:
         orch.speak("What would you like me to play on YouTube?")
     return True

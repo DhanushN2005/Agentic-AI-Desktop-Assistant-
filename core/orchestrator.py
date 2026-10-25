@@ -292,9 +292,24 @@ class FlexieOrchestrator:
         self.active = False
         self.undo_stack: List[tuple] = []
         self._setup_networking()
-        
+
+        # Pre-warm the Playwright/YouTube browser session in background
+        # so the first "play X on YouTube" command doesn't pay cold-start cost
+        import threading
+        threading.Thread(target=self._prewarm_browser, daemon=True).start()
+
         # Register cleanup for Playwright and other engines
         atexit.register(self.cleanup)
+
+    def _prewarm_browser(self):
+        """Boot Playwright silently in the background so it's ready on first voice command."""
+        import time
+        time.sleep(3)  # Let the rest of startup finish first
+        try:
+            self.yt._ensure_session()
+            self.logger.info("[Prewarm] Browser session ready.")
+        except Exception as e:
+            self.logger.debug("[Prewarm] Browser prewarm skipped: %s", e)
 
     def cleanup(self):
         """Universal cleanup on exit."""
