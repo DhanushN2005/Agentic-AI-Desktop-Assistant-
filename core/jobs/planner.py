@@ -13,6 +13,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from utils.config import Config
+
 logger = logging.getLogger("flexie.jobs.planner")
 
 # Standard 5-phase breakdown
@@ -98,22 +100,43 @@ def is_vague_request(request: str) -> bool:
 
     # Generic request markers without substance
     generic_patterns = [
-        r"^(build|create|make|code|start)\s+(a\s+)?(new\s+)?(project|app|application|program|thing)$",
+        r"^(build|create|make|code|start)\s+(an?\s+)?(new\s+)?(project|app|application|program|thing)$",
         r"^(build|create|make)\s+something(\s+cool|\s+useful)?$",
     ]
     for pat in generic_patterns:
         if re.match(pat, c):
             return True
 
-    known_stacks = {"python", "flask", "react", "html", "css", "javascript", "js", "vite", "node", "cli"}
+    known_stacks = {
+        "python", "flask", "react", "html", "css", "javascript", "js", "vite",
+        "node", "nodejs", "cli", "typescript", "ts", "fastapi", "django",
+        "express", "nextjs", "next", "vue", "svelte", "angular",
+    }
     known_purposes = {
         "calculator", "todo", "game", "dashboard", "api", "scraper", "weather", "chat",
-        "converter", "tracker", "blog", "portfolio", "store", "timer", "notes", "quiz"
+        "converter", "tracker", "blog", "portfolio", "store", "timer", "notes", "quiz",
+        "calendar", "calender", "callender", "planner", "scheduler", "events", "holidays",
+        "animation", "animated", "interactive", "modern", "responsive", "app", "tool",
+        "viewer", "browser", "manager", "monitor", "clock", "widget", "form", "login",
+        "authentication", "auth", "database", "crud", "rest", "graphql", "websocket",
+        "chat", "messaging", "notification", "search", "filter", "map", "chart",
+        "graph", "analytics", "report", "export", "import", "upload", "download",
+        "image", "video", "audio", "music", "player", "editor", "viewer", "preview",
+        "markdown", "pdf", "csv", "excel", "json", "xml", "yaml", "toml",
+        "website", "landing", "page", "site", "portal", "platform", "system", "service",
+        "microservice", "bot", "assistant", "agent", "automation", "scraper", "crawler",
+        "inventory", "expense", "budget", "finance", "invoice", "receipt", "payment",
+        "recipe", "food", "fitness", "health", "habit", "workout", "meditation",
+        "flashcard", "study", "learning", "quiz", "exam", "test",
     }
 
     words = set(re.findall(r"\w+", c))
     has_stack = bool(words & known_stacks)
     has_purpose = bool(words & known_purposes)
+    # If the request has at least 5 meaningful words, it's probably specific enough
+    meaningful_words = [w for w in words if len(w) > 3]
+    if len(meaningful_words) >= 5:
+        return False
     return not (has_stack or has_purpose)
 
 
@@ -131,10 +154,12 @@ def clarify_request(
         return request, assumptions
 
     pref = preferences or {}
-    default_stack = pref.get("default_stack", "python-flask")
+    _cfg_default_stack = getattr(Config, "JOB_DEFAULT_STACK", "python-flask")
+    default_stack = pref.get("default_stack", _cfg_default_stack)
     default_purpose = pref.get("default_purpose", "interactive web dashboard")
 
-    # If voice is available and active, ask up to 3 short questions with 20s timeout
+    # If voice is available and active, ask up to 3 short questions with configurable timeout
+    _voice_timeout = getattr(Config, "JOB_VOICE_CLARIFY_TIMEOUT", 20)
     answered = False
     answers: List[str] = []
     if voice and hasattr(voice, "listen") and hasattr(voice, "speak"):
@@ -146,7 +171,7 @@ def clarify_request(
         for q in questions:
             voice.speak(q)
             try:
-                ans = voice.listen(timeout=20)
+                ans = voice.listen(timeout=_voice_timeout)
                 if ans and len(ans.strip()) > 2 and "timed out" not in ans.lower():
                     answers.append(ans.strip())
                     answered = True
@@ -183,10 +208,10 @@ def match_template(request: str) -> Optional[ProjectSpec]:
 
     # Priority matching
     template_candidates = [
-        ("flask_api", ["flask", "rest api", "backend service", "python api"]),
-        ("react_vite", ["react", "vite", "jsx", "spa"]),
-        ("cli_tool", ["cli", "terminal tool", "command line", "argparse", "script tool"]),
-        ("static_site", ["html", "css", "static website", "landing page", "web page"]),
+        ("flask_api", ["flask", "rest api", "backend service", "python api", "fastapi", "rest", "backend", "python server"]),
+        ("react_vite", ["react", "vite", "jsx", "spa", "frontend", "react app", "reactjs", "react.js"]),
+        ("cli_tool", ["cli", "terminal tool", "command line", "argparse", "script tool", "command-line"]),
+        ("static_site", ["html", "css", "static website", "landing page", "web page", "static site", "plain html", "vanilla"]),
     ]
 
     for t_name, keywords in template_candidates:
@@ -216,9 +241,10 @@ def match_template(request: str) -> Optional[ProjectSpec]:
 
 def get_builtin_fallback_spec(request: str, assumptions: Optional[List[str]] = None) -> ProjectSpec:
     """Bulletproof fallback specification when LLM is offline or invalid."""
+    _default_stack = getattr(Config, "JOB_DEFAULT_STACK", "python-flask")
     return ProjectSpec(
         title="Full-Stack Web App",
-        stack="python-flask",
+        stack=_default_stack,
         summary=f"Automated project scaffold for: {request[:60]}",
         run_command="python app.py",
         test_command="pytest",
@@ -273,32 +299,65 @@ def generate_project_spec(
 
     # 3. LLM Structured Generation with retry & repair
     if brain and hasattr(brain, "ask"):
-        prompt = f"""You are a Principal Software Architect. Plan an autonomous software project.
+        prompt = f"""You are a Principal Software Architect planning a complete, production-quality software project.
 User Request: "{refined_request}"
 
-Return ONLY valid JSON matching this schema:
+STACK SELECTION RULES (apply in order):
+1. NO backend needed (pure UI: calendar, dashboard, calculator, portfolio, clock, quiz, budget, flashcard, etc.)
+   → stack="static-web", run_command="open index.html", test_command="none", dependencies=[]
+   → Files MUST include: index.html, style.css, app.js
+   → May also include: data.js (for static data), additional JS modules
+2. Needs Python server / REST API / database → stack="python-flask"
+   → Files MUST include: app.py, requirements.txt, templates/index.html, static/style.css, static/app.js, test_app.py
+3. Needs React/Node build step → stack="react-vite"
+   → Files MUST include: package.json, vite.config.js, index.html, src/main.jsx, src/App.jsx, src/App.css
+4. CLI tool (no GUI needed) → stack="python-cli"
+   → Files MUST include: main.py, requirements.txt
+
+FILE QUALITY RULES:
+- Every file in the "files" list must have a DETAILED purpose (not just "main file" — describe WHAT it implements).
+- For a calendar app: app.js must implement "Month/year grid rendering, prev/next navigation, holiday data lookup, event markers, today highlight, year range 2005-2030"
+- For a dashboard: app.js must implement "All chart/widget rendering, data updates, interactive filters"
+- The HTML file must describe the complete UI structure, not a loading screen.
+- Minimum files for any web project: index.html + style.css + app.js (3 files minimum).
+- Include a data.js or constants.js for any project with substantial static data (holidays, events, etc.).
+
+ACCEPTANCE CRITERIA RULES:
+- Must be specific and testable, not generic.
+- For a calendar: "Month grid renders all days correctly", "Prev/Next navigation changes month", "Holidays are highlighted", "Year navigation covers 2005-2030", "Today's date is visually marked"
+- For a Flask app: "GET / returns 200", "All API endpoints return JSON", "No unhandled exceptions", "Pytest suite passes"
+
+Return ONLY valid JSON matching this exact schema:
 {{
-  "title": "Short Project Title",
-  "stack": "tech-stack-name (e.g. python-flask, react-vite, python-cli, static-web)",
-  "summary": "1-2 sentence technical overview",
-  "run_command": "command to launch the app",
-  "test_command": "command to run tests",
-  "dependencies": ["dep1", "dep2"],
+  "title": "Descriptive Project Title",
+  "stack": "static-web | python-flask | react-vite | python-cli",
+  "summary": "2-3 sentence technical overview describing ALL major features to be implemented",
+  "run_command": "exact command to launch the app",
+  "test_command": "exact command to run tests (or 'none')",
+  "dependencies": ["list", "of", "packages"],
   "files": [
-    {{"name": "path/filename.ext", "purpose": "short purpose"}}
+    {{"name": "filename.ext", "purpose": "Detailed description of exactly what this file implements — minimum 15 words"}}
   ],
   "acceptance_criteria": [
-    "criterion 1 (e.g. server starts and binds port)",
-    "criterion 2 (e.g. health check returns 200)",
-    "criterion 3 (e.g. unit tests pass)"
+    "Specific, testable criterion 1",
+    "Specific, testable criterion 2",
+    "Specific, testable criterion 3",
+    "Specific, testable criterion 4",
+    "Specific, testable criterion 5"
   ]
 }}
-Do NOT write markdown prose or conversational remarks. Output ONLY the raw JSON object.
+Output ONLY the raw JSON object. No markdown fences, no prose, no comments.
 """
         try:
             raw_response = brain.ask(
                 prompt,
-                system_override="You are a JSON-only architecture planner. Return ONLY valid JSON.",
+                system_override=(
+                    "You are a JSON-only software architecture planner. "
+                    "Return ONLY a valid JSON object with no markdown, no prose, no code fences. "
+                    "Every file must have a detailed purpose of at least 15 words. "
+                    "The summary must describe ALL major features. "
+                    "Never produce fewer than 3 files for a web project."
+                ),
                 use_rag=False,
             )
             cleaned = _strip_markdown_fences(raw_response or "")

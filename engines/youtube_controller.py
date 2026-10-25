@@ -30,14 +30,42 @@ class YouTubeController(BrowserEngine):
         self.last_query = query
 
         try:
-            self.navigate(f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}")
+            # Fast Path: Fetch HTML directly without headless browser rendering
+            import urllib.request, re
+            url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    html = response.read().decode('utf-8', errors='ignore')
+                    video_ids = re.findall(r'watch\?v=([a-zA-Z0-9_-]{11})', html)
+                    
+                    if video_ids:
+                        vid = video_ids[0]
+                        # Best-effort title extraction from HTML snippet
+                        title = query
+                        title_match = re.search(r'"title":\{"runs":\[\{"text":"(.*?)"\}\]', html)
+                        if title_match:
+                            title = title_match.group(1).split('|')[0].strip()
+                            if len(title) > 40:
+                                title = title[:40].rsplit(" ", 1)[0]
+                                
+                        self.last_video_title = title
+                        
+                        # Navigate browser directly to the video URL (instant load)
+                        self.navigate(f"https://www.youtube.com/watch?v={vid}")
+                        if not self.page:
+                            return "Browser page is closed or not available."
+                            
+                        return f"Now playing {title} on YouTube."
+            except Exception as e:
+                logging.warning("Fast path failed, falling back to slow navigation: %s", e)
+                
+            # Fallback to slow navigation if fast path fails
+            self.navigate(url)
             if not self.page:
                 return "Browser page is closed or not available."
 
-            # Selector for the first video title
             video_selector = "ytd-video-renderer a#video-title"
-
-            # Exponential Backoff Retry (Network Resilience)
             for attempt in range(3):
                 try:
                     self.page.wait_for_selector(video_selector, timeout=20000)
@@ -51,14 +79,11 @@ class YouTubeController(BrowserEngine):
             video = self.page.query_selector(video_selector)
             if video:
                 full_title = video.inner_text().strip()
-                # Shorten title: take only the part before the first pipe
                 short_title = full_title.split("|")[0].strip()
-                # If still too long, take first 40 chars
                 if len(short_title) > 40:
                     short_title = short_title[:40].rsplit(" ", 1)[0]
                 self.last_video_title = short_title
                 video.click()
-
                 return f"Now playing {short_title} on YouTube."
             return "Found the results but couldn't click the video."
         except Exception as e:

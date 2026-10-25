@@ -12,6 +12,7 @@ import shutil
 from typing import Optional
 
 from core.jobs.planner import ProjectSpec, write_project_spec_files
+from utils.config import Config
 
 logger = logging.getLogger("flexie.jobs.scaffold")
 
@@ -72,28 +73,35 @@ def scaffold_project(spec: ProjectSpec, workspace_dir: str) -> bool:
             "esbenp.prettier-vscode",       # Prettier
             "ritwickdey.LiveServer",        # Live Server
         ]
-        if spec.stack in ("python", "flask"):
+        if spec.stack in ("python", "flask", "python-flask", "python-cli"):
             recommendations.append("ms-python.python")
-        elif spec.stack in ("react", "node", "javascript", "typescript"):
+            recommendations.append("ms-python.vscode-pylance")
+        elif spec.stack in ("react", "node", "javascript", "typescript", "react-vite"):
             recommendations.append("dbaeumer.vscode-eslint")
+            recommendations.append("bradlc.vscode-tailwindcss")
 
         extensions_json = {"recommendations": recommendations}
         with open(os.path.join(vscode_dir, "extensions.json"), "w", encoding="utf-8") as f:
             json.dump(extensions_json, f, indent=2)
 
         # 5. Create .vscode/settings.json pre-wired to local AI bridge / Ollama
+        _bridge_port = getattr(Config, "OPENAI_BRIDGE_PORT", 9899)
+        _bridge_key  = getattr(Config, "JOB_BRIDGE_API_KEY", "flexie-local-bridge")
+        _bridge_url  = f"http://127.0.0.1:{_bridge_port}/v1"
         settings_json = {
             "editor.formatOnSave": True,
             "cline.apiProvider": "openai-compatible",
-            "cline.baseUrl": "http://127.0.0.1:9899/v1",
-            "cline.apiKey": "flexie-local-bridge",
+            "cline.baseUrl": _bridge_url,
+            "cline.apiKey": _bridge_key,
             "roo-cline.apiProvider": "openai-compatible",
-            "roo-cline.baseUrl": "http://127.0.0.1:9899/v1",
-            "roo-cline.apiKey": "flexie-local-bridge",
+            "roo-cline.baseUrl": _bridge_url,
+            "roo-cline.apiKey": _bridge_key,
             "files.exclude": {
                 "**/__pycache__": True,
                 "**/.git": True,
                 "**/.pytest_cache": True,
+                "**/node_modules": True,
+                "**/.venv": True,
             },
         }
         with open(os.path.join(vscode_dir, "settings.json"), "w", encoding="utf-8") as f:

@@ -83,45 +83,9 @@ def handle_status(orch, c):
 
 
 def handle_memory(orch, c):
-    c_l = c.lower().strip()
-
-    if any(x in c_l for x in ["what do you know", "list memory", "what did i say", "what did i save"]):
-        facts = orch.memory.all_facts()
-        if not facts:
-            orch.speak("My memory is empty. Tell me something to remember.")
-        else:
-            orch.speak("Here is what I remember. " + ". ".join(f"{k}: {v}" for k, v, _ in facts))
-        return True
-
-    if c_l.startswith("forget "):
-        key = c[7:].strip()
-        if key:
-            orch.memory.forget(key)
-            orch.speak(f"Forgotten '{key}'.")
-        else:
-            orch.speak("What should I forget?")
-        return True
-
-    rest = c[len("remember that "):].strip() if c_l.startswith("remember that ") else (
-        c[len("remember "):].strip() if c_l.startswith("remember ") else c_l
-    )
-
-    if " are " in rest or " is " in rest:
-        sep = " are " if " are " in rest else " is "
-        key, _, value = rest.partition(sep)
-        key, value = key.strip(), value.strip()
-        if key and value:
-            orch.memory.store(key, value, cat="user")
-            orch.speak(f"Got it. I'll remember {key}.")
-            return True
-
-    key = c[7:].strip() if c_l.startswith("recall ") else rest
-    val = orch.memory.recall(key) if key else None
-    if val is not None:
-        orch.speak(f"{key} is {val}.")
-    else:
-        orch.speak(f"I don't remember anything about '{key}'.")
-    return True
+    """Delegate to unified memory handler."""
+    from core.handlers.memory_system import handle_memory_system
+    return handle_memory_system(orch, c)
 
 
 def handle_translate(orch, c):

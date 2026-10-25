@@ -146,6 +146,21 @@ def handle_conversational(orch, c):
         "focus": 64,
     }
     sys_p = MODE_PROMPTS.get(orch.current_mode, Config.SYSTEM_PROMPT_STANDARD)
+    try:
+        from core.jobs.manager import JobManager
+        from core.jobs.models import JobStatus
+        jm = JobManager.get_instance()
+        latest = jm.get_latest_job()
+        if latest and latest.status in (JobStatus.RUNNING, JobStatus.QUEUED, JobStatus.WAITING_USER):
+            summary = jm.get_status_summary()
+            sys_p += (
+                f"\n\n[Active Background Task Context]: {summary.get('message', '')} "
+                f"(Job ID: {latest.id}, Title: '{latest.title}', Status: {latest.status.value}, "
+                f"Workspace: {latest.workspace_path}). If user asks about the app or background build, "
+                f"you are fully aware and running it in the background."
+            )
+    except Exception:
+        pass
     max_tokens = MODE_MAX_TOKENS.get(orch.current_mode)
     history = _conversation_history(orch, c)
     chunks = []

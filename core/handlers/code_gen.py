@@ -289,6 +289,17 @@ def handle_artifact_command(orch, cmd):
     original = original.strip() or cmd
     artifact = _artifact_state(orch)
     if not artifact:
+        try:
+            from core.jobs.manager import JobManager
+            from core.jobs.models import JobStatus
+            mgr = JobManager.get_instance()
+            latest = mgr.get_latest_job()
+            if latest and latest.status in (JobStatus.FAILED, JobStatus.PAUSED):
+                orch.speak(f"Attempting to fix and resume background build for {latest.title}.")
+                mgr.resume_job(latest.id)
+                return True
+        except Exception:
+            pass
         orch.speak("I don't have an active generated file for that follow-up yet.", record_chat=False)
         return False
     if kind == "artifact_open" or (kind == "artifact_run" and str(artifact.get("path")).lower().endswith((".html", ".htm"))):

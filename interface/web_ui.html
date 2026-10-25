@@ -249,49 +249,77 @@
 
         .orb-container {
             position: relative;
-            width: 400px;
-            height: 400px;
+            width: 420px;
+            height: 420px;
             display: flex;
             align-items: center;
             justify-content: center;
+            cursor: pointer;
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
 
-        /* Pure CSS Animated Orb */
+        .orb-container:hover {
+            transform: scale(1.03);
+        }
+
+        /* Holographic Arc Reactor Orb */
         .orb {
             position: absolute;
-            width: 180px;
-            height: 180px;
+            width: 170px;
+            height: 170px;
             border-radius: 50%;
-            background: radial-gradient(circle at 30% 30%, var(--accent-primary), var(--accent-secondary));
-            box-shadow: 0 0 80px rgba(0, 242, 255, 0.4), inset 0 0 40px rgba(0,0,0,0.5);
-            animation: orb-pulse 4s ease-in-out infinite;
-            z-index: 2;
+            background: radial-gradient(circle at 35% 35%, #ffffff 0%, var(--accent-primary) 35%, var(--accent-secondary) 75%, #020712 100%);
+            box-shadow: 0 0 70px rgba(0, 242, 255, 0.55), inset 0 0 35px rgba(0, 0, 0, 0.8);
+            animation: orb-pulse 3.5s ease-in-out infinite;
+            z-index: 3;
+            transition: background 0.4s ease, box-shadow 0.4s ease;
         }
 
+        /* Outer Segmented Ring */
+        .orb-ring-outer {
+            position: absolute;
+            width: 360px;
+            height: 360px;
+            border-radius: 50%;
+            border: 2px dashed rgba(0, 242, 255, 0.28);
+            animation: rotate 24s linear infinite;
+        }
+
+        /* Middle Ring */
         .orb-ring {
             position: absolute;
             width: 300px;
             height: 300px;
             border-radius: 50%;
-            border: 2px solid rgba(0, 242, 255, 0.1);
-            animation: rotate 10s linear infinite;
+            border: 1.5px solid rgba(0, 242, 255, 0.2);
+            animation: rotate 12s linear infinite;
         }
 
         .orb-ring::after {
             content: '';
             position: absolute;
-            top: -5px;
+            top: -6px;
             left: 50%;
-            width: 10px;
-            height: 10px;
+            width: 12px;
+            height: 12px;
             background: var(--accent-primary);
             border-radius: 50%;
-            box-shadow: 0 0 15px var(--accent-primary);
+            box-shadow: 0 0 16px var(--accent-primary);
+        }
+
+        /* Inner Fast Ring */
+        .orb-ring-inner {
+            position: absolute;
+            width: 230px;
+            height: 230px;
+            border-radius: 50%;
+            border: 1.5px dotted rgba(0, 242, 255, 0.45);
+            animation: rotate 6s linear infinite reverse;
         }
 
         @keyframes orb-pulse {
-            0%, 100% { transform: scale(1); opacity: 0.9; }
-            50% { transform: scale(1.08); opacity: 1; filter: brightness(1.2); }
+            0%, 100% { transform: scale(1); opacity: 0.92; filter: drop-shadow(0 0 20px rgba(0,242,255,0.4)); }
+            50% { transform: scale(1.09); opacity: 1; filter: drop-shadow(0 0 38px rgba(0,242,255,0.85)) brightness(1.25); }
         }
 
         @keyframes rotate {
@@ -488,12 +516,16 @@
 
         <!-- Center: Core Interface -->
         <main class="core-area">
-            <div class="orb-container">
-                <div class="orb-ring" style="width: 320px; height: 320px; animation-duration: 15s;"></div>
-                <div class="orb-ring" style="width: 260px; height: 260px; animation-direction: reverse; animation-duration: 8s;"></div>
+            <div class="orb-container" onclick="send('wake up')" title="Click to wake / toggle Flexie">
+                <div class="orb-ring-outer"></div>
+                <div class="orb-ring"></div>
+                <div class="orb-ring-inner"></div>
                 <div class="orb" id="theCore"></div>
             </div>
             <h2 class="state-text" id="stateBadge">SLEEPING</h2>
+            <div style="margin-top: 8px; font-size: 11px; letter-spacing: 1px; color: var(--text-dim);">
+                CLICK ORB TO WAKE // VOICE CONTROL ACTIVE
+            </div>
 
             <div class="interaction-bar">
                 <input type="text" id="cmdInput" placeholder="Awaiting command..." autocomplete="off">

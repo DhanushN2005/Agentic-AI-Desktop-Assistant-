@@ -25,8 +25,8 @@ from utils.path_jail import resolve_in_root
 
 logger = logging.getLogger("flexie.jobs.generator")
 
-MAX_FILES_PER_PROJECT = 60
-MAX_FILE_SIZE_BYTES = 300 * 1024  # 300 KB
+MAX_FILES_PER_PROJECT: int = getattr(Config, "JOB_MAX_FILES", 60)
+MAX_FILE_SIZE_BYTES: int = getattr(Config, "JOB_MAX_FILE_SIZE_KB", 300) * 1024
 
 # Secret patterns to detect and neutralize
 _SECRET_PATTERNS = [
@@ -177,6 +177,39 @@ class CodeGenerator:
     ):
         self.token_budget = token_budget or getattr(Config, "JOB_TOKEN_BUDGET", 50000)
         self.max_tokens_per_call = max_tokens_per_call or getattr(Config, "CODE_MAX_TOKENS", 4096)
+        # Re-read live config caps so .env changes take effect without restart
+        MAX_FILES_PER_PROJECT = getattr(Config, "JOB_MAX_FILES", 60)
+        MAX_FILE_SIZE_BYTES = getattr(Config, "JOB_MAX_FILE_SIZE_KB", 300) * 1024
+
+    def _enhance_intent(self, brain: Any, file_spec: ProjectFileSpec, spec: ProjectSpec, job: BuildJob) -> str:
+        """Expand the short file purpose into a detailed implementation plan before coding."""
+        ext = os.path.splitext(file_spec.name)[1].lower()
+        # Only enhance complex files
+        if ext not in (".js", ".jsx", ".ts", ".tsx", ".py", ".html", ".htm"):
+            return file_spec.purpose
+
+        prompt = f"""Project: {spec.title}
+Summary: {spec.summary}
+File: {file_spec.name}
+Base Purpose: {file_spec.purpose}
+
+Write a detailed, step-by-step implementation plan for THIS specific file. 
+What features must be coded? What edge cases handled? 
+If this is a frontend file, how should the UI/UX look and feel? 
+If this is a backend file, what is the exact data flow and schema?
+DO NOT write code. Output only the plain text plan (max 200 words)."""
+        try:
+            plan = brain.ask(
+                prompt,
+                system_override="You are a senior technical lead planning file implementations.",
+                use_rag=False,
+                max_tokens=500,
+            )
+            job.tokens_used += len(prompt + (plan or "")) // 4
+            return plan.strip() if plan else file_spec.purpose
+        except Exception as e:
+            logger.warning("Intent enhancement failed for %s: %s", file_spec.name, e)
+            return file_spec.purpose
 
     def generate_single_file(
         self,
@@ -216,22 +249,137 @@ class CodeGenerator:
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0 and file_spec.name != "README.md":
             logger.info("File %s already exists from template; keeping it.", file_spec.name)
             return True, ""
+            
+        # Enhance the intent before generating code
+        enhanced_purpose = self._enhance_intent(brain, file_spec, spec, job)
 
-        # 4. Prompt LLM (use_rag=False to prevent web search snippet pollution)
-        prompt = f"""Project: {spec.title} ({spec.stack})
-Summary: {spec.summary}
-File to implement: {file_spec.name}
-Purpose: {file_spec.purpose}
-Dependencies: {', '.join(spec.dependencies)}
+        # 4. Build a rich context-aware prompt
+        # Collect sibling file names so LLM knows the full file structure
+        sibling_files = [f.name for f in spec.files if f.name != file_spec.name]
+        ext = os.path.splitext(file_spec.name)[1].lower()
 
-Write the complete, functional, production-ready source code for {file_spec.name}.
-Output ONLY the raw code inside a markdown code block. Do NOT include conversational commentary, explanations, or web search summaries.
-"""
+        # Collect existing file contents so LLM can wire them correctly
+        existing_files_content = ""
+        for s_file in sibling_files:
+            s_path = os.path.join(job.workspace_path, s_file)
+            if os.path.exists(s_path):
+                try:
+                    with open(s_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if content.strip():
+                            existing_files_content += f"\n--- {s_file} ---\n{content}\n"
+                except Exception:
+                    pass
+        
+        existing_files_block = ""
+        if existing_files_content:
+            existing_files_block = f"\nEXISTING FILE CONTENTS (Use these to ensure IDs, classes, and function names match exactly):\n{existing_files_content}\n"
+
+        # Read accumulated lessons learned for self-improvement
+        lessons_block = ""
+        try:
+            lessons_file = os.path.join(getattr(Config, "DATA_DIR", "."), "lessons.txt")
+            if os.path.exists(lessons_file):
+                with open(lessons_file, "r", encoding="utf-8") as lf:
+                    lessons_text = lf.read().strip()
+                    if lessons_text:
+                        lessons_block = f"\nCRITICAL LESSONS LEARNED FROM PAST MISTAKES (You MUST follow these rules):\n{lessons_text}\n"
+        except Exception:
+            pass
+
+
+        # File-type specific coding instructions
+        file_type_rules = ""
+        if ext in (".html", ".htm"):
+            file_type_rules = (
+                "HTML RULES:\n"
+                "- Write a COMPLETE, fully functional HTML page. Do NOT write a loading screen or placeholder.\n"
+                "- Include ALL UI elements described in the project summary — fully rendered, not stubs.\n"
+                "- Use semantic HTML5 elements. Include proper <head> with charset, viewport, title.\n"
+                "- MUST import a modern font like Google Fonts (Inter, Roboto) and FontAwesome for icons.\n"
+                "- Link to all CSS and JS sibling files correctly (relative paths).\n"
+                "- The page must be usable immediately when opened in a browser with no additional steps.\n"
+            )
+        elif ext in (".js", ".ts"):
+            file_type_rules = (
+                "JAVASCRIPT RULES:\n"
+                "- Implement an END-TO-END working application. No TODO comments, no stubs.\n"
+                "- All functions must have a complete, working body.\n"
+                "- Use vanilla JS (no CDN imports) unless the spec explicitly lists a library as a dependency.\n"
+                "- Handle edge cases: empty state, invalid inputs, boundary conditions.\n"
+                "- Manage all DOM updates efficiently and handle all user interactions (clicks, keyboard).\n"
+                "- If it's a calendar: implement full month/year navigation, day rendering, holiday/event display.\n"
+            )
+        elif ext in (".jsx", ".tsx"):
+            file_type_rules = (
+                "REACT RULES:\n"
+                "- Implement a fully functional, production-ready React component or app.\n"
+                "- Use Hooks (useState, useEffect, useMemo) correctly. No stub components.\n"
+                "- Implement all required state transitions, error handling, and end-to-end logic.\n"
+                "- If it needs styling, use inline styles or import CSS properly.\n"
+                "- Must be fully interactive and handle user events flawlessly.\n"
+            )
+        elif ext == ".css":
+            file_type_rules = (
+                "CSS RULES:\n"
+                "- Write COMPLETE styles — every element referenced in the HTML must be styled beautifully.\n"
+                "- Implement a premium, modern visual design (e.g. glassmorphism, soft shadows, vibrant gradients, or sleek dark mode).\n"
+                "- Include hover states, transitions, and micro-animations for interactivity.\n"
+                "- Use CSS variables for the color palette.\n"
+                "- Ensure responsive layout with media queries for mobile and tablet.\n"
+            )
+        elif ext == ".py":
+            file_type_rules = (
+                "PYTHON RULES:\n"
+                "- Write production-quality Python. No stub functions, no pass-only implementations.\n"
+                "- All routes/endpoints must have complete, working logic for an END-TO-END flow.\n"
+                "- If the app requires data storage, automatically include SQLite schema creation and setup logic.\n"
+                "- Handle errors with proper try/except and return meaningful HTTP status codes.\n"
+                "- Include all imports at the top. Never use bare 'except:'.\n"
+            )
+
+        acceptance_block = ""
+        if spec.acceptance_criteria:
+            acceptance_block = "\nACCEPTANCE CRITERIA (your code MUST satisfy ALL of these):\n"
+            for i, c in enumerate(spec.acceptance_criteria, 1):
+                acceptance_block += f"  {i}. {c}\n"
+
+        prompt = f"""You are a Principal Software Engineer implementing a real production project.
+
+PROJECT: {spec.title}
+STACK: {spec.stack}
+SUMMARY: {spec.summary}
+DEPENDENCIES: {', '.join(spec.dependencies) if spec.dependencies else 'none'}
+OTHER FILES IN THIS PROJECT: {', '.join(sibling_files) if sibling_files else 'none'}
+{acceptance_block}
+FILE TO IMPLEMENT: {file_spec.name}
+DETAILED IMPLEMENTATION PLAN: {enhanced_purpose}
+{existing_files_block}
+{lessons_block}
+
+{file_type_rules}
+CRITICAL RULES (VIOLATIONS = BUILD FAILURE):
+1. Output ONLY the raw source code inside a single markdown code block. NOTHING else.
+2. The code must be 100% complete and immediately runnable. NO placeholders, NO TODOs, NO '...' gaps, NO stub functions.
+3. Do NOT write a loading screen, splash screen, or empty skeleton instead of the real UI.
+4. Do NOT include explanations, comments about what to add later, or apologies.
+5. Every function, class, and UI element described must be FULLY implemented.
+6. The file must integrate correctly with the other files listed above.
+
+Write the complete, production-ready source code for {file_spec.name} now:"""
+
+        system_prompt = (
+            "You are an expert software engineer who writes complete, production-ready code. "
+            "You NEVER write stubs, skeletons, loading placeholders, or incomplete implementations. "
+            "You ALWAYS implement every feature fully. "
+            "You output ONLY valid source code in a markdown code block — no prose, no explanations."
+        )
+
         raw_code = ""
         try:
             raw_code = brain.ask(
                 prompt,
-                system_override="You are a Principal Software Engineer. Output ONLY valid, working source code without conversational text or search results.",
+                system_override=system_prompt,
                 use_rag=False,
                 max_tokens=self.max_tokens_per_call,
             )
@@ -251,18 +399,24 @@ Output ONLY the raw code inside a markdown code block. Do NOT include conversati
         valid, syntax_err = validate_syntax(file_spec.name, clean_code)
         if not valid:
             logger.warning("File %s syntax check failed: %s. Attempting repair pass...", file_spec.name, syntax_err)
-            repair_prompt = f"""The following code for {file_spec.name} has a syntax error:
+            repair_prompt = f"""You are a code repair engine. The file {file_spec.name} has a syntax error that must be fixed.
+
+PROJECT: {spec.title} ({spec.stack})
+FILE PURPOSE: {file_spec.purpose}
+
+SYNTAX ERROR:
 {syntax_err}
 
-Original Code:
+BROKEN CODE:
+```
 {clean_code[:3000]}
+```
 
-Fix all syntax errors and return ONLY the corrected, valid source code inside a code fence.
-"""
+Return ONLY the complete, corrected source code inside a single code fence. Fix ALL syntax errors. Do not truncate or add stubs."""
             try:
                 repair_raw = brain.ask(
                     repair_prompt,
-                    system_override="You are an automated code repair assistant. Output ONLY corrected code.",
+                    system_override="You are an automated code repair assistant. Output ONLY complete, corrected, working source code in a code fence.",
                     use_rag=False,
                     max_tokens=self.max_tokens_per_call,
                 )

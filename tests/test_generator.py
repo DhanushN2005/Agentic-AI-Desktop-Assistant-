@@ -152,8 +152,9 @@ class TestCodeGeneratorExecution:
         spec = ProjectSpec("Service", "python", "desc", "python app.py", "pytest", [file_spec])
 
         mock_brain = MagicMock()
-        # First call syntax broken, second call fixed
+        # Call 1: intent plan, Call 2: broken code, Call 3: fixed code
         mock_brain.ask.side_effect = [
+            "Plan for service.py",
             "```python\ndef broken(:\n    pass\n```",
             "```python\ndef fixed():\n    return True\n```",
         ]
@@ -173,8 +174,9 @@ class TestCodeGeneratorExecution:
         spec = ProjectSpec("Hopeless", "python", "desc", "python app.py", "pytest", [file_spec])
 
         mock_brain = MagicMock()
-        # Both attempts broken
+        # Call 1: intent plan, Call 2: broken code, Call 3: repair attempt also broken
         mock_brain.ask.side_effect = [
+            "Plan for hopeless.py",
             "```python\ndef broken(:\n    pass\n```",
             "```python\ndef still_broken(:\n    pass\n```",
         ]

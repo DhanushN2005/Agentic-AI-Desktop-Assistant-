@@ -89,6 +89,13 @@ _KNOWN_ENV_KEYS = {
     "FLEXIE_ARTIFACT_BACKUP_DIR", "FLEXIE_JOB_TOKEN_BUDGET",
     "FLEXIE_OPENAI_BRIDGE_ENABLED", "FLEXIE_OPENAI_BRIDGE_PORT",
     "FLEXIE_CHEAP_FIRST_ENABLED",
+    # Job/build pipeline tunables
+    "FLEXIE_JOB_MAX_FILES", "FLEXIE_JOB_MAX_FILE_SIZE_KB",
+    "FLEXIE_JOB_VENV_TIMEOUT", "FLEXIE_JOB_INSTALL_TIMEOUT",
+    "FLEXIE_JOB_TEST_TIMEOUT", "FLEXIE_JOB_BUILD_TIMEOUT",
+    "FLEXIE_JOB_SMOKE_WAIT", "FLEXIE_JOB_VOICE_CLARIFY_TIMEOUT",
+    "FLEXIE_JOB_BRIDGE_API_KEY", "FLEXIE_JOB_DEFAULT_STACK",
+    "FLEXIE_GIT_USER_NAME", "FLEXIE_GIT_USER_EMAIL",
 }
 _ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _CUSTOM_KEY_RES = (
@@ -221,7 +228,7 @@ class Config:
     # Basic Info
     NAME       = "Flexie 2.0"
     USER_NAME  = "Dhanush"
-    WAKE_WORDS = ["flexie", "arsis", "wake up", "hello flexie", "hey flexie", "activate"]
+    WAKE_WORDS = ["flexie", "flexi", "alexi", "lexi", "flaxy", "arsis", "wake up", "hello flexie", "hello flexi", "hey flexie", "hey flexi", "activate"]
     DB_NAME    = "flexie_intelligence.db"
     LOG_FILE   = "flexie_activity.log"
     CONVERSATION_HISTORY_TURNS = _env_number("FLEXIE_CONVERSATION_HISTORY_TURNS", 8, int)
@@ -237,6 +244,19 @@ class Config:
     OPENAI_BRIDGE_PORT = _env_number("FLEXIE_OPENAI_BRIDGE_PORT", 9899, int)
     CHEAP_FIRST_ENABLED = _env_bool("FLEXIE_CHEAP_FIRST_ENABLED", True)
     ARTIFACT_BACKUP_DIR = os.getenv("FLEXIE_ARTIFACT_BACKUP_DIR", os.path.join(os.getcwd(), "context", "artifact_backups"))
+    # Build / Job pipeline tunables (all overridable via .env)
+    JOB_MAX_FILES         = _env_number("FLEXIE_JOB_MAX_FILES", 60, int)
+    JOB_MAX_FILE_SIZE_KB  = _env_number("FLEXIE_JOB_MAX_FILE_SIZE_KB", 300, int)
+    JOB_VENV_TIMEOUT      = _env_number("FLEXIE_JOB_VENV_TIMEOUT", 60, int)
+    JOB_INSTALL_TIMEOUT   = _env_number("FLEXIE_JOB_INSTALL_TIMEOUT", 180, int)
+    JOB_TEST_TIMEOUT      = _env_number("FLEXIE_JOB_TEST_TIMEOUT", 60, int)
+    JOB_BUILD_TIMEOUT     = _env_number("FLEXIE_JOB_BUILD_TIMEOUT", 120, int)
+    JOB_SMOKE_WAIT        = _env_number("FLEXIE_JOB_SMOKE_WAIT", 12.0, float)
+    JOB_VOICE_CLARIFY_TIMEOUT = _env_number("FLEXIE_JOB_VOICE_CLARIFY_TIMEOUT", 20, int)
+    JOB_BRIDGE_API_KEY    = os.getenv("FLEXIE_JOB_BRIDGE_API_KEY", "flexie-local-bridge")
+    JOB_DEFAULT_STACK     = os.getenv("FLEXIE_JOB_DEFAULT_STACK", "python-flask")
+    GIT_USER_NAME         = os.getenv("FLEXIE_GIT_USER_NAME", "Flexie Dev Assistant")
+    GIT_USER_EMAIL        = os.getenv("FLEXIE_GIT_USER_EMAIL", "flexie@local")
     SNAP_PATH  = os.path.join(os.getcwd(), "captures", "flexie_snap.png")
     CAPTURE_DIR = os.path.join(os.getcwd(), "captures")
     TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe" # Default Windows path

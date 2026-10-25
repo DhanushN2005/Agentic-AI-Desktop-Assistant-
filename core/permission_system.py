@@ -8,6 +8,9 @@ Every action must pass through this system. The LLM cannot bypass it.
 """
 import logging
 import re
+import time
+import uuid
+from collections.abc import Callable
 
 from core.danger_gate import DangerGate
 from core.tool_registry import PermissionLevel
@@ -26,6 +29,8 @@ class PermissionSystem:
         self.logger = logging.getLogger("Flexie.PermissionSystem")
         # Expiry (monotonic) for temporary escalations; None = not escalated.
         self._escalation_expires: float | None = None
+        self._pending_approval: dict | None = None
+        self._on_approval_callback: Callable[[dict], None] | None = None
 
         # Patterns that classify actions into permission levels
         self._level_patterns = {
@@ -195,6 +200,60 @@ class PermissionSystem:
         """Reset to default permission level."""
         self._escalation_expires = None
         self.current_level = self.default_level
+
+    def set_approval_callback(self, callback: Callable[[dict], None]):
+        """Register a callback invoked when an action requires approval."""
+        self._on_approval_callback = callback
+
+    def create_approval_request(
+        self,
+        action: str,
+        details: str = "",
+        level: PermissionLevel = PermissionLevel.USER_CONFIRMATION,
+    ) -> dict:
+        """Create a pending approval request for an action requiring confirmation."""
+        req = {
+            "id": f"apr_{uuid.uuid4().hex[:8]}",
+            "action": action,
+            "details": details,
+            "level": level,
+            "created_at": time.time(),
+            "status": "pending",
+        }
+        self._pending_approval = req
+        if self._on_approval_callback:
+            try:
+                self._on_approval_callback(req)
+            except Exception as e:
+                self.logger.debug(f"[PermissionSystem] approval callback failed: {e}")
+        return req
+
+    def get_pending_request(self) -> dict | None:
+        """Return the current pending approval request, if any."""
+        return self._pending_approval
+
+    def approve_request(self, request_id: str | None = None, ttl_seconds: float = 300.0) -> bool:
+        """Approve the pending request and escalate permission."""
+        if not self._pending_approval:
+            return False
+        if request_id and self._pending_approval.get("id") != request_id:
+            return False
+        req = self._pending_approval
+        req["status"] = "approved"
+        level = req.get("level", PermissionLevel.USER_CONFIRMATION)
+        self.escalate(level, ttl_seconds=ttl_seconds)
+        self._pending_approval = None
+        return True
+
+    def reject_request(self, request_id: str | None = None) -> bool:
+        """Reject and clear the pending approval request."""
+        if not self._pending_approval:
+            return False
+        if request_id and self._pending_approval.get("id") != request_id:
+            return False
+        self._pending_approval["status"] = "rejected"
+        self._pending_approval = None
+        return True
 
     def to_summary(self) -> str:
         """Human-readable permission summary."""

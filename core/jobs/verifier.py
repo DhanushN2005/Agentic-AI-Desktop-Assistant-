@@ -27,9 +27,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.jobs.generator import strip_fences_and_prose, validate_syntax
 from core.jobs.process import kill_process_tree
+from utils.config import Config
 from utils.path_jail import resolve_in_root
 
 logger = logging.getLogger("flexie.jobs.verifier")
+
+# Localhost probe address — intentionally not configurable (always loopback)
+_LOOPBACK = "127.0.0.1"
 
 
 def detect_stack(workspace_path: str) -> str:
@@ -48,7 +52,82 @@ def detect_stack(workspace_path: str) -> str:
         return "java"
     if os.path.exists(os.path.join(workspace_path, "index.html")):
         return "static"
+    # Check PLAN.md for stack hint written during scaffold
+    plan_md = os.path.join(workspace_path, "PLAN.md")
+    if os.path.exists(plan_md):
+        try:
+            with open(plan_md, "r", encoding="utf-8") as _f:
+                _content = _f.read()
+            if "static-web" in _content or "static_web" in _content:
+                return "static"
+        except Exception:
+            pass
     return "unknown"
+
+
+def extract_failing_file(error_output: str, workspace_path: str) -> str:
+    """Parse error output / tracebacks to find the most likely broken source file.
+
+    Searches for Python traceback patterns, Node.js error paths, pytest output,
+    and falls back to the most recently modified source file in the workspace.
+    Returns a relative path string suitable for resolve_in_root.
+    """
+    # 1. Python traceback: File "/abs/path/to/file.py", line N
+    py_tb = re.findall(r'File ["\']([^"\']+\.py)["\']', error_output)
+    for candidate in reversed(py_tb):  # last frame is usually the root cause
+        rel = os.path.relpath(candidate, workspace_path)
+        if not rel.startswith("..") and os.path.isfile(os.path.join(workspace_path, rel)):
+            return rel
+        # Try by basename inside workspace
+        base = os.path.basename(candidate)
+        for root, _, files in os.walk(workspace_path):
+            if base in files:
+                return os.path.relpath(os.path.join(root, base), workspace_path)
+
+    # 2. Node/Vite/npm error: contains file path with line:col pattern
+    node_matches = re.findall(
+        r'(?:ERROR|error|FAILED|failed)[^\n]*?([\w./\\-]+\.(?:js|jsx|ts|tsx|mjs|cjs))(?::\d+)?',
+        error_output,
+    )
+    for candidate in node_matches:
+        base = os.path.basename(candidate)
+        for root, _, files in os.walk(workspace_path):
+            if base in files:
+                return os.path.relpath(os.path.join(root, base), workspace_path)
+
+    # 3. pytest FAILED line: FAILED path/to/test_file.py::TestClass::test_method
+    pytest_matches = re.findall(r'FAILED\s+([\w./\\-]+\.py)', error_output)
+    for candidate in pytest_matches:
+        full = os.path.join(workspace_path, candidate)
+        if os.path.isfile(full):
+            return candidate
+
+    # 4. Fallback: most recently modified .py or .js source file in workspace
+    _py_exts = (".py", ".js", ".jsx", ".ts", ".tsx")
+    _skip_dirs = {"__pycache__", "node_modules", ".venv", "venv", ".git"}
+    latest_file: Optional[str] = None
+    latest_mtime: float = 0.0
+    for root, dirs, files in os.walk(workspace_path):
+        dirs[:] = [d for d in dirs if d not in _skip_dirs]
+        for fname in files:
+            if any(fname.endswith(ext) for ext in _py_exts) and not fname.startswith("test_"):
+                full = os.path.join(root, fname)
+                try:
+                    mtime = os.path.getmtime(full)
+                    if mtime > latest_mtime:
+                        latest_mtime = mtime
+                        latest_file = os.path.relpath(full, workspace_path)
+                except OSError:
+                    pass
+
+    if latest_file:
+        return latest_file
+
+    # Ultimate fallback
+    for name in ("app.py", "main.py", "index.js", "src/App.jsx"):
+        if os.path.exists(os.path.join(workspace_path, name)):
+            return name
+    return "app.py"
 
 
 def find_free_port() -> int:
@@ -77,7 +156,7 @@ def get_project_venv(workspace_path: str) -> Tuple[str, str]:
                 cwd=workspace_path,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=getattr(Config, "JOB_VENV_TIMEOUT", 60),
                 shell=False,
             )
             if res.returncode != 0:
@@ -92,20 +171,44 @@ def get_project_venv(workspace_path: str) -> Tuple[str, str]:
 
 def install_dependencies(workspace_path: str, stack: str) -> Tuple[bool, str]:
     """Install dependencies into isolated project environment."""
-    if stack == "python":
-        req_file = os.path.join(workspace_path, "requirements.txt")
-        if not os.path.exists(req_file):
-            return True, "No requirements.txt found; skipping install."
+    # Static web projects need nothing installed
+    if stack in ("static", "static-web", "unknown"):
+        return True, "Static web project — no dependencies to install."
 
+    if stack == "python":
         py_exe, pip_exe = get_project_venv(workspace_path)
-        logger.info("Installing Python dependencies into project .venv via %s...", pip_exe)
+        logger.info("Installing Python dependencies into project .venv via %s -m pip...", py_exe)
+
+        # Always use `py_exe -m pip` so packages land in the correct venv
+        # (pip_exe fallback path can point to global pip when venv creation fails)
+        pip_cmd = [py_exe, "-m", "pip"]
+
+        # Always ensure pytest is installed in the venv regardless of requirements.txt
         try:
-            res = subprocess.run(
-                [pip_exe, "install", "-r", "requirements.txt"],
+            res_pytest = subprocess.run(
+                pip_cmd + ["install", "pytest", "pytest-cov", "--quiet"],
                 cwd=workspace_path,
                 capture_output=True,
                 text=True,
-                timeout=180,
+                timeout=getattr(Config, "JOB_INSTALL_TIMEOUT", 180) // 2,
+                shell=False,
+            )
+            if res_pytest.returncode != 0:
+                logger.warning("pytest pre-install failed: %s", res_pytest.stderr.strip()[:300])
+        except Exception as _pe:
+            logger.warning("pytest pre-install exception: %s", _pe)
+
+        req_file = os.path.join(workspace_path, "requirements.txt")
+        if not os.path.exists(req_file):
+            return True, "No requirements.txt found; pytest installed."
+
+        try:
+            res = subprocess.run(
+                pip_cmd + ["install", "-r", "requirements.txt"],
+                cwd=workspace_path,
+                capture_output=True,
+                text=True,
+                timeout=getattr(Config, "JOB_INSTALL_TIMEOUT", 180),
                 shell=False,
             )
             if res.returncode == 0:
@@ -129,7 +232,7 @@ def install_dependencies(workspace_path: str, stack: str) -> Tuple[bool, str]:
                 cwd=workspace_path,
                 capture_output=True,
                 text=True,
-                timeout=180,
+                timeout=getattr(Config, "JOB_INSTALL_TIMEOUT", 180),
                 shell=False,
             )
             if res.returncode == 0:
@@ -141,8 +244,54 @@ def install_dependencies(workspace_path: str, stack: str) -> Tuple[bool, str]:
     return True, "No package installation required."
 
 
+def run_build_check(workspace_path: str, stack: str) -> Tuple[bool, str]:
+    """Run a compile/build step instead of a live HTTP smoke test.
+
+    Used for React/Vite and other build-step stacks where `npm run dev`
+    launches a long-running server that won't respond within a smoke-test window.
+    Returns (success, message).
+    """
+    npm_cmd = "npm.cmd" if sys.platform == "win32" else "npm"
+    if not shutil.which(npm_cmd):
+        return False, "npm not found on PATH. Cannot run build check."
+
+    # Ensure dependencies are installed first
+    install_ok, install_msg = install_dependencies(workspace_path, stack)
+    if not install_ok:
+        return False, f"Dependency install failed before build: {install_msg}"
+
+    try:
+        _build_timeout = getattr(Config, "JOB_BUILD_TIMEOUT", 120)
+        res = subprocess.run(
+            [npm_cmd, "run", "build"],
+            cwd=workspace_path,
+            capture_output=True,
+            text=True,
+            timeout=_build_timeout,
+            shell=False,
+        )
+        if res.returncode == 0:
+            return True, f"npm run build succeeded.\n{res.stdout.strip()[:500]}"
+        return False, f"npm run build failed (exit {res.returncode}):\n{(res.stderr or res.stdout).strip()[:800]}"
+    except subprocess.TimeoutExpired:
+        return False, f"npm run build timed out after {getattr(Config, 'JOB_BUILD_TIMEOUT', 120)} seconds."
+    except Exception as e:
+        return False, f"Build check exception: {e}"
+
 def run_tests(workspace_path: str, stack: str) -> Tuple[bool, str]:
     """Execute automated unit/integration tests in the isolated project environment."""
+    # Static web projects have no test runner — verify index.html exists instead
+    if stack in ("static", "static-web", "unknown"):
+        index_html = os.path.join(workspace_path, "index.html")
+        if os.path.exists(index_html) and os.path.getsize(index_html) > 0:
+            return True, "Static web project verified: index.html exists and is non-empty."
+        # Check subfolders
+        for sub in ("dist", "build", "public"):
+            sub_html = os.path.join(workspace_path, sub, "index.html")
+            if os.path.exists(sub_html):
+                return True, f"Static web project verified: {sub}/index.html exists."
+        return False, "Static web project is missing index.html."
+
     if stack == "python":
         py_exe, _ = get_project_venv(workspace_path)
         test_files = [f for f in os.listdir(workspace_path) if f.startswith("test_") and f.endswith(".py")]
@@ -155,7 +304,7 @@ def run_tests(workspace_path: str, stack: str) -> Tuple[bool, str]:
                 cwd=workspace_path,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=getattr(Config, "JOB_TEST_TIMEOUT", 60),
                 shell=False,
             )
             if res.returncode == 0:
@@ -172,7 +321,7 @@ def run_tests(workspace_path: str, stack: str) -> Tuple[bool, str]:
                 cwd=workspace_path,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=getattr(Config, "JOB_TEST_TIMEOUT", 60),
                 shell=False,
             )
             if res.returncode == 0:
@@ -184,14 +333,17 @@ def run_tests(workspace_path: str, stack: str) -> Tuple[bool, str]:
     return True, "No tests to run."
 
 
+
 def start_and_smoke_test(
     workspace_path: str,
     stack: str,
     run_command: str,
     port: int,
-    max_wait_seconds: float = 8.0,
+    max_wait_seconds: float = -1.0,
 ) -> Tuple[bool, str]:
     """Launch the application on a dynamic port, poll for readiness, smoke test, and tear down."""
+    if max_wait_seconds < 0:
+        max_wait_seconds = getattr(Config, "JOB_SMOKE_WAIT", 12.0)
     env = os.environ.copy()
     env["PORT"] = str(port)
     env["FLASK_RUN_PORT"] = str(port)
@@ -231,8 +383,8 @@ def start_and_smoke_test(
         start_time = time.monotonic()
         ready = False
         target_urls = [
-            f"http://127.0.0.1:{port}",
-            f"http://127.0.0.1:{port}/health",
+            f"http://{_LOOPBACK}:{port}",
+            f"http://{_LOOPBACK}:{port}/health",
             f"http://localhost:{port}",
         ]
 

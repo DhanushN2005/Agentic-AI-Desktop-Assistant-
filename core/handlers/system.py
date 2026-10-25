@@ -190,6 +190,30 @@ def handle_comm(orch, c):
         else:
             orch.speak("Opening WhatsApp Web.")
             orch.files.open_item("whatsapp")
+    elif any(x in c for x in ["reply to email", "reply to mail", "reply email", "reply mail", "reply to last email"]):
+        # Extract reply body if provided inline: e.g. "reply to email saying thank you"
+        saying_match = re.search(r"(?:saying|that|with)\s+(.+)", c)
+        inline_body = saying_match.group(1).strip() if saying_match else None
+
+        # Fetch latest email to determine sender
+        detailed = orch.email.get_unread_emails_detailed(count=1)
+        sender = None
+        subject = None
+        if detailed and "error" not in detailed[0]:
+            sender = detailed[0].get("from")
+            subject = detailed[0].get("subject")
+
+        to_addr = sender or "recipient"
+        if not inline_body:
+            orch.speak(f"Replying to {to_addr}. What should the reply say?")
+            inline_body = orch.voice.listen(timeout=10)
+
+        if inline_body and inline_body != "[error_offline]" and inline_body.strip():
+            res = orch.email.reply_email(to_addr, inline_body, subject=subject)
+            orch.speak(res)
+        else:
+            orch.speak("Reply cancelled.")
+        return True
     elif any(x in c for x in ["send mail", "send email"]):
         to_match = re.search(r"to\s+([^\s]+@[^\s]+)", c)
         if to_match:
@@ -209,7 +233,7 @@ def handle_comm(orch, c):
                 if body:
                     orch.speak(orch.email.send_email(to_addr.strip(), "Message from Flexie", body))
         return True
-    elif "email" in c:
+    elif "email" in c or "mail" in c:
         # Check inbox via EmailEngine first
         try:
             emails = orch.email.get_unread_emails(count=3)

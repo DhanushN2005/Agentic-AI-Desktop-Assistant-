@@ -279,11 +279,31 @@ class Brain:
             return None
 
     def ask(self, prompt: str, img_path: Optional[str] = None, system_override: Optional[str] = None, use_chat: bool = False, use_rag: bool = True, max_tokens: Optional[int] = None, history=None) -> str:
-        """Query the AI brain, with LRU caching and optional RAG."""
+        """Query the AI brain, with LRU caching and optional RAG. Includes rate-limit retry logic."""
         key = (prompt, system_override or self.system_prompt, use_rag, max_tokens, self._history_key(history))
         if key in self._cache:
             return self._cache[key]
-        result = self._ask_impl(prompt, img_path, system_override, use_chat, use_rag, max_tokens, history)
+            
+        import time
+        max_attempts = 4
+        result = ""
+        for attempt in range(max_attempts):
+            try:
+                result = self._ask_impl(prompt, img_path, system_override, use_chat, use_rag, max_tokens, history)
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                is_rate_limit = "429" in err_str or "rate limit" in err_str or "too many requests" in err_str
+                is_network_err = "broken pipe" in err_str or "connection" in err_str or "timeout" in err_str
+                if is_rate_limit or is_network_err:
+                    if attempt < max_attempts - 1:
+                        sleep_time = (attempt + 1) * 8 if is_rate_limit else 2
+                        logging.warning("API error (%s). Retrying AI request in %s seconds...", "rate limit" if is_rate_limit else "network error", sleep_time)
+                        time.sleep(sleep_time)
+                        continue
+                # If it's not a rate limit or network error, or we exceeded max attempts, raise it so the fallback mechanism triggers
+                raise e
+
         self._cache[key] = result
         if len(self._cache) > self._cache_max:
             self._cache.popitem(last=False)
@@ -324,6 +344,10 @@ class Brain:
                     chat_completion = self.groq_client.chat.completions.create(**kwargs)
                     return chat_completion.choices[0].message.content
                 except Exception as e:
+                    err_str = str(e).lower()
+                    is_retryable = "429" in err_str or "rate limit" in err_str or "too many requests" in err_str or "broken pipe" in err_str or "connection" in err_str or "timeout" in err_str
+                    if active != 'auto' and is_retryable:
+                        raise e
                     logging.debug("[core/brain.py:228] Swallowed exception: %s: %s", type(e).__name__, e)
                     print(f"[Groq Error]: {e} - Falling back")
                     if active == 'groq': return self._ddg_search(prompt) if online else ""
@@ -353,8 +377,13 @@ class Brain:
                         if getattr(resp, 'text', None):
                             return resp.text
                     except Exception as e:
-                        logging.debug("[core/brain.py:256] Swallowed exception: %s: %s", type(e).__name__, e)
+                        err_str = str(e).lower()
+                        is_retryable = "429" in err_str or "rate limit" in err_str or "too many requests" in err_str or "broken pipe" in err_str or "connection" in err_str or "timeout" in err_str
+                        if active != 'auto' and is_retryable:
+                            raise e
+                        logging.debug("[core/brain.py:246] Swallowed exception: %s: %s", type(e).__name__, e)
                         print(f"[Gemini Error]: {e} - Falling back")
+                        if active == 'gemini': return self._ddg_search(prompt) if online else ""
                 if getattr(self, 'gemini_model', None) is not None and genai_legacy is not None:
                     try:
                         model = self.gemini_model

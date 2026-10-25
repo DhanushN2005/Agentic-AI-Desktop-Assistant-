@@ -233,3 +233,108 @@ body {
     display: none;
   }
 }
+
+/* ——— Jarvis Extended HUD ——— */
+.hud-title {
+  top: 24px;
+  left: 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 16px;
+  letter-spacing: 0.18em;
+  font-weight: bold;
+}
+
+.hud-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  letter-spacing: 0.1em;
+  border: 1px solid currentColor;
+}
+
+.badge-connected {
+  color: #00ffcc;
+  border-color: rgba(0, 255, 204, 0.6);
+  text-shadow: 0 0 8px rgba(0, 255, 204, 0.8);
+  box-shadow: 0 0 10px rgba(0, 255, 204, 0.2);
+}
+
+.badge-offline {
+  color: #ffaa30;
+  border-color: rgba(255, 170, 48, 0.4);
+  opacity: 0.7;
+}
+
+.hud-speech-panel {
+  position: fixed;
+  top: 80px;
+  left: 24px;
+  max-width: 480px;
+  padding: 16px 20px;
+  background: rgba(10, 20, 30, 0.75);
+  border: 1px solid rgba(0, 242, 255, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 0 24px rgba(0, 242, 255, 0.15);
+  backdrop-filter: blur(12px);
+  z-index: 25;
+}
+
+.hud-speech-label {
+  font-size: 10px;
+  color: #00f2ff;
+  letter-spacing: 0.2em;
+  margin-bottom: 6px;
+}
+
+.hud-speech-content {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #e0f8ff;
+  text-shadow: 0 0 6px rgba(0, 242, 255, 0.4);
+}
+
+.hud-command-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  width: min(90vw, 560px);
+  z-index: 30;
+}
+
+.hud-input {
+  flex: 1;
+  background: rgba(8, 15, 25, 0.85);
+  border: 1px solid rgba(0, 242, 255, 0.45);
+  border-radius: 6px;
+  padding: 12px 18px;
+  font-family: "Courier New", monospace;
+  font-size: 14px;
+  color: #00f2ff;
+  outline: none;
+  box-shadow: 0 0 16px rgba(0, 242, 255, 0.12) inset;
+  backdrop-filter: blur(8px);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.hud-input:focus {
+  border-color: #00f2ff;
+  box-shadow: 0 0 20px rgba(0, 242, 255, 0.35);
+}
+
+.hud-send-btn {
+  background: rgba(0, 100, 180, 0.4);
+  border: 1px solid rgba(0, 242, 255, 0.6);
+  color: #00f2ff;
+  text-shadow: 0 0 8px rgba(0, 242, 255, 0.8);
+}
+
+.hud-send-btn:hover {
+  background: rgba(0, 180, 255, 0.35);
+  border-color: #00f2ff;
+}
+

@@ -18,10 +18,64 @@ export default function JarvisOrb() {
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<OrbSceneApi | null>(null);
   const trackerRef = useRef<HandTracker | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const [camera, setCamera] = useState<CameraState>("off");
   const [status, setStatus] = useState<TrackerStatus>({ hands: 0, mode: "idle" });
   const [error, setError] = useState<string | null>(null);
+  const [assistantState, setAssistantState] = useState<string>("STANDBY");
+  const [assistantSpeech, setAssistantSpeech] = useState<string>("");
+  const [commandInput, setCommandInput] = useState<string>("");
+  const [wsConnected, setWsConnected] = useState<boolean>(false);
+
+  // Connect to Flexiee 2.0 backend WebSocket
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: any = null;
+
+    const connectWs = () => {
+      try {
+        ws = new WebSocket("ws://127.0.0.1:8765");
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          setWsConnected(true);
+          setAssistantState("CONNECTED");
+        };
+
+        ws.onmessage = (event) => {
+          const raw = String(event.data);
+          if (raw.startsWith("STATE:")) {
+            const st = raw.slice(6).trim().toUpperCase();
+            setAssistantState(st);
+          } else if (raw.startsWith("SAY:")) {
+            setAssistantSpeech(raw.slice(4).trim());
+            setAssistantState("SPEAKING");
+          } else if (raw.startsWith("MODE:")) {
+            // mode changed
+          }
+        };
+
+        ws.onclose = () => {
+          setWsConnected(false);
+          setAssistantState("STANDBY");
+          reconnectTimeout = setTimeout(connectWs, 3000);
+        };
+
+        ws.onerror = () => {
+          setWsConnected(false);
+        };
+      } catch {
+        setWsConnected(false);
+      }
+    };
+
+    connectWs();
+    return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      ws?.close();
+    };
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -35,6 +89,16 @@ export default function JarvisOrb() {
       sceneRef.current = null;
     };
   }, []);
+
+  const sendCommand = useCallback((cmdText?: string) => {
+    const text = (cmdText || commandInput).trim();
+    if (!text) return;
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(text);
+      setAssistantState("PROCESSING");
+    }
+    setCommandInput("");
+  }, [commandInput]);
 
   const stopGestures = useCallback(() => {
     trackerRef.current?.stop();
@@ -80,6 +144,7 @@ export default function JarvisOrb() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === "INPUT") return;
       switch (e.key) {
         case "+":
         case "=":
@@ -113,7 +178,35 @@ export default function JarvisOrb() {
       <div className="overlay-grain" />
       <div className="overlay-scanlines" />
 
-      <div className="hud hud-title">U.L.T.R.O.N.</div>
+      <div className="hud hud-title">
+        <span>F.L.E.X.I.E. 2.0</span>
+        <span className={`hud-badge ${wsConnected ? "badge-connected" : "badge-offline"}`}>
+          {wsConnected ? `CORE: ${assistantState}` : "OFFLINE"}
+        </span>
+      </div>
+
+      {assistantSpeech && (
+        <div className="hud hud-speech-panel">
+          <div className="hud-speech-label">FLEXIE RESPONSE</div>
+          <div className="hud-speech-content">{assistantSpeech}</div>
+        </div>
+      )}
+
+      <div className="hud hud-command-bar">
+        <input
+          type="text"
+          className="hud-input"
+          placeholder="Speak or type command for Flexie..."
+          value={commandInput}
+          onChange={(e: any) => setCommandInput(e.target.value)}
+          onKeyDown={(e: any) => {
+            if (e.key === "Enter") sendCommand();
+          }}
+        />
+        <button type="button" className="hud-btn hud-send-btn" onClick={() => sendCommand()}>
+          EXECUTE
+        </button>
+      </div>
 
       <div className="hud hud-hint">
         <div>
@@ -136,12 +229,11 @@ export default function JarvisOrb() {
 
       <div className="hud hud-controls">
         <div className={`camera-panel${cameraOn ? " visible" : ""}`}>
-          {/* Mirrored preview so it behaves like a mirror */}
           <video ref={videoRef} muted playsInline className="camera-video" />
           <canvas ref={overlayRef} width={208} height={156} className="camera-overlay" />
           <div className="camera-status">
             {status.hands > 0
-              ? `${status.hands} HAND${status.hands > 1 ? "S" : ""} · ${MODE_LABEL[status.mode]}`
+              ? `${status.hands} HAND${status.hands > 1 ? "S" : ""} · ${MODE_LABEL[status.mode as keyof typeof MODE_LABEL] || "ACTIVE"}`
               : "SHOW HANDS"}
           </div>
         </div>

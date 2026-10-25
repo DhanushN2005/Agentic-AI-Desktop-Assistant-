@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from typing import Optional, Tuple
 
+from utils.config import Config
 from utils.path_jail import resolve_in_root
 
 logger = logging.getLogger("flexie.jobs.git")
@@ -55,14 +56,14 @@ def init_job_repo(workspace: str, workspace_root: Optional[str] = None) -> bool:
 
         # Set identity if unconfigured locally
         subprocess.run(
-            ["git", "config", "user.name", "Flexie Dev Assistant"],
+            ["git", "config", "user.name", getattr(Config, "GIT_USER_NAME", "Flexie Dev Assistant")],
             cwd=real_ws,
             capture_output=True,
             timeout=5,
             shell=False,
         )
         subprocess.run(
-            ["git", "config", "user.email", "flexie@local"],
+            ["git", "config", "user.email", getattr(Config, "GIT_USER_EMAIL", "flexie@local")],
             cwd=real_ws,
             capture_output=True,
             timeout=5,

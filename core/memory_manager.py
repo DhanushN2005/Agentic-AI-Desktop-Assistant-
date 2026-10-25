@@ -219,6 +219,7 @@ class MemoryManager:
         self._entries[entry.key] = entry
         self._save_entry(entry)
         self.logger.info(f"[MEMORY] Stored: {entry.key} ({category.name})")
+        self.sync_markdown_wiki()
         return True
 
     def recall(self, key: str) -> MemoryEntry | None:
@@ -252,6 +253,7 @@ class MemoryManager:
             del self._entries[key]
             self._delete_key(key)
             self.logger.info(f"[MEMORY] Forgot: {key}")
+            self.sync_markdown_wiki()
             return True
         return False
 
@@ -262,6 +264,8 @@ class MemoryManager:
             del self._entries[k]
             self._delete_key(k)
         self.logger.info(f"[MEMORY] Forgot {len(keys)} entries in {category.name}")
+        if keys:
+            self.sync_markdown_wiki()
         return len(keys)
 
     def get_by_category(self, category: MemoryCategory) -> list[MemoryEntry]:
@@ -330,3 +334,64 @@ class MemoryManager:
             f"  Stored: {time.strftime('%Y-%m-%d %H:%M', time.localtime(entry.timestamp))}\n"
             f"  Tags: {', '.join(entry.tags) if entry.tags else 'none'}"
         )
+
+    def export_to_markdown(self, filepath: str | None = None) -> str:
+        """Export all structured memories to a clean, human-readable Markdown wiki."""
+        if filepath is None:
+            data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+            os.makedirs(data_dir, exist_ok=True)
+            filepath = os.path.join(data_dir, "MEMORY.md")
+
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            "# 🧠 Flexiee Personal Knowledge Wiki",
+            f"*Last synchronized: {now_str}*",
+            "",
+            "> Human-readable, Flexie memory wiki persistent across restarts.",
+            "",
+        ]
+
+        active_entries = [e for e in self._entries.values() if not e.is_expired]
+
+        sections = [
+            (MemoryCategory.PREFERENCES, "🌟 User Preferences & Personalization"),
+            (MemoryCategory.FACTS, "📌 Learned Facts & Knowledge"),
+            (MemoryCategory.WORKSPACE, "💻 Workspace & Project Context"),
+            (MemoryCategory.TASKS, "⚡ Task Execution Records"),
+            (MemoryCategory.CONVERSATION, "💬 Conversation Notes"),
+        ]
+
+        for cat, title in sections:
+            cat_entries = [e for e in active_entries if e.category == cat]
+            if cat_entries:
+                lines.append(f"## {title}")
+                for e in sorted(cat_entries, key=lambda x: x.importance, reverse=True):
+                    val_str = str(e.value).strip()
+                    lines.append(f"- **{e.key}**: {val_str}")
+                lines.append("")
+
+        content = "\n".join(lines)
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+        except Exception as err:
+            self.logger.warning(f"[MEMORY] Could not write markdown wiki to {filepath}: {err}")
+
+        # Also mirror to workspace/MEMORY.md if workspace directory exists
+        ws_dir = os.path.join(os.path.dirname(__file__), "..", "workspace")
+        if os.path.isdir(ws_dir):
+            try:
+                ws_file = os.path.join(ws_dir, "MEMORY.md")
+                with open(ws_file, "w", encoding="utf-8") as wf:
+                    wf.write(content)
+            except Exception:
+                pass
+
+        return content
+
+    def sync_markdown_wiki(self):
+        """Automatically keep the Markdown wiki up to date on disk."""
+        try:
+            self.export_to_markdown()
+        except Exception as _e:
+            self.logger.debug(f"[MEMORY] Markdown wiki sync failed: {_e}")

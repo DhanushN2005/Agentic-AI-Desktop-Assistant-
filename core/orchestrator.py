@@ -157,15 +157,51 @@ class FlexieOrchestrator:
             from core.tool_registry import ToolRegistry
             from core.permission_system import PermissionSystem
             from core.coding_tools import register_coding_tools
-            self.desktop_control = DesktopControl()
+            self.permission_system = PermissionSystem()
+            self.desktop_control = DesktopControl(permission_system=self.permission_system)
             self.tool_registry = ToolRegistry()
-            self.agent_executor = AgentExecutor(self.tool_registry, PermissionSystem(), self.execution_graph, speak_fn=self.speak, orch=self)
+            self.agent_executor = AgentExecutor(self.tool_registry, self.permission_system, self.execution_graph, speak_fn=self.speak, orch=self)
+            def _on_approval_event(req):
+                import json
+                try:
+                    self.send_to_ui("APPROVAL_REQUEST", json.dumps({
+                        "id": req.get("id"),
+                        "action": req.get("action"),
+                        "level": req.get("level").name if hasattr(req.get("level"), "name") else str(req.get("level"))
+                    }))
+                except Exception as _e:
+                    logging.debug("[orchestrator:approval_event] %s: %s", type(_e).__name__, _e)
+            self.permission_system.set_approval_callback(_on_approval_event)
             # Register autonomous coding tools (file.read/write/patch, code.search, git, terminal, test, python.exec)
             try:
                 n = register_coding_tools(self.tool_registry, self)
                 logging.info(f"CodingTools registered: {n} tools")
             except Exception as ce:
                 logging.warning(f"CodingTools registration failed: {ce}")
+            # Register browser automation and communication tools (navigate, search, click, fill, email)
+            try:
+                from core.browser_and_comm_tools import register_browser_and_comm_tools
+                nb = register_browser_and_comm_tools(self.tool_registry, self)
+                logging.info(f"Browser & Comm tools registered: {nb} tools")
+            except Exception as bce:
+                logging.warning(f"Browser & Comm tools registration failed: {bce}")
+            # MCP Client Adapter (standard Model Context Protocol server support)
+            try:
+                from core.mcp_adapter import MCPManager
+                self.mcp_manager = MCPManager(self.tool_registry)
+                self.mcp_manager.start_configured_servers()
+                logging.info("MCPManager wired to ToolRegistry")
+            except Exception as me:
+                self.mcp_manager = None
+                logging.warning(f"MCPManager wiring failed: {me}")
+            # Multi-Agent Team (Lead, Coder, Researcher, System)
+            try:
+                from core.specialists import AgentTeam
+                self.agent_team = AgentTeam(self.tool_registry, self.brain, speak_fn=self.speak)
+                logging.info("AgentTeam initialized with Lead, Coder, Researcher, and System specialists")
+            except Exception as ate:
+                self.agent_team = None
+                logging.warning(f"AgentTeam initialization failed: {ate}")
             # Wire GoalPlanner with brain + registry after registry is ready (fixes None brain bug)
             try:
                 from core.goal_planner import GoalPlanner
@@ -263,6 +299,7 @@ class FlexieOrchestrator:
     def cleanup(self):
         """Universal cleanup on exit."""
         self.logger.info("Flexie orchestrator cleaning up...")
+        if hasattr(self, 'mcp_manager') and self.mcp_manager: self.mcp_manager.shutdown()
         if hasattr(self, 'yt'): self.yt.cleanup()
         if hasattr(self, 'browser'): self.browser.cleanup()
         if hasattr(self, 'voice'): self.voice.stop_speech = True
@@ -466,6 +503,11 @@ class FlexieOrchestrator:
                     self.send_to_ui("STATE", "THINKING")
                     context = self._format_conversation_history(self.get_conversation_history(current_query=cmd, limit=Config.ROUTING_CONTEXT_TURNS))
                     intent, confidence, params = self.router.route_dynamic(cmd, self.brain, context=context)
+                    # Short-circuit for job-system intents — never decompose into workflow steps
+                    if intent in ("dev_build", "build_project", "job_resume", "fix_build", "resume_build"):
+                        from core.jobs.handler import handle_job_intent
+                        handle_job_intent(self, intent, cmd)
+                        return
                     if intent == "complex" and confidence >= 0.5 and "steps" in params and params["steps"]:
                         self.logger.info(f"[PLANNER] Compound command routed semantically. Confidence: {confidence:.2f}")
                         self.execute_workflow(params["steps"])
@@ -628,7 +670,13 @@ class FlexieOrchestrator:
             # Inject Short-term context for follow-up recognition
             context = self._format_conversation_history(self.get_conversation_history(current_query=c, limit=5))
             intent, confidence, params = self.router.route_dynamic(c, self.brain, context=context)
-            
+
+            # Short-circuit: if dynamic router returns a job-system intent, dispatch immediately
+            if intent in ("dev_build", "build_project", "job_resume", "fix_build", "resume_build"):
+                from core.jobs.handler import handle_job_intent
+                handle_job_intent(self, intent, c)
+                return
+
         # 3. AGENTIC EXECUTION (Complex Multi-step)
         if intent == "complex":
             if is_subcommand or depth >= MAX_PLANNING_DEPTH:
@@ -1132,7 +1180,30 @@ class FlexieOrchestrator:
                             self.cmd_queue.put(f"research {query}")
                     elif msg in ("STOP", "CANCEL", "stop", "cancel"):
                         self.stop_event.set()
+                        if hasattr(self, 'controller') and self.controller and self.controller.pending_confirmation:
+                            self.controller._handle_confirmation("cancel")
+                        elif hasattr(self, 'permission_system') and self.permission_system:
+                            self.permission_system.reject_request()
                         self.speak("Task cancelled from UI.")
+                    elif msg in ("CONFIRM", "confirm", "APPROVE", "approve") or msg.startswith(("CONFIRM:", "APPROVE:")):
+                        req_id = msg.split(":", 1)[1].strip() if ":" in msg else None
+                        handled = False
+                        if hasattr(self, 'controller') and self.controller and self.controller.pending_confirmation:
+                            self.controller._handle_confirmation("confirm")
+                            handled = True
+                        elif hasattr(self, 'permission_system') and self.permission_system:
+                            handled = self.permission_system.approve_request(req_id)
+                        if handled:
+                            self.send_to_ui("APPROVAL_RESOLVED", "approved")
+                            self.speak("Action approved.")
+                    elif msg.startswith(("REJECT:", "DENY:")):
+                        req_id = msg.split(":", 1)[1].strip()
+                        if hasattr(self, 'controller') and self.controller and self.controller.pending_confirmation:
+                            self.controller._handle_confirmation("cancel")
+                        elif hasattr(self, 'permission_system') and self.permission_system:
+                            self.permission_system.reject_request(req_id)
+                        self.send_to_ui("APPROVAL_RESOLVED", "rejected")
+                        self.speak("Action rejected.")
                     else: 
                         # New UI sends direct commands like "volume 50" or "mode hacker"
                         self.cmd_queue.put(msg)

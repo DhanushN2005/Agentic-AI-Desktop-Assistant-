@@ -9,6 +9,7 @@ import pyautogui
 from core.danger_gate import DangerGate
 from core.safety import SafetyGuard
 from core.telemetry import Telemetry
+from core.tool_registry import PermissionLevel
 from engines.long_term_memory import GlobalMemory
 
 
@@ -20,6 +21,7 @@ class FlexieController:
         self.telemetry = Telemetry()
         self.safety = SafetyGuard()
         self.danger_gate = DangerGate()
+        self.permission_system = getattr(self.orch, "permission_system", None)
         self.long_term = GlobalMemory()
         self.logger = logging.getLogger("Flexie.Controller")
 
@@ -214,9 +216,20 @@ class FlexieController:
             self.telemetry.end_trace(trace, status="blocked", error="Safety violation")
             return "blocked"
 
-        # 3. DANGER GATE: high-impact actions require explicit human confirmation.
-        if self.danger_gate.detect(command):
+        # 3. DANGER GATE & PERMISSION CHECK: high-impact actions require explicit human confirmation.
+        is_dangerous = self.danger_gate.detect(command)
+        perm_level = self.permission_system.classify_action(command) if self.permission_system else None
+        requires_approval = is_dangerous or (
+            perm_level and perm_level.value >= PermissionLevel.USER_CONFIRMATION.value
+            and self.permission_system.current_level.value < perm_level.value
+        )
+        if requires_approval:
             self.pending_confirmation = command
+            if self.permission_system:
+                level_to_req = perm_level or PermissionLevel.USER_CONFIRMATION
+                self.permission_system.create_approval_request(command, level=level_to_req)
+            if hasattr(self.orch, "send_to_ui"):
+                self.orch.send_to_ui("APPROVAL_REQUEST", command)
             self.orch.speak(
                 "That action is destructive or irreversible. Say 'confirm' to proceed, or 'cancel' to abort."
             )
@@ -234,11 +247,19 @@ class FlexieController:
         if self.danger_gate.is_confirmation(command):
             confirmed = self.pending_confirmation
             self.pending_confirmation = None
+            if self.permission_system:
+                self.permission_system.approve_request()
+            if hasattr(self.orch, "send_to_ui"):
+                self.orch.send_to_ui("APPROVAL_RESOLVED", "approved")
             self.orch.speak("Confirmed. Executing now.", silent=True)
             # Dispatch with a fresh trace; danger gate already approved.
             return self._invoke(confirmed)
         elif self.danger_gate.is_cancellation(command):
             self.pending_confirmation = None
+            if self.permission_system:
+                self.permission_system.reject_request()
+            if hasattr(self.orch, "send_to_ui"):
+                self.orch.send_to_ui("APPROVAL_RESOLVED", "rejected")
             self.orch.speak("Cancelled. No action was taken.")
             return "cancelled"
         else:

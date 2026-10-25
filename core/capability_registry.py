@@ -29,6 +29,7 @@ class CapabilityRegistry:
         self.register(Capability("media", ["media"]))
         self.register(Capability("application", ["click_element", "type_text"]))
         self.register(Capability("sdd", ["sdd_build", "dev_explain"]))
+        self.register(Capability("specialist", ["specialist", "delegate", "agent_team", "coder_agent", "researcher_agent", "system_agent"]))
 
     def register(self, capability: Capability):
         self._capabilities[capability.name] = capability

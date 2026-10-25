@@ -155,7 +155,7 @@ class TestHandlerAndRouterIntegration:
                 res = handle_job_intent(mock_orch, "job_open", "open project in vscode")
                 assert res is True
                 mock_orch.speak.assert_called_once()
-                assert "Opened project" in mock_orch.speak.call_args[0][0]
+                assert "opened the project folder" in mock_orch.speak.call_args[0][0].lower()
                 mock_orch.send_to_ui.assert_called_with("JOB_LAUNCHED", mock_launch.return_value)
 
     def test_router_natural_language_job_routes(self):

@@ -212,6 +212,10 @@ class WorkflowExecutor:
         """Executes a list of steps sequentially with system state snapshots, verification hooks, and self-healing recovery."""
         orch = self.orch
 
+        if not steps or len(steps) == 0:
+            orch.logger.warning("[WorkflowExecutor] Empty steps provided. Skipping execution.")
+            return
+
         # Acquire arbitration lock for the main orchestrator agent
         lock_id = "workflow_execution"
         if not orch.arbitrator.acquire_lock(lock_id, "main_orchestrator", timeout=3.0):

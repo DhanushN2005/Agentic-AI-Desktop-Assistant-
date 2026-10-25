@@ -49,6 +49,15 @@ TYPO_MAP = {
     "jsn": "json", "jsoon": "json",
     "hashh": "hash", "haash": "hash",
     "morse": "morse", "morss": "morse",
+    # Common voice command typos
+    "tha": "the", "thet": "the", "teh": "the",
+    "opended": "opened", "opend": "opened", "openned": "opened",
+    "calender": "calendar", "calander": "calendar", "calandar": "calendar",
+    "xcalender": "xcalendar", "xcalander": "xcalendar",
+    "runn": "run", "rrun": "run",
+    "lauch": "launch", "launche": "launch", "laucnh": "launch",
+    "buid": "build", "buildd": "build",
+    "creat": "create", "cretae": "create",
 }
 
 
@@ -86,14 +95,32 @@ NL_OVERRIDES = [
     # Clipboard
     (r"\b(clipboard|clip\s+history|what\s+(?:did\s+)?i\s+copy|copy\s+(?:this|that|to|it|the\s+result)|paste\s+(?:from|that|this|it|the\s+result|the\s+output)|search\s+clipboard|clear\s+clipboard)\b", "clipboard_mgr", 0.85),
 
-    # Dev Assistant Autonomous Build & Control
-    (r"\b(build\s+(?:a\s+)?project|create\s+(?:a\s+)?project|start\s+(?:a\s+)?project|code\s+(?:a\s+)?project|autonomous\s+build|build\s+(?:an?\s+)?(?:web\s+)?app)\b", "build_project", 0.95),
-    (r"\b(job\s+status|build\s+status|how\s+is\s+(?:the\s+)?(?:build|project)|status\s+of\s+(?:the\s+)?build)\b", "job_status", 0.95),
-    (r"\b(pause\s+(?:the\s+)?(?:build|job)|hold\s+(?:the\s+)?build)\b", "job_pause", 0.95),
-    (r"\b(resume\s+(?:the\s+)?(?:build|job)|continue\s+(?:the\s+)?build)\b", "job_resume", 0.95),
-    (r"\b(cancel\s+(?:the\s+)?(?:build|job)|stop\s+(?:the\s+)?(?:build|job)|abort\s+(?:the\s+)?build)\b", "job_cancel", 0.95),
-    (r"\b(undo\s+(?:last\s+)?phase|rollback\s+(?:last\s+)?phase)\b", "job_undo", 0.95),
+    # Dev Assistant — Job LAUNCH / OPEN (MUST be checked BEFORE dev_build to prevent wrong routing)
+    # These patterns cover: 'run/open/launch/show the app/project/calendar I built'
+    (r"\bcan\s+you\s+(?:please\s+)?(?:run|open|launch|show|start|execute|preview)\s+(?:that|the|it|this)\s*(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|thing|one)?\b", "job_open", 0.97),
+    (r"\b(?:run|open|launch|show|start)\s+(?:that|the|it)\s+(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|website|thing)\b", "job_open", 0.97),
+    (r"\b(?:run|open|start|launch|show|execute|preview)\s+(?:the\s+)?(?:built|created|generated|finished|completed)\s+(?:app(?:lication)?|project|website|cal(?:e?nd[ae]r)?)\b", "job_open", 0.97),
+    (r"\b(?:run|open|launch|show)\s+(?:the\s+)?(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?)\s+(?:in\s+(?:browser|edge|chrome|firefox)|for\s+me|now|please)?\b", "job_open", 0.96),
+    (r"\b(?:can\s+(?:you\s+)?)?(?:run|start|open|launch)\s+(?:the\s+)?(?:opened|existing|last|previous)\s+(?:project|app(?:lication)?|build|workspace)\b", "job_open", 0.96),
+    (r"\b(?:open|launch|show|run|start)\s+(?:it|that|this)\s+(?:in\s+(?:browser|the\s+browser|edge|chrome|firefox))?\b", "job_open", 0.95),
+    # Existing patterns kept:
     (r"\b(open\s+(?:the\s+)?(?:project|workspace|in\s+vscode|in\s+code)|launch\s+(?:the\s+)?(?:project|app|application))\b", "job_open", 0.95),
+    (r"\b(run|start|execute|show|preview)\s+(?:me\s+)?(?:the\s+)?(?:that\s+)?(?:built|created|generated|opened|app(?:lication)?|project|cal[l]*[ea]nd[ea]r)\s*(?:app(?:lication)?|project|for\s+me)?\b", "job_open", 0.94),
+    (r"\b(run|start|open|launch|show)\s+(?:that|it|the\s+app|the\s+project|the\s+calendar|that\s+app)\b", "job_open", 0.94),
+    (r"\bcan\s+you\s+(?:run|start|open|launch|show)\s+(?:that|the)\s+(?:app|project|cal[l]*[ea]nd[ea]r)\b", "job_open", 0.94),
+    # 'can you start running/opening the X that you built/created/made/generated now'
+    (r"\bcan\s+you\s+(?:please\s+)?(?:start\s+)?(?:running|opening|launching|showing)\s+(?:the\s+)?(?:\w+\s+){0,6}(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|website)\b", "job_open", 0.97),
+    (r"\b(?:start\s+)?(?:run|open|launch|show)\s+(?:the\s+)?(?:\w+\s+){1,8}(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|website)\b", "job_open", 0.98),
+    (r"\b(?:start\s+)?(?:running|opening|launching)\s+(?:the\s+)?(?:(?:\w+\s+){0,5})(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?)\s+(?:that\s+(?:you|i)\s+(?:build|built|created|made|generated)|now|please)\b", "job_open", 0.97),
+
+    # Dev Assistant Autonomous Build & Control
+    (r"\b(?:can you\s+|could you\s+|please\s+)?(build|create|make|code|develop|generate)\b.*\b(project|web\s*app|application|website|cal[l]*[ea]nd[ea]r|portal|service)\b", "dev_build", 0.96),
+    (r"\b(?:can you\s+|could you\s+|please\s+)?(build|create|make|code|develop)\s+(?:me\s+)?(?:a\s+)?(?:an\s+)?(?:modern\s+|interactive\s+|full\s+)?(?:app|application|website|web\s*app|cal[l]*[ea]nd[ea]r|system|tool)\b", "dev_build", 0.96),
+
+    # Dev Assistant - Debug and Fix
+    (r"\b(?:fix|debug|repair|solve|resolve)\s+(?:the\s+)?(?:issues?|bugs?|errors?|problems?)\s+(?:in\s+)?(?:that\s+)?(?:the\s+)?(?:app|project|application|build)\b", "job_fix", 0.96),
+    (r"\b(?:the\s+)?(?:app|project|application|build)\s+(?:is\s+not\s+working|is\s+broken|has\s+bugs|failed|crashed|is\s+failing)\b", "job_fix", 0.96),
+    (r"\b(?:app\s+)?not\s+(?:working|created|functioning|visible).*?(?:fix|resolve|debug)\b", "job_fix", 0.95),
 
     # Code Generation (generate/write code) - MUST come BEFORE local_code_search
     # Only match explicit code generation requests, NOT searches
@@ -242,10 +269,13 @@ NL_OVERRIDES = [
     (r"\b(export\s+(?:the\s+)?(?:result|output|answer)\s+(?:to|as)\s+(?:a\s+)?(?:file\s+)?(?:in\s+)?(?:the\s+)?(?:downloads?|desktop|documents?))\b", "file_save", 0.9),
 
     # Build Jobs (control & status)
-    (r"\b(job\s+status|build\s+status|status\s+of\s+(?:the\s+)?build|how\s+is\s+the\s+build\s+going)\b", "job_status", 0.95),
-    (r"\b(pause\s+(?:the\s+)?(?:build|job|project))\b", "job_pause", 0.95),
-    (r"\b(resume\s+(?:the\s+)?(?:build|job|project)|fix\s+(?:the\s+)?(?:build|tests?|code|that)|retry\s+(?:the\s+)?build|heal\s+(?:the\s+)?build)\b", "job_resume", 0.95),
-    (r"\b(cancel\s+(?:the\s+)?(?:build|job|project)|stop\s+(?:the\s+)?build)\b", "job_cancel", 0.95),
+    (r"\b(?:can you\s+|could you\s+|please\s+)?(build|create|make|code|develop|generate)\b.*\b(project|web\s*app|application|website|cal[le]nder|dashboard|portfolio|portal|service)\b", "build_project", 0.96),
+    (r"\b(?:can you\s+|could you\s+|please\s+)?(build|create|make|code|develop)\s+(?:me\s+)?(?:a\s+)?(?:an\s+)?(?:modern\s+|interactive\s+|full\s+)?(?:app|application|website|web\s*app|cal[le]nder|system|tool)\b", "build_project", 0.96),
+    (r"\b(build\s+(?:a\s+)?project|create\s+(?:a\s+)?project|start\s+(?:a\s+)?project|code\s+(?:a\s+)?project|autonomous\s+build|build\s+(?:an?\s+)?(?:web\s+)?app)\b", "build_project", 0.95),
+    (r"\b(job\s+status|build\s+status|how\s+is\s+(?:the\s+)?(?:build|project|task)|status\s+of\s+(?:the\s+)?build)\b", "job_status", 0.95),
+    (r"\b(pause\s+(?:the\s+)?(?:build|job|project|task))\b", "job_pause", 0.95),
+    (r"\b(resume\s+(?:the\s+)?(?:build|job|project|task|app\s+building\s+task)|continue\s+(?:the\s+)?(?:build|task)|fix\s+(?:the\s+)?(?:build|tests?|code|that)|retry\s+(?:the\s+)?build|heal\s+(?:the\s+)?build)\b", "job_resume", 0.95),
+    (r"\b(cancel\s+(?:the\s+)?(?:build|job|project|task)|stop\s+(?:the\s+)?(?:build|job))\b", "job_cancel", 0.95),
     (r"\b(undo\s+(?:the\s+)?(?:last\s+)?(?:build\s+)?phase|rollback\s+(?:last\s+)?phase)\b", "job_undo", 0.95),
     (r"\b(open\s+(?:the\s+)?(?:project|workspace|in\s+vscode|in\s+code)|launch\s+(?:the\s+)?(?:project|app|application))\b", "job_open", 0.95),
 ]
@@ -1033,7 +1063,9 @@ class IntentRouter:
         - knowledge_search (searching local files/notes)
         - search (web search)
         - conversational (general chat)
-        - complex (multi-step tasks)
+        - dev_build (creating/building autonomous software projects, web apps, calendars, tools, dashboards, or websites - use this for any app, software, or project build request)
+        - job_resume (resuming or auto-healing a paused or failed software build task; use when user says resume/fix/retry/continue the app/build/task)
+        - complex (multi-step tasks that don't match the above)
         - artifact_open (open/show the active generated file)
         - artifact_run (run/execute the active generated file)
         - artifact_edit (modify/update the active generated file)
@@ -1138,9 +1170,14 @@ class IntentRouter:
         ]):
             return "knowledge_search", 0.9
 
-        # 1.5. SPECIAL CASE: WEB DEVELOPMENT
-        if any(x in cmd for x in ["build", "create", "make", "generate", "code", "develop"]) and any(y in cmd for y in ["website", "app", "project", "portfolio"]):
-            return "dev_build", 0.95
+        # 1.45. SPECIAL CASE: JOB RESUME / RETRY / FIX BUILD
+        if any(x in cmd for x in ["resume", "retry", "continue", "fix", "recover"]) and any(y in cmd for y in ["app", "build", "project", "job", "task"]):
+            return "job_resume", 0.98
+
+        # 1.5. SPECIAL CASE: WEB / SOFTWARE / APP DEVELOPMENT
+        if any(x in cmd for x in ["build", "create", "make", "generate", "code", "develop"]) and any(y in cmd for y in ["website", "app", "project", "portfolio", "calendar", "calender", "callender", "service"]):
+            if not any(z in cmd for z in ["interface", "page", "form", "component"]):
+                return "dev_build", 0.96
 
         # 1.55. SPECIAL CASE: MATH
         if any(x in cmd for x in ["plus", "minus", "times", "divided by", "multiplied by", "calculate", "math problem"]) and any(ch.isdigit() for ch in cmd):

@@ -27,7 +27,7 @@ def router():
         ("calculate 5 plus 5", "calc"),
         ("what is 12 times 12", "calc"),
         ("check battery", "status"),
-        ("remember that my name is Dhanush", "memory_system"),
+        ("remember that my name is Dhanush", "memory"),
         ("translate good morning to Spanish", "translate"),
         ("convert 100 dollars to rupees", "convert"),
         ("convert 5 kilometers to miles", "convert"),

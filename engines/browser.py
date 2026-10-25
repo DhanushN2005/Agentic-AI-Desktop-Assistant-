@@ -268,6 +268,31 @@ class BrowserEngine:
             
         return f"Navigated to {url}"
 
+    def search_in_browser(self, query: str) -> str:
+        """Automates searching Google in the persistent Playwright browser session."""
+        import urllib.parse
+        url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}"
+        nav_res = self.navigate(url)
+        time.sleep(1)
+        results = []
+        try:
+            if self.page:
+                items = self.page.query_selector_all("div.g, div[data-sokoban-container]")
+                for item in items[:3]:
+                    title_el = item.query_selector("h3")
+                    snippet_el = item.query_selector("div[data-sncf], div.VwiC3b")
+                    title = title_el.inner_text() if title_el else ""
+                    snippet = snippet_el.inner_text() if snippet_el else ""
+                    if title:
+                        results.append(f"{title}: {snippet}")
+        except Exception as e:
+            self.logger.warning("Error parsing Google search results: %s", e)
+
+        if results:
+            summary = "\n".join(f"• {r}" for r in results)
+            return f"Searched for '{query}' in Chrome. Here are top results:\n{summary}"
+        return f"Searched for '{query}' in Chrome. {nav_res}"
+
     def highlight_element(self, selector: str) -> bool:
         """Draws a red border around the element to show the user what will be clicked."""
         if not self.page: return False

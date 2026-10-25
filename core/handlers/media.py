@@ -3,6 +3,8 @@ import urllib.parse
 
 
 def handle_play_youtube(orch, c):
+    if any(k in c for k in ["app", "build", "task", "project", "code"]):
+        return False
     if any(x in c for x in ["next", "skip", "kip"]):
         orch.speak("Skipping to the next track.")
         orch.speak(orch.yt.control_player("next"))
@@ -31,25 +33,28 @@ def handle_play_youtube(orch, c):
 
 
 def handle_youtube(orch, c):
+    if any(k in c for k in ["app", "build", "task", "project", "code"]):
+        return False
     if any(x in c for x in ["skip ad", "skip the ad", "skip the add", "kip ad", "kip the ad"]):
         orch.speak("Attempting to skip advertisement.")
         res = orch.yt.skip_ad()
         orch.speak(res)
         return True
 
-    # Advanced Controls
+    # Advanced Controls (Substring based)
     yt_actions = {
-        "next": ["next", "skip song", "skip video"],
-        "fullscreen": ["full screen", "fullscreen", "show full screen", "show fullscreen", "show in full screen"],
-        "theatre": ["theatre mode", "theater mode", "wide mode"],
-        "captions": ["caption", "subtitle"],
-        "speed up": ["faster", "speed up", "increase speed"],
-        "slow down": ["slower", "slow down", "decrease speed"],
-        "reset speed": ["normal speed", "reset speed", "standard speed"],
-        "forward": ["forward", "skip 10 seconds", "go ahead"],
-        "backward": ["backward", "rewind", "go back 10 seconds"],
-        "volume up": ["volume up", "increase volume", "louder"],
-        "volume down": ["volume down", "decrease volume", "softer"]
+        "pause": ["pause", "stop", "halt", "resume", "play", "mute", "unmute"],
+        "next": ["next", "skip"],
+        "fullscreen": ["fullscreen", "full screen", "maximize"],
+        "theatre": ["theatre", "theater", "wide"],
+        "captions": ["caption", "subtitle", "cc "],
+        "speed up": ["fast", "speed up"],
+        "slow down": ["slow"],
+        "reset speed": ["normal speed", "reset speed"],
+        "forward": ["forward", "ahead"],
+        "backward": ["backward", "rewind", "go back"],
+        "volume up": ["volume up", "louder", "increase vol"],
+        "volume down": ["volume down", "softer", "quieter", "decrease vol"]
     }
 
     for act, triggers in yt_actions.items():
@@ -74,6 +79,9 @@ def handle_youtube(orch, c):
 
 
 def handle_media(orch, c):
+    if any(k in c for k in ["app", "build", "task", "project", "code"]):
+        return False
+
     # Persistence: If YouTube is active, prioritize it
     if orch.yt.is_session_active() or orch.ctx.active_engine == "youtube":
         if any(x in c for x in ["stop", "pause", "halt", "resume", "play"]):

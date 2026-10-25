@@ -24,7 +24,17 @@ def handle_search(orch, c):
         orch.send_to_ui("STATE", "PROCESSING")
         summary = orch.brain.ask(f"Query: {clean_query}. Give a concise Answer/Summary for active user.")
         orch.ctx.update(query=clean_query, last_response=summary)
-        orch.speak(summary)  # Re-speaking the summary
+        orch.speak(summary)
+
+        # If user explicitly requested in-browser search, use automated BrowserEngine
+        use_browser_engine = any(k in c.lower() for k in ["in chrome", "on chrome", "browser automation", "using playwright", "in browser"])
+        if use_browser_engine and hasattr(orch, "browser") and orch.browser:
+            try:
+                browser_res = orch.browser.search_in_browser(clean_query)
+                orch.send_to_ui("SAY", browser_res)
+                return True
+            except Exception as _be:
+                logging.debug("BrowserEngine search fallback to OS launch: %s", _be)
 
         # Open browser for deep research
         url = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean_query)}"

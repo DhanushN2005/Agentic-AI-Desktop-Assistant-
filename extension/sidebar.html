@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flexie Copilot</title>
+  <link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+  <div class="sidebar-header">
+    <div class="brand">
+      <div class="pulse-dot"></div>
+      <span class="brand-title">FLEXIE</span>
+    </div>
+    <div id="connectionStatus" class="status-badge">STANDBY</div>
+  </div>
+
+  <div class="page-context-card" id="pageContextCard">
+    <div class="context-label">ACTIVE PAGE</div>
+    <div class="context-title" id="pageTitle">Detecting active tab...</div>
+    <div class="context-url" id="pageUrl">--</div>
+  </div>
+
+  <div class="action-chips">
+    <button class="chip" id="btnSummarize">📋 Summarize</button>
+    <button class="chip" id="btnKeyPoints">⚡ Key Takeaways</button>
+    <button class="chip" id="btnDebugCode">🐞 Debug Code</button>
+    <button class="chip" id="btnResearch">🌐 Cross-Tab Research</button>
+  </div>
+
+  <div class="chat-feed" id="chatFeed">
+    <div class="msg flexie">
+      Greetings Dhanush. I am active on this page. Ask me to summarize, extract information, explain code, or perform tasks.
+    </div>
+  </div>
+
+  <div class="approval-card" id="approvalCard" style="display: none;">
+    <div class="approval-title">⚠️ PERMISSION REQUIRED</div>
+    <div class="approval-desc" id="approvalDesc">Flexie requests approval to interact with this page.</div>
+    <div class="approval-buttons">
+      <button class="btn-confirm" id="btnConfirmAction">CONFIRM</button>
+      <button class="btn-cancel" id="btnCancelAction">CANCEL</button>
+    </div>
+  </div>
+
+  <div class="input-container">
+    <button class="voice-btn" id="btnVoice" title="Voice Input">🎤</button>
+    <input type="text" id="userInput" placeholder="Ask Flexie about this page..." autocomplete="off">
+    <button class="send-btn" id="btnSend">➤</button>
+  </div>
+
+  <script src="sidebar.js"></script>
+</body>
+</html>
