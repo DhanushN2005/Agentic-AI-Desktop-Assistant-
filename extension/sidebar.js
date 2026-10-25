@@ -342,4 +342,14 @@ if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
-addSystemMsg("Flexiee sidebar ready — type a question or a DOM command (click, scroll, fill, extract tables…)");
+addSystemMsg("Flexie ready — ask a question or type a DOM command (click, scroll, fill, extract tables…)");
+
+// Consume any pending DOM command injected by popup quick chips
+chrome.storage.local.get(["flexie_pending_dom_cmd"], (data) => {
+  if (data.flexie_pending_dom_cmd) {
+    chrome.storage.local.remove("flexie_pending_dom_cmd");
+    const cmd = data.flexie_pending_dom_cmd;
+    userInput.value = cmd;
+    setTimeout(handleSend, 600); // short delay so tab is ready
+  }
+});

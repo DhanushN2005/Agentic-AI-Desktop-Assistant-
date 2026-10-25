@@ -21,16 +21,50 @@
     <div class="context-url" id="pageUrl">--</div>
   </div>
 
+  <!-- AI action chips -->
   <div class="action-chips">
     <button class="chip" id="btnSummarize">📋 Summarize</button>
     <button class="chip" id="btnKeyPoints">⚡ Key Takeaways</button>
     <button class="chip" id="btnDebugCode">🐞 Debug Code</button>
-    <button class="chip" id="btnResearch">🌐 Cross-Tab Research</button>
+    <button class="chip" id="btnResearch">🌐 Research</button>
+  </div>
+
+  <!-- DOM task shortcut chips -->
+  <div class="dom-chips">
+    <button class="dom-chip" data-cmd="extract tables">⊞ Tables</button>
+    <button class="dom-chip" data-cmd="extract links">🔗 Links</button>
+    <button class="dom-chip" data-cmd="scroll to bottom">↓ Scroll</button>
+    <button class="dom-chip" data-cmd="scroll to top">↑ Top</button>
+    <button class="dom-chip" data-cmd="submit form">✓ Submit</button>
+  </div>
+
+  <!-- Collapsible DOM help panel -->
+  <div class="dom-help-toggle" id="domHelpToggle">
+    <span class="dom-help-arrow" id="domHelpArrow">▶</span>
+    DOM COMMANDS REFERENCE
+  </div>
+  <div class="dom-help-panel" id="domHelpPanel">
+    <strong>Click / Press</strong>
+    <code>click Login</code> · <code>click #submit-btn</code>
+    <strong>Fill inputs</strong>
+    <code>fill email with me@ex.com</code>
+    <strong>Scroll</strong>
+    <code>scroll to bottom</code> · <code>scroll to .section</code>
+    <strong>Find text</strong>
+    <code>find pricing</code> · <code>highlight error</code>
+    <strong>Extract data</strong>
+    <code>extract tables</code> · <code>extract links</code>
+    <strong>Inject banner</strong>
+    <code>banner Deploy complete!</code>
+    <strong>Inspect element</strong>
+    <code>info .hero-title</code>
+    <strong>Submit form</strong>
+    <code>submit form</code>
   </div>
 
   <div class="chat-feed" id="chatFeed">
     <div class="msg flexie">
-      Greetings Dhanush. I am active on this page. Ask me to summarize, extract information, explain code, or perform tasks.
+      Flexie ready. Ask a question, use an action chip, or type a DOM command like <em>click Login</em> or <em>extract tables</em>.
     </div>
   </div>
 
@@ -45,10 +79,41 @@
 
   <div class="input-container">
     <button class="voice-btn" id="btnVoice" title="Voice Input">🎤</button>
-    <input type="text" id="userInput" placeholder="Ask Flexie about this page..." autocomplete="off">
+    <input type="text" id="userInput" placeholder="Ask or type a DOM command…" autocomplete="off">
     <button class="send-btn" id="btnSend">➤</button>
   </div>
 
   <script src="sidebar.js"></script>
+  <script>
+    // DOM help panel toggle
+    const domHelpToggle = document.getElementById("domHelpToggle");
+    const domHelpPanel  = document.getElementById("domHelpPanel");
+    const domHelpArrow  = document.getElementById("domHelpArrow");
+    domHelpToggle.addEventListener("click", () => {
+      const open = domHelpPanel.classList.toggle("open");
+      domHelpArrow.style.transform = open ? "rotate(90deg)" : "";
+    });
+
+    // DOM shortcut chips — inject command text into input and send
+    document.querySelectorAll(".dom-chip[data-cmd]").forEach(chip => {
+      chip.addEventListener("click", () => {
+        const input = document.getElementById("userInput");
+        input.value = chip.dataset.cmd;
+        input.focus();
+        document.getElementById("btnSend").click();
+      });
+    });
+
+    // Approval card buttons (confirmation flow stub)
+    document.getElementById("btnConfirmAction").addEventListener("click", () => {
+      document.getElementById("approvalCard").style.display = "none";
+      // Emit confirm event for sidebar.js to handle if needed
+      document.dispatchEvent(new CustomEvent("flexie:approval", { detail: { approved: true } }));
+    });
+    document.getElementById("btnCancelAction").addEventListener("click", () => {
+      document.getElementById("approvalCard").style.display = "none";
+      document.dispatchEvent(new CustomEvent("flexie:approval", { detail: { approved: false } }));
+    });
+  </script>
 </body>
 </html>

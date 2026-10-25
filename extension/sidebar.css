@@ -278,3 +278,114 @@ body {
   border-color: var(--accent);
   box-shadow: 0 0 10px var(--accent-glow);
 }
+
+/* ── System / status messages ── */
+.msg.system {
+  align-self: center;
+  background: rgba(0, 242, 255, 0.04);
+  border: 1px solid rgba(0, 242, 255, 0.12);
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  max-width: 100%;
+  text-align: center;
+}
+
+/* ── DOM shortcut chips row ── */
+.dom-chips {
+  display: flex;
+  gap: 5px;
+  padding: 4px 14px 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-top: 1px solid var(--border);
+}
+.dom-chips::-webkit-scrollbar { display: none; }
+.dom-chip {
+  flex-shrink: 0;
+  background: rgba(169, 112, 255, 0.07);
+  border: 1px solid rgba(169, 112, 255, 0.25);
+  border-radius: 12px;
+  color: #c8a8ff;
+  font-size: 10px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.18s;
+  white-space: nowrap;
+}
+.dom-chip:hover {
+  background: rgba(169, 112, 255, 0.2);
+  border-color: #a970ff;
+  color: #fff;
+}
+
+/* ── Collapsible DOM help panel ── */
+.dom-help-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.8px;
+  border-top: 1px solid rgba(0, 242, 255, 0.07);
+  user-select: none;
+  transition: color 0.15s;
+}
+.dom-help-toggle:hover { color: var(--text-primary); }
+.dom-help-arrow { font-size: 9px; transition: transform 0.2s; }
+.dom-help-panel {
+  display: none;
+  margin: 0 14px 8px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(0, 242, 255, 0.1);
+  border-radius: 8px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.8;
+}
+.dom-help-panel.open { display: block; }
+.dom-help-panel code {
+  color: #00f2ff;
+  background: rgba(0, 242, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+}
+.dom-help-panel strong { color: var(--text-primary); display: block; margin-bottom: 2px; }
+
+/* ── Approval card ── */
+.btn-confirm {
+  flex: 1;
+  padding: 7px 12px;
+  background: rgba(255, 59, 48, 0.8);
+  border: none;
+  border-radius: 5px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-confirm:hover { background: rgba(255, 59, 48, 1); }
+.btn-cancel {
+  flex: 1;
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.btn-cancel:hover { border-color: var(--text-muted); color: var(--text-primary); }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-thumb { background: rgba(0, 242, 255, 0.15); border-radius: 2px; }
