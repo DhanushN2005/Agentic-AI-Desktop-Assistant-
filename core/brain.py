@@ -336,30 +336,34 @@ class Brain:
         if online:
             active = getattr(Config, 'ACTIVE_PROVIDER', 'auto').lower() if hasattr(Config, 'ACTIVE_PROVIDER') else 'auto'
             if active in ('auto','groq') and self.groq_client:
-                try:
-                    model = getattr(self, 'groq_model', getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b'))
-                    kwargs = dict(messages=self._build_messages(sys_p, prompt, history), model=model, timeout=Config.LLM_REQUEST_TIMEOUT)
-                    if max_tokens is not None:
-                        kwargs["max_tokens"] = max_tokens
-                    chat_completion = self.groq_client.chat.completions.create(**kwargs)
-                    return chat_completion.choices[0].message.content
-                except Exception as e:
-                    err_str = str(e).lower()
-                    is_retryable = "429" in err_str or "rate limit" in err_str or "too many requests" in err_str or "broken pipe" in err_str or "connection" in err_str or "timeout" in err_str
-                    if active != 'auto' and is_retryable:
-                        raise e
-                    logging.debug("[core/brain.py:228] Swallowed exception: %s: %s", type(e).__name__, e)
-                    print(f"[Groq Error]: {e} - Falling back")
-                    if active == 'groq':
-                        # Tool-call error: model generated a tool call despite tool_choice=none.
-                        # Try other providers before falling back to DDG.
-                        is_tool_err = "tool choice" in err_str or "tool_use_failed" in err_str or "tool_use" in err_str
-                        if is_tool_err:
-                            r = self._ask_openai_compatible(self.openai_client, getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini'), prompt, sys_p, max_tokens, history)
-                            if r: return r
-                            r = self._ask_openai_compatible(self.deepseek_client, getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat'), prompt, sys_p, max_tokens, history)
-                            if r: return r
-                        return self._ddg_search(prompt) if online else ""
+                # Groq has a tight TPM ceiling (~8 000 tokens/min on free tier).
+                # Skip large prompts so we don't exhaust the budget on one call.
+                _groq_chars = len(prompt) + len(sys_p) + sum(len(str(m)) for m in (history or []))
+                if _groq_chars > 20000:
+                    print(f"[Groq] Skipping oversized prompt ({_groq_chars} chars) — trying next provider")
+                else:
+                    try:
+                        model = getattr(self, 'groq_model', getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b'))
+                        kwargs = dict(messages=self._build_messages(sys_p, prompt, history), model=model, timeout=Config.LLM_REQUEST_TIMEOUT)
+                        if max_tokens is not None:
+                            kwargs["max_tokens"] = max_tokens
+                        chat_completion = self.groq_client.chat.completions.create(**kwargs)
+                        return chat_completion.choices[0].message.content
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        is_retryable = "429" in err_str or "rate limit" in err_str or "too many requests" in err_str or "broken pipe" in err_str or "connection" in err_str or "timeout" in err_str
+                        if active != 'auto' and is_retryable:
+                            raise e
+                        logging.debug("[core/brain.py:228] Swallowed exception: %s: %s", type(e).__name__, e)
+                        print(f"[Groq Error]: {e} - Falling back")
+                        if active == 'groq':
+                            is_tool_err = "tool choice" in err_str or "tool_use_failed" in err_str or "tool_use" in err_str
+                            if is_tool_err:
+                                r = self._ask_openai_compatible(self.openai_client, getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini'), prompt, sys_p, max_tokens, history)
+                                if r: return r
+                                r = self._ask_openai_compatible(self.deepseek_client, getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat'), prompt, sys_p, max_tokens, history)
+                                if r: return r
+                            return self._ddg_search(prompt) if online else ""
             if active in ('auto','openai'):
                 r = self._ask_openai_compatible(self.openai_client, getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini'), prompt, sys_p, max_tokens, history)
                 if r: return r

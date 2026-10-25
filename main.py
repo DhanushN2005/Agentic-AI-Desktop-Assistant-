@@ -28,11 +28,13 @@ def check_single_instance():
         import psutil
         current_pid = os.getpid()
         for proc in psutil.process_iter(['pid', 'name']):
-            if proc.info['name'] == "python.exe" or proc.info['name'] == "python":
-                # Check command line to see if it's main.py
+            pname = str(proc.info.get('name') or "").lower()
+            if pname in ("python.exe", "python", "flexie.exe"):
                 try:
                     cmdline = proc.cmdline()
-                    if any("main.py" in arg for arg in cmdline) and proc.info['pid'] != current_pid:
+                    if any("--ui" in arg for arg in cmdline):
+                        continue
+                    if any("main.py" in arg or "flexie.exe" in arg for arg in cmdline) and proc.info['pid'] != current_pid:
                         print(f"[Conflict]: Flexie is already running (PID: {proc.info['pid']}).")
                         print("Please close the other instance before starting a new one.")
                         sys.exit(1)
@@ -45,6 +47,8 @@ def check_single_instance():
 
 def run_ui():
     """Lauches the UI as a separate process to ensure it doesn't block the AI."""
+    if getattr(sys, "frozen", False):
+        return subprocess.Popen([sys.executable, "--ui"], stderr=subprocess.DEVNULL)
     ui_path = os.path.join(os.path.dirname(__file__), "interface", "ui.py")
     # Redirect stderr to DEVNULL to hide Qt rendering warnings (UpdateLayeredWindowIndirect failed)
     return subprocess.Popen([sys.executable, ui_path], stderr=subprocess.DEVNULL)
@@ -128,4 +132,13 @@ def main():
         sys.exit(0)
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
+    if "--ui" in sys.argv:
+        from PyQt6.QtWidgets import QApplication
+        from interface.ui import FlexieUI
+        app = QApplication(sys.argv)
+        ui = FlexieUI()
+        ui.show()
+        sys.exit(app.exec())
     main()

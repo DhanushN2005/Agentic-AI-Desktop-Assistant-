@@ -598,8 +598,21 @@ class FlexieOrchestrator:
         # SQLite + vector writes never block the routing hot path (Fix #4).
         threading.Thread(target=self._async_memory_write, args=(c,), daemon=True).start()
         
+        # 0. NL_OVERRIDE patterns are authoritative and MUST bypass all caches.
+        # (Stale cache entries from earlier wrong routes would otherwise shadow them.)
+        from core.router import NL_OVERRIDES as _NL_OVERRIDES
+        _nl_intent, _nl_conf = None, 0.0
+        for _pat, _ni, _nc in _NL_OVERRIDES:
+            if re.search(_pat, c, re.IGNORECASE):
+                _nl_intent, _nl_conf = _ni, _nc
+                break
+
+        if _nl_intent and _nl_conf >= 0.95:
+            intent, confidence = _nl_intent, _nl_conf
+            # Correct any stale cache entry so it won't wrong-route next time
+            self._route_cache[c] = (intent, confidence)
         # Check LRU route cache first (Fix #9) then adaptive router then Tier-1 regex.
-        if c in self._route_cache:
+        elif c in self._route_cache:
             intent, confidence = self._route_cache[c]
             self.logger.debug(f"[ROUTE CACHE HIT] '{c}' -> {intent} ({confidence:.2f})")
         elif self.adaptive_router.get_cached_route(c):

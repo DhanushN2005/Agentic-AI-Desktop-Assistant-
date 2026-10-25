@@ -119,6 +119,13 @@ def is_vague_request(request: str) -> bool:
         "inventory", "expense", "budget", "finance", "invoice", "receipt", "payment",
         "recipe", "food", "fitness", "health", "habit", "workout", "meditation",
         "flashcard", "study", "learning", "exam", "stopwatch", "countdown",
+        # Clock / time display variations (including common voice-ASR typos)
+        "clack", "clok", "wallclock", "analog", "digital", "rotating", "spinning",
+        "pins", "hands", "dial", "face", "display", "alarm", "reminder",
+        # General creative / utility
+        "snake", "tetris", "puzzle", "quiz", "chatbot", "landing", "signup",
+        "login", "register", "profile", "settings", "admin", "panel",
+        "gallery", "slider", "carousel", "modal", "popup", "drawer",
     }
 
     words = set(re.findall(r"\w+", c))
