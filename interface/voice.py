@@ -85,9 +85,7 @@ class VoiceInterface:
         self.recognizer.energy_threshold = 150 # Lowered from 300 - fixes quiet voice not detected
         self.recognizer.pause_threshold = 0.8 # Faster endpoint detection
         self.recognizer.non_speaking_duration = 0.4
-        self.recognizer.dynamic_energy_threshold = True
-        self.recognizer.dynamic_energy_adjustment_damping = 0.15
-        self.recognizer.dynamic_energy_ratio = 1.5 # Sensitive to quiet speech to prevent premature cutoff
+        self.recognizer.dynamic_energy_threshold = False  # we manage noise_floor ourselves via _noise_floor_persist
         
         self.speech_queue = queue.Queue()
         self.stop_speech = False
@@ -552,7 +550,14 @@ class VoiceInterface:
             
             # Ambient floor in RAW 16-bit RMS units — the same scale as
             # recognizer.energy_threshold, so the two are always comparable.
-            noise_floor = max(float(self.recognizer.energy_threshold), VAD_MIN_ENERGY)
+            # Persist across calls: seeding from energy_threshold every call resets
+            # the adapted-down floor (e.g. 82) back to calibration (e.g. 164),
+            # spiking the threshold to ~246 when the next utterance comes quickly.
+            _saved = getattr(self, '_noise_floor_persist', None)
+            if _saved is not None and VAD_MIN_ENERGY * 0.25 <= _saved <= VAD_MIN_ENERGY * 8:
+                noise_floor = _saved
+            else:
+                noise_floor = max(float(self.recognizer.energy_threshold), VAD_MIN_ENERGY)
             
             # webrtcvad only understands 8/16/32/48 kHz streams. It is used as an
             # additional (OR) onset signal: measured on this hardware it stays
@@ -653,6 +658,7 @@ class VoiceInterface:
                     if not speech_started and not self.is_speaking:
                         noise_floor = (noise_floor * 0.95) + (rms * 0.05)
                         noise_floor = max(noise_floor, VAD_MIN_ENERGY * 0.25)
+                        self._noise_floor_persist = noise_floor  # carry adapted value into next call
                         
                     # 3. Echo-Proof Barge-In & Self-Trigger Prevention
                     # Threshold is "a bit above the measured room ambience", but never
