@@ -207,76 +207,239 @@
             align-items: center; justify-content: center; position: relative; gap: 0;
         }
 
-        /* Waveform canvas sits behind the orb */
-        #waveCanvas {
+        /* Full-scene canvas: particles + waveform */
+        #orbCanvas {
             position: absolute;
             top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             pointer-events: none;
-            opacity: 0;
-            transition: opacity 0.4s;
+            z-index: 1;
         }
-        #waveCanvas.active { opacity: 1; }
 
         /* ── Orb ── */
         .orb-container {
-            position: relative; width: 400px; height: 400px;
+            position: relative; width: 420px; height: 420px;
             display: flex; align-items: center; justify-content: center;
-            cursor: pointer;
-            transition: transform 0.3s cubic-bezier(0.175,0.885,0.32,1.275);
+            cursor: pointer; z-index: 2;
+            transition: transform 0.35s cubic-bezier(0.175,0.885,0.32,1.275);
         }
-        .orb-container:hover { transform: scale(1.02); }
+        .orb-container:hover { transform: scale(1.025); }
+        .orb-container:active { transform: scale(0.97); }
 
-        .orb {
-            position: absolute; width: 160px; height: 160px; border-radius: 50%;
-            background: radial-gradient(circle at 35% 35%, #ffffff 0%, var(--accent-primary) 35%, var(--accent-secondary) 75%, #020712 100%);
-            box-shadow: 0 0 70px rgba(0,242,255,0.5), inset 0 0 35px rgba(0,0,0,0.8);
-            animation: orb-pulse 3.5s ease-in-out infinite;
-            z-index: 3;
-            transition: background 0.4s ease, box-shadow 0.4s ease;
-        }
+        /* Outermost slow ring — segmented arc style */
         .orb-ring-outer {
-            position: absolute; width: 340px; height: 340px; border-radius: 50%;
-            border: 1.5px dashed rgba(0,242,255,0.22);
-            animation: rotate 26s linear infinite;
+            position: absolute; width: 370px; height: 370px; border-radius: 50%;
+            border: 1px solid transparent;
+            background: conic-gradient(
+                rgba(0,242,255,0.35) 0deg, transparent 30deg,
+                rgba(0,242,255,0.18) 60deg, transparent 90deg,
+                rgba(0,102,255,0.28) 120deg, transparent 150deg,
+                rgba(0,242,255,0.22) 200deg, transparent 230deg,
+                rgba(0,102,255,0.15) 280deg, transparent 310deg,
+                rgba(0,242,255,0.3)  340deg, transparent 360deg
+            );
+            -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #fff calc(100% - 1px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #fff calc(100% - 1px));
+            animation: rotate 30s linear infinite;
         }
+
+        /* Second decorative ring with orbital dot */
         .orb-ring {
-            position: absolute; width: 280px; height: 280px; border-radius: 50%;
-            border: 1px solid rgba(0,242,255,0.18);
-            animation: rotate 14s linear infinite;
+            position: absolute; width: 300px; height: 300px; border-radius: 50%;
+            border: 1px solid rgba(0,242,255,0.14);
+            animation: rotate 16s linear infinite;
+        }
+        .orb-ring::before {
+            content: ''; position: absolute;
+            top: -4px; left: 50%; transform: translateX(-50%);
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--accent-primary);
+            box-shadow: 0 0 10px var(--accent-primary), 0 0 20px var(--accent-primary);
         }
         .orb-ring::after {
-            content: ''; position: absolute; top: -5px; left: 50%;
-            width: 10px; height: 10px;
-            background: var(--accent-primary); border-radius: 50%;
-            box-shadow: 0 0 14px var(--accent-primary);
-        }
-        .orb-ring-inner {
-            position: absolute; width: 220px; height: 220px; border-radius: 50%;
-            border: 1px dotted rgba(0,242,255,0.4);
-            animation: rotate 7s linear infinite reverse;
+            content: ''; position: absolute;
+            bottom: -4px; right: 30%;
+            width: 5px; height: 5px; border-radius: 50%;
+            background: var(--accent-secondary);
+            box-shadow: 0 0 8px var(--accent-secondary);
         }
 
-        /* Data nodes on outer ring */
+        /* Inner fast ring */
+        .orb-ring-inner {
+            position: absolute; width: 230px; height: 230px; border-radius: 50%;
+            border: 1px dashed rgba(0,242,255,0.3);
+            animation: rotate 8s linear infinite reverse;
+        }
+        .orb-ring-inner::before {
+            content: ''; position: absolute;
+            top: 50%; right: -4px; transform: translateY(-50%);
+            width: 7px; height: 7px; border-radius: 50%;
+            background: #a970ff;
+            box-shadow: 0 0 10px #a970ff;
+        }
+
+        /* The orb core — layered for depth */
+        .orb {
+            position: absolute; width: 164px; height: 164px; border-radius: 50%;
+            z-index: 3;
+            animation: orb-breathe 4s ease-in-out infinite;
+            transition: box-shadow 0.5s ease;
+        }
+        /* Outer glow layer */
+        .orb::before {
+            content: ''; position: absolute; inset: -18px; border-radius: 50%;
+            background: radial-gradient(circle, rgba(0,242,255,0.18) 0%, transparent 70%);
+            animation: orb-breathe 4s ease-in-out infinite reverse;
+        }
+        /* Glass highlight */
+        .orb::after {
+            content: ''; position: absolute;
+            top: 12%; left: 18%; width: 38%; height: 30%;
+            background: radial-gradient(ellipse, rgba(255,255,255,0.55) 0%, transparent 80%);
+            border-radius: 50%; transform: rotate(-30deg);
+            pointer-events: none;
+        }
+        /* Inner orb body — set by JS */
+        .orb-core {
+            position: absolute; inset: 0; border-radius: 50%;
+            background: radial-gradient(circle at 35% 30%,
+                rgba(255,255,255,0.9) 0%,
+                var(--accent-primary) 28%,
+                var(--accent-secondary) 62%,
+                #010814 100%);
+            box-shadow:
+                0 0 60px rgba(0,242,255,0.55),
+                0 0 120px rgba(0,102,255,0.25),
+                inset 0 0 40px rgba(0,0,0,0.75),
+                inset 0 0 10px rgba(0,242,255,0.2);
+        }
+        /* Hex grid overlay on orb */
+        .orb-hex {
+            position: absolute; inset: 0; border-radius: 50%; overflow: hidden; z-index: 1;
+            background-image:
+                repeating-linear-gradient(60deg, rgba(0,242,255,0.04) 0px, rgba(0,242,255,0.04) 1px, transparent 1px, transparent 12px),
+                repeating-linear-gradient(120deg, rgba(0,242,255,0.04) 0px, rgba(0,242,255,0.04) 1px, transparent 1px, transparent 12px),
+                repeating-linear-gradient(0deg, rgba(0,242,255,0.04) 0px, rgba(0,242,255,0.04) 1px, transparent 1px, transparent 12px);
+        }
+        /* Scanline sweep */
+        .orb-scan {
+            position: absolute; inset: 0; border-radius: 50%; overflow: hidden;
+            z-index: 2; pointer-events: none;
+        }
+        .orb-scan::after {
+            content: ''; position: absolute; left: 0; right: 0; height: 2px;
+            background: linear-gradient(to right, transparent, rgba(0,242,255,0.6), transparent);
+            animation: orb-scan 3s ease-in-out infinite;
+            top: 0;
+        }
+        @keyframes orb-scan {
+            0%   { top: 10%; opacity: 0; }
+            10%  { opacity: 1; }
+            90%  { opacity: 1; }
+            100% { top: 90%; opacity: 0; }
+        }
+
+        /* Data tags orbiting the outer ring */
         .ring-node {
-            position: absolute; width: 340px; height: 340px;
-            border-radius: 50%; pointer-events: none; animation: rotate 26s linear infinite;
+            position: absolute; width: 370px; height: 370px;
+            border-radius: 50%; pointer-events: none;
+            animation: rotate 30s linear infinite;
         }
         .ring-node span {
-            position: absolute; top: -8px; left: 50%;
-            transform: translateX(-50%);
+            position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
             font-size: 8px; font-family: 'JetBrains Mono', monospace;
-            color: rgba(0,242,255,0.5); letter-spacing: 0.5px; white-space: nowrap;
+            color: rgba(0,242,255,0.6); letter-spacing: 1px; white-space: nowrap;
+            padding: 2px 5px; background: rgba(0,0,0,0.4); border-radius: 3px;
         }
-        .ring-node span:nth-child(2) { transform: translateX(-50%) rotate(90deg) translateY(-160px); }
-        .ring-node span:nth-child(3) { transform: translateX(-50%) rotate(180deg) translateY(-160px); }
-        .ring-node span:nth-child(4) { transform: translateX(-50%) rotate(270deg) translateY(-160px); }
+        .ring-node span:nth-child(2) { top: 50%; right: -22px; left: auto; transform: translateY(-50%); }
+        .ring-node span:nth-child(3) { bottom: -10px; top: auto; left: 50%; transform: translateX(-50%); }
+        .ring-node span:nth-child(4) { top: 50%; left: -22px; transform: translateY(-50%); }
 
-        @keyframes orb-pulse {
-            0%,100% { transform: scale(1); opacity: 0.92; }
-            50% { transform: scale(1.08); opacity: 1; filter: brightness(1.2); }
+        @keyframes orb-breathe {
+            0%,100% { transform: scale(1); }
+            50% { transform: scale(1.06); filter: brightness(1.15); }
         }
         @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        /* ── Toast Notifications ── */
+        #toastContainer {
+            position: fixed; top: 20px; right: 20px;
+            display: flex; flex-direction: column; gap: 10px;
+            z-index: 9999; pointer-events: none;
+            max-width: 340px;
+        }
+        .toast {
+            display: flex; align-items: flex-start; gap: 12px;
+            padding: 14px 16px;
+            background: rgba(10,15,25,0.92);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            pointer-events: all;
+            cursor: pointer;
+            animation: toast-in 0.35s cubic-bezier(0.175,0.885,0.32,1.275) forwards;
+            overflow: hidden;
+            position: relative;
+            min-width: 280px;
+        }
+        .toast.dismissing { animation: toast-out 0.3s ease forwards; }
+
+        .toast-icon {
+            font-size: 15px; margin-top: 1px; flex-shrink: 0;
+        }
+        .toast-body { flex: 1; min-width: 0; }
+        .toast-title {
+            font-size: 12px; font-weight: 700; margin-bottom: 3px; color: var(--text-main);
+        }
+        .toast-msg {
+            font-size: 11.5px; color: var(--text-dim); line-height: 1.45;
+            word-break: break-word;
+        }
+        .toast-close {
+            font-size: 13px; color: var(--text-dim); background: none; border: none;
+            cursor: pointer; padding: 0; flex-shrink: 0; line-height: 1;
+            transition: color 0.15s;
+        }
+        .toast-close:hover { color: #fff; }
+
+        /* Colour variants */
+        .toast.info   { border-left: 3px solid var(--accent-primary); }
+        .toast.info   .toast-icon { color: var(--accent-primary); }
+        .toast.success{ border-left: 3px solid var(--accent-ok); }
+        .toast.success .toast-icon { color: var(--accent-ok); }
+        .toast.warn   { border-left: 3px solid var(--accent-warn); }
+        .toast.warn   .toast-icon { color: var(--accent-warn); }
+        .toast.error  { border-left: 3px solid var(--accent-danger); }
+        .toast.error  .toast-icon { color: var(--accent-danger); }
+        .toast.job    { border-left: 3px solid #a970ff; }
+        .toast.job    .toast-icon { color: #a970ff; }
+
+        /* Progress bar at bottom of toast */
+        .toast-progress {
+            position: absolute; bottom: 0; left: 0; height: 2px;
+            background: currentColor; opacity: 0.4;
+            border-radius: 0 0 14px 14px;
+            animation: toast-progress linear forwards;
+        }
+        .toast.info    .toast-progress { color: var(--accent-primary); }
+        .toast.success .toast-progress { color: var(--accent-ok); }
+        .toast.warn    .toast-progress { color: var(--accent-warn); }
+        .toast.error   .toast-progress { color: var(--accent-danger); }
+        .toast.job     .toast-progress { color: #a970ff; }
+
+        @keyframes toast-in {
+            from { opacity: 0; transform: translateX(60px) scale(0.95); }
+            to   { opacity: 1; transform: translateX(0) scale(1); }
+        }
+        @keyframes toast-out {
+            from { opacity: 1; transform: translateX(0) scale(1); max-height: 120px; }
+            to   { opacity: 0; transform: translateX(60px) scale(0.9); max-height: 0; padding: 0; margin: 0; }
+        }
+        @keyframes toast-progress {
+            from { width: 100%; }
+            to   { width: 0%; }
+        }
 
         /* ── State Badge ── */
         .state-row { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 20px; }
@@ -448,6 +611,9 @@
 <div class="ambient-glow"></div>
 <div class="ambient-glow-bottom"></div>
 
+<!-- Toast notification stack -->
+<div id="toastContainer"></div>
+
 <div class="app-container">
 
     <!-- ── Header ── -->
@@ -543,19 +709,23 @@
 
     <!-- ── Center: Core ── -->
     <main class="core-area">
-        <canvas id="waveCanvas" width="420" height="420"></canvas>
+        <canvas id="orbCanvas" width="460" height="460"></canvas>
 
-        <div class="orb-container" onclick="send('wake up')" title="Click to wake Flexie">
+        <div class="orb-container" onclick="orbClick()" title="Click to wake Flexie">
             <div class="orb-ring-outer"></div>
             <div class="ring-node">
-                <span>CPU</span>
-                <span>MEM</span>
-                <span>NET</span>
-                <span>GPU</span>
+                <span id="rn-cpu">CPU 0%</span>
+                <span id="rn-net">NET ↑</span>
+                <span id="rn-ram">RAM 0%</span>
+                <span id="rn-ai">AI ✓</span>
             </div>
             <div class="orb-ring"></div>
             <div class="orb-ring-inner"></div>
-            <div class="orb" id="theCore"></div>
+            <div class="orb" id="theCore">
+                <div class="orb-core" id="orbCore"></div>
+                <div class="orb-hex"></div>
+                <div class="orb-scan"></div>
+            </div>
         </div>
 
         <div class="state-row">
@@ -684,12 +854,162 @@ const STATES = {
     ERROR:      { label: 'ERROR',      color: '#ff003c', hint: 'SOMETHING WENT WRONG' },
 };
 
+// ── Toast Notification System ─────────────────────────────────────────
+const TOAST_ICONS = {
+    info:    'fa-circle-info',
+    success: 'fa-circle-check',
+    warn:    'fa-triangle-exclamation',
+    error:   'fa-circle-xmark',
+    job:     'fa-hammer',
+};
+
+function toast(title, msg = '', type = 'info', duration = 4500) {
+    const container = document.getElementById('toastContainer');
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+
+    el.innerHTML = `
+        <i class="fa ${TOAST_ICONS[type] || TOAST_ICONS.info} toast-icon"></i>
+        <div class="toast-body">
+            <div class="toast-title">${title}</div>
+            ${msg ? `<div class="toast-msg">${msg}</div>` : ''}
+        </div>
+        <button class="toast-close" onclick="dismissToast(this.closest('.toast'))">✕</button>
+        <div class="toast-progress" style="animation-duration:${duration}ms"></div>
+    `;
+
+    container.appendChild(el);
+    el.addEventListener('click', e => {
+        if (!e.target.classList.contains('toast-close')) dismissToast(el);
+    });
+
+    // Auto-dismiss
+    const timer = setTimeout(() => dismissToast(el), duration);
+    el._dismissTimer = timer;
+    return el;
+}
+
+function dismissToast(el) {
+    if (!el || el.classList.contains('dismissing')) return;
+    clearTimeout(el._dismissTimer);
+    el.classList.add('dismissing');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+}
+
+// ── Particle + Waveform Canvas ────────────────────────────────────────
+const orbCanvas = document.getElementById('orbCanvas');
+const ctx = orbCanvas.getContext('2d');
+const CX = 230, CY = 230;
+
+// Particle pool
+const PARTICLE_COUNT = 55;
+const particles = [];
+
+function mkParticle() {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 95 + Math.random() * 100;
+    return {
+        angle,
+        radius,
+        baseRadius: radius,
+        speed: (0.0003 + Math.random() * 0.0004) * (Math.random() > 0.5 ? 1 : -1),
+        size: 1 + Math.random() * 2,
+        alpha: 0.3 + Math.random() * 0.5,
+        pulse: Math.random() * Math.PI * 2,
+        pulseSpeed: 0.01 + Math.random() * 0.02,
+        drift: Math.random() * 6 - 3,
+    };
+}
+for (let i = 0; i < PARTICLE_COUNT; i++) particles.push(mkParticle());
+
+let waveActive = false;
+let rafId = null;
+
+function drawScene(ts = 0) {
+    ctx.clearRect(0, 0, orbCanvas.width, orbCanvas.height);
+    const cfg = STATES[currentState] || STATES.IDLE;
+    const col = cfg.color;
+
+    // ── Outer halo glow ──
+    const halo = ctx.createRadialGradient(CX, CY, 80, CX, CY, 220);
+    halo.addColorStop(0, col + '10');
+    halo.addColorStop(0.5, col + '08');
+    halo.addColorStop(1, 'transparent');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(CX, CY, 220, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ── Particles ──
+    for (const p of particles) {
+        p.angle += p.speed;
+        p.pulse += p.pulseSpeed;
+        p.radius = p.baseRadius + Math.sin(p.pulse) * 5;
+
+        const x = CX + Math.cos(p.angle) * p.radius;
+        const y = CY + Math.sin(p.angle) * p.radius;
+        const alpha = p.alpha * (waveActive ? 0.9 : 0.45);
+
+        ctx.beginPath();
+        ctx.arc(x, y, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = col + Math.round(alpha * 255).toString(16).padStart(2,'0');
+        ctx.fill();
+
+        // Faint connecting lines to nearby particles
+        for (const q of particles) {
+            const dx = x - (CX + Math.cos(q.angle) * q.radius);
+            const dy = y - (CY + Math.sin(q.angle) * q.radius);
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < 50 && dist > 0) {
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(CX + Math.cos(q.angle) * q.radius, CY + Math.sin(q.angle) * q.radius);
+                ctx.strokeStyle = col + Math.round((1 - dist/50) * 0.12 * 255).toString(16).padStart(2,'0');
+                ctx.lineWidth = 0.5;
+                ctx.stroke();
+            }
+        }
+    }
+
+    // ── Waveform bars (shown when listening/speaking/processing) ──
+    if (waveActive) {
+        const bars = 56, innerR = 110, t = ts * 0.0025;
+        for (let i = 0; i < bars; i++) {
+            const a = (i / bars) * Math.PI * 2;
+            const amp = 16 + 10 * Math.sin(t + i * 0.45) + 7 * Math.sin(t * 1.7 + i * 0.9);
+            const x1 = CX + Math.cos(a) * innerR;
+            const y1 = CY + Math.sin(a) * innerR;
+            const x2 = CX + Math.cos(a) * (innerR + amp);
+            const y2 = CY + Math.sin(a) * (innerR + amp);
+            const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+            grad.addColorStop(0, col + 'cc');
+            grad.addColorStop(1, col + '22');
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.strokeStyle = grad;
+            ctx.lineWidth = 2.2;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+        }
+    }
+
+    rafId = requestAnimationFrame(drawScene);
+}
+drawScene();
+
 // ── Tab system ────────────────────────────────────────────────────────
 function switchTab(name) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-    document.querySelector(`.tab-pane#pane-${name}`).classList.add('active');
+    document.querySelector(`#pane-${name}`).classList.add('active');
     event.currentTarget.classList.add('active');
+}
+
+// ── Orb click with ripple toast ───────────────────────────────────────
+function orbClick() {
+    send('wake up');
+    toast('Flexie', 'Waking up…', 'info', 2000);
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────
@@ -716,6 +1036,7 @@ function connectWS() {
                 setWsUI(true);
                 updateState('IDLE');
                 log('Connected & authenticated', 'ok');
+                toast('Connected', 'Neural link established', 'success', 3000);
             }
             return;
         }
@@ -732,6 +1053,10 @@ function connectWS() {
         else if (tag === 'JOB')     handleJob(JSON.parse(val));
         else if (tag === 'MCP')     handleMCP(JSON.parse(val));
         else if (tag === 'STREAM')  handleStream(val);
+        else if (tag === 'NOTIFY')  handleNotify(JSON.parse(val));
+        else if (tag === 'ALARM')   toast('⏰ Alarm', val, 'warn', 8000);
+        else if (tag === 'REMINDER')toast('🔔 Reminder', val, 'info', 7000);
+        else if (tag === 'ERROR')   toast('Error', val, 'error', 6000);
     };
 }
 
@@ -740,6 +1065,12 @@ function setWsUI(online) {
     const lbl = document.getElementById('wsState');
     dot.className = 'chip-dot ' + (online ? 'online' : 'offline');
     lbl.textContent = online ? 'ONLINE' : 'OFFLINE';
+    if (!online) toast('Disconnected', 'Attempting reconnect…', 'warn', 3500);
+}
+
+function handleNotify(data) {
+    // Generic NOTIFY:{type,title,msg,duration} from backend
+    toast(data.title || 'Flexie', data.msg || '', data.type || 'info', data.duration || 5000);
 }
 
 function sendRaw(msg) {
@@ -780,29 +1111,53 @@ function handleStream(chunk) {
     if (chunk.endsWith('\n') || chunk === '' ) { _streamEl = null; _streamBuffer = ''; }
 }
 
+let _lastJobPhase = null, _lastJobStatus = null;
 function handleJob(data) {
     const panel = document.getElementById('jobPanel');
     const dot = document.getElementById('jobDot');
     const lbl = document.getElementById('jobState');
     const badge = document.getElementById('jobPhaseBadge');
 
-    if (data.status === 'idle' || data.status === 'done' || data.status === 'failed') {
+    if (data.status === 'done') {
         panel.style.display = 'none';
-        dot.style.background = data.status === 'done' ? 'var(--accent-ok)' : '#555';
-        lbl.textContent = data.status.toUpperCase();
-        return;
+        dot.style.background = 'var(--accent-ok)';
+        dot.style.boxShadow = '0 0 6px var(--accent-ok)';
+        lbl.textContent = 'DONE';
+        if (_lastJobStatus !== 'done') toast('Build Complete', data.title || 'Project ready', 'success', 6000);
+        _lastJobStatus = 'done'; _lastJobPhase = null; return;
     }
+    if (data.status === 'failed') {
+        panel.style.display = 'none';
+        dot.style.background = 'var(--accent-danger)';
+        lbl.textContent = 'FAILED';
+        if (_lastJobStatus !== 'failed') toast('Build Failed', data.error || 'Check the log', 'error', 7000);
+        _lastJobStatus = 'failed'; _lastJobPhase = null; return;
+    }
+    if (data.status === 'idle') {
+        panel.style.display = 'none';
+        dot.style.background = '#555'; lbl.textContent = 'IDLE';
+        _lastJobStatus = 'idle'; return;
+    }
+
     panel.style.display = 'block';
     dot.style.background = 'var(--accent-warn)';
     dot.style.boxShadow = '0 0 6px var(--accent-warn)';
     lbl.textContent = 'BUILDING';
     document.getElementById('jobTitle').textContent = data.title || '…';
-    badge.textContent = data.current_phase || 'RUNNING';
+    badge.textContent = (data.current_phase || 'running').replace(/_/g,' ').toUpperCase();
+
+    // Phase change toast
+    if (data.current_phase && data.current_phase !== _lastJobPhase) {
+        const phaseLabels = { scaffold:'Scaffolding project…', core_logic:'Generating core logic…',
+            ui:'Building UI…', tests_and_lint:'Running tests & lint…', verify_and_launch:'Verifying & launching…' };
+        toast('Build Phase', phaseLabels[data.current_phase] || data.current_phase, 'job', 3500);
+        _lastJobPhase = data.current_phase;
+    }
+    _lastJobStatus = data.status;
 
     const phases = ['scaffold','core_logic','ui','tests_and_lint','verify_and_launch'];
     const currentIdx = phases.indexOf(data.current_phase);
-    const list = document.getElementById('jobPhaseList');
-    list.innerHTML = phases.map((p, i) => {
+    document.getElementById('jobPhaseList').innerHTML = phases.map((p, i) => {
         const cls = i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'pending';
         const icon = cls === 'done' ? '✓' : cls === 'active' ? '▶' : '○';
         return `<div class="job-phase ${cls}"><span class="phase-icon">${icon}</span>${p.replace(/_/g,' ')}</div>`;
@@ -829,60 +1184,60 @@ function updateState(st) {
     const cfg = STATES[st] || STATES.IDLE;
     const badge = document.getElementById('stateBadge');
     const hint = document.getElementById('stateHint');
-    const orb = document.getElementById('theCore');
+    const core = document.getElementById('orbCore');
+
     badge.textContent = cfg.label;
     badge.style.color = cfg.color;
-    badge.style.textShadow = `0 0 20px ${cfg.color}`;
+    badge.style.textShadow = `0 0 22px ${cfg.color}`;
     if (hint) hint.textContent = cfg.hint;
-    orb.style.background = `radial-gradient(circle at 35% 35%, #fff 0%, ${cfg.color} 40%, #020712 100%)`;
-    orb.style.boxShadow = `0 0 70px ${cfg.color}77, inset 0 0 30px rgba(0,0,0,0.8)`;
-    updateWave(st);
-}
 
-// ── Waveform ──────────────────────────────────────────────────────────
-const waveCanvas = document.getElementById('waveCanvas');
-const waveCtx = waveCanvas.getContext('2d');
-let waveAnim = null;
-let waveActive = false;
-
-function updateWave(st) {
-    waveActive = st === 'LISTENING' || st === 'SPEAKING' || st === 'PROCESSING';
-    waveCanvas.classList.toggle('active', waveActive);
-    if (waveActive && !waveAnim) animateWave();
-    else if (!waveActive) { cancelAnimationFrame(waveAnim); waveAnim = null; waveCtx.clearRect(0,0,420,420); }
-}
-
-function animateWave(t = 0) {
-    waveCtx.clearRect(0,0,420,420);
-    const cx = 210, cy = 210, cfg = STATES[currentState] || STATES.IDLE;
-    const bars = 48, color = cfg.color;
-    for (let i = 0; i < bars; i++) {
-        const angle = (i / bars) * Math.PI * 2;
-        const amp = 18 + 12 * Math.sin(t * 0.003 + i * 0.5) + 8 * Math.sin(t * 0.007 + i);
-        const r1 = 130, r2 = r1 + amp;
-        waveCtx.beginPath();
-        waveCtx.moveTo(cx + Math.cos(angle)*r1, cy + Math.sin(angle)*r1);
-        waveCtx.lineTo(cx + Math.cos(angle)*r2, cy + Math.sin(angle)*r2);
-        waveCtx.strokeStyle = color + 'aa';
-        waveCtx.lineWidth = 2.5;
-        waveCtx.stroke();
+    // Update layered orb core colours
+    if (core) {
+        core.style.background = `radial-gradient(circle at 35% 30%,
+            rgba(255,255,255,0.88) 0%,
+            ${cfg.color} 28%,
+            ${cfg.color}88 55%,
+            #010814 100%)`;
+        core.style.boxShadow = `
+            0 0 60px ${cfg.color}88,
+            0 0 120px ${cfg.color}33,
+            inset 0 0 40px rgba(0,0,0,0.75),
+            inset 0 0 12px ${cfg.color}33`;
     }
-    waveAnim = requestAnimationFrame(ts => animateWave(ts));
+
+    // Waveform on/off
+    waveActive = ['LISTENING','SPEAKING','PROCESSING','WORKING'].includes(st);
 }
+
+// waveActive is defined near the canvas block above
 
 // ── Metrics ───────────────────────────────────────────────────────────
+let _lastCritCpu = false, _lastCritRam = false, _lastCritBatt = false;
+
 function handleMetrics(data) {
     if (data.cpu !== undefined) {
         document.getElementById('cpuVal').textContent = data.cpu + '%';
         const bar = document.getElementById('cpuBar');
         bar.style.width = data.cpu + '%';
         bar.className = 'progress-fill' + (data.cpu > 90 ? ' crit' : data.cpu > 70 ? ' warn' : '');
+        const rn = document.getElementById('rn-cpu');
+        if (rn) rn.textContent = `CPU ${data.cpu}%`;
+        if (data.cpu > 90 && !_lastCritCpu) {
+            toast('High CPU', `CPU usage at ${data.cpu}%`, 'warn', 5000);
+            _lastCritCpu = true;
+        } else if (data.cpu <= 90) _lastCritCpu = false;
     }
     if (data.ram !== undefined) {
         document.getElementById('ramVal').textContent = data.ram + '%';
         const bar = document.getElementById('ramBar');
         bar.style.width = data.ram + '%';
         bar.className = 'progress-fill' + (data.ram > 90 ? ' crit' : data.ram > 75 ? ' warn' : '');
+        const rn = document.getElementById('rn-ram');
+        if (rn) rn.textContent = `RAM ${data.ram}%`;
+        if (data.ram > 90 && !_lastCritRam) {
+            toast('High RAM', `Memory at ${data.ram}%`, 'warn', 5000);
+            _lastCritRam = true;
+        } else if (data.ram <= 90) _lastCritRam = false;
     }
     if (data.batt !== undefined) {
         document.getElementById('battVal').textContent = data.batt;
@@ -890,6 +1245,10 @@ function handleMetrics(data) {
         const bar = document.getElementById('battBar');
         bar.style.width = bInt + '%';
         bar.className = 'progress-fill' + (bInt < 15 ? ' crit' : bInt < 30 ? ' warn' : '');
+        if (bInt < 15 && !_lastCritBatt) {
+            toast('Low Battery', `Battery at ${bInt}% — please plug in`, 'error', 7000);
+            _lastCritBatt = true;
+        } else if (bInt >= 15) _lastCritBatt = false;
     }
     const badge = document.getElementById('healthBadge');
     const cpu = parseInt(document.getElementById('cpuVal').textContent) || 0;
@@ -911,7 +1270,11 @@ function applyMode(mode) {
     const c = MODE_COLORS[mode] || MODE_COLORS.professional;
     document.documentElement.style.setProperty('--accent-primary', c.p);
     document.documentElement.style.setProperty('--accent-secondary', c.s);
+    document.getElementById('modeSelect').value = mode;
     updateState(currentState);
+    const labels = { professional:'Professional', developer:'Developer 🟢',
+        hacker:'Hacker 🔴', minimal:'Minimal', focus:'Focus 🟣' };
+    toast('Mode', labels[mode] || mode, 'info', 2500);
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────
