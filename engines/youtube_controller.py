@@ -237,3 +237,14 @@ class YouTubeController(BrowserEngine):
         if self.last_query:
             return self.play_video(self.last_query)
         return "I haven't searched for any videos yet."
+
+    def cleanup(self):
+        """Route browser cleanup through the worker thread to avoid greenlet cross-thread crash."""
+        try:
+            self._run(super().cleanup, timeout=5.0)
+        except Exception as e:
+            logging.debug("[youtube_controller] cleanup via worker failed (%s); forcing direct cleanup", e)
+            try:
+                super().cleanup()
+            except Exception:
+                pass

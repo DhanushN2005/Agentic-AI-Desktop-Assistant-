@@ -28,9 +28,12 @@ def handle_play_youtube(orch, c):
         def _play_bg():
             try:
                 result = orch.yt.play_video(clean_c)
-                # Only speak result if it's an error
                 if result and ("error" in result.lower() or "could not" in result.lower()):
                     orch.speak(result)
+                else:
+                    # Video is playing — suppress ASR so YouTube audio doesn't trigger recognition
+                    if hasattr(orch, "voice") and orch.voice:
+                        orch.voice.suppress_asr = True
             except Exception as e:
                 import logging
                 logging.debug("YouTube play background error: %s", e)
@@ -68,6 +71,9 @@ def handle_youtube(orch, c):
 
     for act, triggers in yt_actions.items():
         if any(t in c for t in triggers):
+            # Re-enable mic on pause so user can still give commands
+            if act == "pause" and hasattr(orch, "voice") and orch.voice:
+                orch.voice.suppress_asr = False
             orch.speak(orch.yt.control_player(act))
             return True
 

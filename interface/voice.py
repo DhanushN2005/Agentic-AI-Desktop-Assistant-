@@ -113,6 +113,13 @@ class VoiceInterface:
         if self.speech_mode == "neural" and not has_edge:
             logging.warning("FLEXIE_TTS_MODE=neural but edge-tts not installed — using SAPI")
             self.speech_mode = "sapi"
+        # Neural failure counter: after 3 consecutive 403s skip neural for the session
+        self._neural_fail_count = 0
+        self._neural_disabled = False
+        # suppress_asr: set True externally (e.g. YouTube playing) to skip ASR on VAD hits
+        self.suppress_asr = False
+        # post-TTS silence buffer end time: keep VAD muted briefly after speech finishes
+        self._speak_end_time = 0.0
 
         # Shared TTS Engine
         self.engine_lock = threading.Lock()
@@ -306,14 +313,29 @@ class VoiceInterface:
                 # Neural-first with automatic offline fallback. The persistent
                 # VAD stream handles barge-in via the is_speaking flag.
                 spoke = False
-                if self.speech_mode == "neural" and is_online():
-                    spoke = self._speak_neural(text) or self._speak_sapi(text)
-                else:
+                use_neural = (
+                    self.speech_mode == "neural"
+                    and is_online()
+                    and not self._neural_disabled
+                )
+                if use_neural:
+                    spoke = self._speak_neural(text)
+                    if not spoke:
+                        self._neural_fail_count += 1
+                        if self._neural_fail_count >= 3:
+                            self._neural_disabled = True
+                            logging.warning(
+                                "TTS [Neural]: disabled after 3 consecutive failures — using SAPI only"
+                            )
+                    else:
+                        self._neural_fail_count = 0
+                if not spoke:
                     spoke = self._speak_sapi(text)
                 if not spoke:
                     logging.warning("TTS: all engines failed for this utterance")
 
                 self.is_speaking = False
+                self._speak_end_time = time.time()
                 
                 self.speech_queue.task_done()
                 logging.info("TTS End.")
@@ -573,11 +595,16 @@ class VoiceInterface:
                 try:
                     raw_chunk = stream.read(chunk_size)
                     
-                    if getattr(self, 'is_speaking', False):
+                    # Mute VAD while speaking OR for 0.4s after speech ends (mic echo tail)
+                    _post_speak_mute = (
+                        time.time() - getattr(self, '_speak_end_time', 0) < 0.4
+                    )
+                    if getattr(self, 'is_speaking', False) or _post_speak_mute:
                         # Hard mute: prevent feedback loop - but with timeout to avoid stuck mute.
                         # The guard is deliberately generous (30s): real TTS replies can take
                         # 10-25s, and force-unmuting mid-reply makes the AI hear itself.
-                        if time.time() - getattr(self, '_speak_start_time', 0) > VAD_STUCK_MUTE_SECONDS:
+                        if (not _post_speak_mute and
+                                time.time() - getattr(self, '_speak_start_time', 0) > VAD_STUCK_MUTE_SECONDS):
                             logging.warning(
                                 f"VAD: is_speaking stuck >{VAD_STUCK_MUTE_SECONDS:.0f}s, forcing unmute"
                             )
@@ -741,6 +768,18 @@ class VoiceInterface:
                 return ""
                 
             elapsed_latency = time.time() - start_time
+
+            # External audio playing (e.g. YouTube) — VAD triggered on media, not voice
+            if getattr(self, 'suppress_asr', False):
+                logging.info("VAD [Suppressed]: suppress_asr=True (media playing). Discarding buffer.")
+                audio_buffer.clear()
+                speech_started = False
+                silence_start_time = None
+                active_speech_duration = 0.0
+                onset_run = 0
+                self.send_to_ui("STATE", "IDLE")
+                continue
+
             logging.info(f"VAD [Timing]: Total buffer capture time: {elapsed_latency:.2f}s. Invoking Google ASR.")
             self.send_to_ui("STATE", "THINKING")
             
@@ -834,7 +873,7 @@ class VoiceInterface:
         except ImportError:
             logging.debug("Whisper not installed; skipping tier 0 offline ASR")
         except Exception as e:
-            logging.debug(f"Whisper offline ASR failed: {e}")
+            logging.warning(f"Whisper offline ASR failed: {e}")
 
         # Fallback Tier 1: Vosk (High quality local ASR)
         try:
