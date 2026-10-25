@@ -748,18 +748,37 @@ class VoiceInterface:
             audio_data = sr.AudioData(bytes(audio_buffer), sample_rate, sample_width)
             
             recognized_text = ""
+            # Rate-limit guard: don't hammer Google more than once per second
+            now = time.time()
+            last_asr = getattr(self, "_last_asr_ts", 0)
+            if now - last_asr < 1.0:
+                time.sleep(1.0 - (now - last_asr))
+            self._last_asr_ts = time.time()
+
             if is_online():
                 try:
                     with self._asr_lock:
                         text = self.recognizer.recognize_google(audio_data, language=self.lang)
                     recognized_text = text.lower().strip()
                     logging.info(f"VAD [Recognized Online]: \"{recognized_text}\"")
+                    self._asr_fail_count = 0  # reset failure streak
                 except Exception as online_err:
-                    logging.warning(f"Online ASR failed, falling back to offline: {online_err}")
+                    logging.warning(f"Online ASR failed ({type(online_err).__name__}), trying offline: {online_err}")
                     recognized_text = self._recognize_offline(audio_data, bytes(audio_buffer), sample_rate)
             else:
                 logging.info("System is offline. Initiating offline ASR pipeline...")
                 recognized_text = self._recognize_offline(audio_data, bytes(audio_buffer), sample_rate)
+
+            # Consecutive failure feedback — speak so user knows something's wrong
+            if not recognized_text:
+                self._asr_fail_count = getattr(self, "_asr_fail_count", 0) + 1
+                if self._asr_fail_count == 3:
+                    self._speak_sapi("Sorry, I'm having trouble hearing you. Please speak clearly.")
+                elif self._asr_fail_count >= 6:
+                    self._speak_sapi("Could you repeat that?")
+                    self._asr_fail_count = 0
+            else:
+                self._asr_fail_count = 0
                 
             self.send_to_ui("PARTIAL", recognized_text)
             return recognized_text
@@ -792,6 +811,31 @@ class VoiceInterface:
 
     def _recognize_offline(self, audio_data, raw_bytes, sample_rate) -> str:
         """Handles offline speech recognition with multi-layered fallbacks."""
+        # Fallback Tier 0: Whisper (best offline quality, no model download needed for tiny)
+        try:
+            import whisper as _whisper
+            import tempfile, wave, os as _os
+            if not getattr(self, "_whisper_model", None):
+                self._whisper_model = _whisper.load_model("tiny.en")  # ~40MB, loads once
+            # Write raw_bytes to a temp wav file for Whisper
+            fd, wav_path = tempfile.mkstemp(suffix=".wav")
+            _os.close(fd)
+            with wave.open(wav_path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)  # 16-bit
+                wf.setframerate(sample_rate)
+                wf.writeframes(raw_bytes)
+            result = self._whisper_model.transcribe(wav_path, language="en", fp16=False)
+            _os.unlink(wav_path)
+            text = result.get("text", "").strip().lower()
+            if text and len(text) > 1:
+                logging.info(f"VAD [Offline Whisper]: \"{text}\"")
+                return text
+        except ImportError:
+            logging.debug("Whisper not installed; skipping tier 0 offline ASR")
+        except Exception as e:
+            logging.debug(f"Whisper offline ASR failed: {e}")
+
         # Fallback Tier 1: Vosk (High quality local ASR)
         try:
             self._init_vosk()
@@ -807,8 +851,8 @@ class VoiceInterface:
                     return text
         except Exception as e:
             logging.debug(f"Vosk offline ASR failed: {e}")
-            
-        # Fallback Tier 2: PocketSphinx (Standard SpeechRecognition offline fallback)
+
+        # Fallback Tier 2: PocketSphinx
         try:
             text = self.recognizer.recognize_sphinx(audio_data, language="en-US")
             cleaned = text.lower().strip()
@@ -818,7 +862,6 @@ class VoiceInterface:
         except Exception as e:
             logging.debug(f"Sphinx offline ASR failed: {e}")
 
-        # Fallback Tier 3: Command Template Pattern Classifier (Heuristic fallback)
         logging.warning("Offline decoders failed to resolve human speech.")
         return ""
 
