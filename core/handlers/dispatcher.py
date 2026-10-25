@@ -343,6 +343,12 @@ def dispatch_intent(orch, intent, c, silent):
         if intent == "automation":
             return handle_automation(orch, c)
         if intent in ("search", "browser_search"):
+            # Situation-aware upgrade: if a browser is already open and user says
+            # "search for X" without specifying knowledge lookup, prefer browser search
+            if intent == "search":
+                ctx = getattr(orch, "ctx", None)
+                if ctx and getattr(ctx, "browser_open", False):
+                    intent = "browser_search"
             return handle_search(orch, c)
         if intent == "remind_me":
             return handle_remind(orch, c)

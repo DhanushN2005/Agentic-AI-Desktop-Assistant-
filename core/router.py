@@ -59,7 +59,10 @@ TYPO_MAP = {
     "morse": "morse", "morss": "morse",
     # Common voice command typos
     "tha": "the", "thet": "the", "teh": "the",
-    "opended": "opened", "opend": "opened", "openned": "opened",
+    "opended": "opened", "opend": "opened", "openned": "opened", "opeen": "opened",
+    "searh": "search", "serch": "search", "sarch": "search", "seach": "search",
+    "crhome": "chrome", "chorme": "chrome", "chrme": "chrome",
+    "borwser": "browser", "broser": "browser", "broswe": "browser",
     "calender": "calendar", "calander": "calendar", "calandar": "calendar",
     "xcalender": "xcalendar", "xcalander": "xcalendar",
     "runn": "run", "rrun": "run",
@@ -72,6 +75,13 @@ TYPO_MAP = {
 # Natural language override patterns: (pattern, intent, confidence)
 # Checked BEFORE compiled triggers to intercept conversational phrasing.
 NL_OVERRIDES = [
+    # ── Situation-aware browser search (highest priority) ──────────────────
+    # "in the opened chrome search for X", "search for X in the opened browser"
+    (r"\bin\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\s+(?:search|look|find|go|type|navigate)\b", "browser_search", 0.99),
+    (r"\b(?:search|look|find|go)\b.{0,40}\bin\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\b", "browser_search", 0.99),
+    (r"\b(?:search|find|look\s+up)\s+.{1,60}\s+(?:using|with|on|in)\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|browser|firefox)\b", "browser_search", 0.98),
+    (r"\bsearch\s+(?:for\s+)?.+\s+in\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|it|the\s+browser)\b", "browser_search", 0.98),
+
     # Alarm / Timer / Time
     (r"\b(what(?:'?s|\s+is)\s+(?:the\s+)?time|current\s+time|tell\s+me\s+(?:the\s+)?time|time\s+is\s+it|whats?\s+the\s+time|what\s+hour)\b", "alarm", 0.95),
     (r"\b(set|start|begin|create|put|make)\s+(?:a\s+)?(?:timer|countdown|alarm|wake)\b", "alarm", 0.9),

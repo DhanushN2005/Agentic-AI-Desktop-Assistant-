@@ -27,6 +27,10 @@ class ContextMemory:
         self.active_document = self._load("active_document")
         self.last_search = self._load("last_search")
 
+        # Browser situational context
+        self.browser_open = False
+        self.active_browser = self._load("active_browser", "")
+
         # New Context Tracker registers
         self.focused_app = None
         self.clipboard_state = None
@@ -160,6 +164,17 @@ class ContextMemory:
         self.active_artifact = artifact
         self._save("active_artifact", json.dumps(artifact))
         return artifact
+
+    def set_browser_open(self, browser_name: str):
+        """Mark a browser as currently open and active."""
+        self.browser_open = True
+        self.active_browser = browser_name.lower()
+        self._save("active_browser", self.active_browser)
+
+    def clear_browser_open(self):
+        self.browser_open = False
+        self.active_browser = ""
+        self._save("active_browser", "")
 
     def update(self, cmd=None, app=None, query=None, browser=None, screenshot=None, url=None, selector=None, engine=None, yt_query=None, last_path=None, last_response=None, active_document=None, last_search=None, current_topic=None, active_goal=None, last_sdd=None, **kwargs):
         # Update session timer to prevent premature context expiration during active tasks

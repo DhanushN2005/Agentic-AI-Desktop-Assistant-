@@ -160,6 +160,10 @@ def handle_app_op(orch, c, silent):
         res = orch.files.open_item(target, target_path=t_path)
         if "NOT_FOUND" not in res:
             orch.ctx.update(app=target)
+            # Mark browser as open for situation-aware routing
+            _browser_names = ("chrome", "edge", "firefox", "browser", "opera", "brave")
+            if any(b in target.lower() for b in _browser_names):
+                orch.ctx.set_browser_open(target.lower())
         orch.speak(res)
     return True
 
