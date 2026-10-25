@@ -49,7 +49,7 @@
       "error": null
     }
   ],
-  "status": "running",
+  "status": "paused",
   "current_phase": 1,
   "attempts": 0,
   "log_path": "C:\\Users\\Dhanush\\Downloads\\interactive-dashboard-application-with-flask-backe-8dc90773\\.flexie_build.log",
@@ -57,9 +57,9 @@
   "tokens_used": 0,
   "elapsed_seconds": 0.418043851852417,
   "created_at": 1792934027.10129,
-  "updated_at": 1792934027.8160646,
+  "updated_at": 1792937518.6866045,
   "completed_at": null,
-  "error": null,
+  "error": "Interrupted by system restart. Can be resumed.",
   "metadata": {
     "spec": {
       "title": "Interactive Dashboard Application with Flask Backend",
