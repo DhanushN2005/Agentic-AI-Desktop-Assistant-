@@ -514,7 +514,7 @@ class ControlPopup(QWidget):
         self.container.setStyleSheet("""
             QFrame#MainContainer {
                 background: rgba(10, 15, 25, 235);
-                border: 1px solid rgba(0, 210, 255, 45);
+                border: 1px solid rgba(0, 255, 120, 45);
                 border-radius: 18px;
             }
             QLabel { 
@@ -1215,10 +1215,9 @@ class EnhancedFlexieOrb(QWidget):
 
     def _get_face_path(self, center, offset, w, h):
         path = QPainterPath()
-        path.addRoundedRect(
+        path.addEllipse(
             QRectF(center.x() + offset.x() - w/2,
-                   center.y() + offset.y() - h/2, w, h),
-            35 * self._view_scale, 35 * self._view_scale)
+                   center.y() + offset.y() - h/2, w, h))
         return path
 
     # ── animation update ─────────────────────────────────────────────────────
@@ -1387,13 +1386,13 @@ class EnhancedFlexieOrb(QWidget):
         # LAYER 0 – Neural background (clipped to face shape)
         # ═══════════════════════════════════════════════════════════════════
         if v > 0.3:
-            clip = self._get_face_path(bg_c, QPointF(0,0), 110*scale, 95*scale)
+            clip = self._get_face_path(bg_c, QPointF(0,0), 96*scale, 96*scale)
             painter.setClipPath(clip)
             painter.setPen(QPen(QColor(ar, ag, ab, int(30*v)), 1))
             for i in range(10):
-                nx1 = bg_c.x() + math.sin(t*0.7 + i*0.9) * 50*scale
+                nx1 = bg_c.x() + math.sin(t*0.7 + i*0.9) * 45*scale
                 ny1 = bg_c.y() + math.cos(t*0.6 + i*1.1) * 45*scale
-                nx2 = bg_c.x() + math.sin(t*0.9 - i*0.7) * 50*scale
+                nx2 = bg_c.x() + math.sin(t*0.9 - i*0.7) * 45*scale
                 ny2 = bg_c.y() + math.cos(t*0.8 + i*0.8) * 45*scale
                 painter.drawLine(QPointF(nx1, ny1), QPointF(nx2, ny2))
             painter.setClipping(False)
@@ -1429,7 +1428,7 @@ class EnhancedFlexieOrb(QWidget):
         # ═══════════════════════════════════════════════════════════════════
         if v > 0.5 and st in ("LISTENING","SPEAKING","PROCESSING"):
             num_bars = 52
-            vis_r    = 108 * scale
+            vis_r    = 105 * scale
             for i in range(num_bars):
                 rad_a = math.radians((i / num_bars) * 360 + self._rot * 0.4)
                 if st == "PROCESSING":
@@ -1438,22 +1437,51 @@ class EnhancedFlexieOrb(QWidget):
                     val = abs(math.sin(t * 8 + i * 0.3)) * random.uniform(0.5, 1.0)
                 else:  # LISTENING
                     val = abs(math.sin(t * 4 + i * 0.4)) * random.uniform(0.1, 0.5)
-                blen = (8 + 22 * val) * scale
+                blen = (6 + 18 * val) * scale
                 p1 = QPointF(ring_c.x() + math.cos(rad_a) * vis_r,
                              ring_c.y() + math.sin(rad_a) * vis_r)
                 p2 = QPointF(ring_c.x() + math.cos(rad_a) * (vis_r + blen),
                              ring_c.y() + math.sin(rad_a) * (vis_r + blen))
                 bc = QColor(ar, ag, ab, int(210 * val * v))
-                painter.setPen(QPen(bc, 2.2*scale, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                painter.setPen(QPen(bc, 2.0*scale, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
                 painter.drawLine(p1, p2)
 
         # ═══════════════════════════════════════════════════════════════════
-        # LAYER 3 – Holographic rings (30% parallax)
+        # LAYER 3 – Holographic rings & HUD accents (30% parallax)
         # ═══════════════════════════════════════════════════════════════════
         if v > 0.45:
             ri = int(self._rot)
 
-            # outer dashed orbit ring
+            # 1. Inner concentric tech ring
+            r_inner = 65 * scale
+            painter.setPen(QPen(QColor(ar, ag, ab, int(65*v)), 1.0*scale, Qt.PenStyle.DashLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(ring_c, r_inner, r_inner)
+
+            # Rotating glowing orbital nodes on the inner ring
+            for node_i in range(3):
+                node_angle = math.radians((self._rot * 1.6 + node_i * 120) % 360)
+                nx = ring_c.x() + math.cos(node_angle) * r_inner
+                ny = ring_c.y() + math.sin(node_angle) * r_inner
+                painter.setBrush(QColor(ar, ag, ab, int(220*v)))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(QPointF(nx, ny), 2.2*scale, 2.2*scale)
+
+            # 2. Middle concentric orbital ring with quadrant micro-ticks
+            r_mid = 80 * scale
+            painter.setPen(QPen(QColor(ar, ag, ab, int(45*v)), 0.9*scale, Qt.PenStyle.SolidLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(ring_c, r_mid, r_mid)
+            for q_idx in range(4):
+                qa = math.radians(q_idx * 90 + self._rot * 0.25)
+                qp1 = QPointF(ring_c.x() + math.cos(qa) * (r_mid - 3.5*scale),
+                             ring_c.y() + math.sin(qa) * (r_mid - 3.5*scale))
+                qp2 = QPointF(ring_c.x() + math.cos(qa) * (r_mid + 3.5*scale),
+                             ring_c.y() + math.sin(qa) * (r_mid + 3.5*scale))
+                painter.setPen(QPen(QColor(ar, ag, ab, int(130*v)), 1.2*scale))
+                painter.drawLine(qp1, qp2)
+
+            # 3. Outer dashed orbit ring
             painter.setPen(QPen(QColor(ar, ag, ab, int(55*v)), 1.0*scale, Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(ring_c, 97*scale, 97*scale)
@@ -1482,7 +1510,7 @@ class EnhancedFlexieOrb(QWidget):
 
             # LISTENING – radar sweep
             if st == "LISTENING":
-                sweep_r = 112 * scale
+                sweep_r = 108 * scale
                 sweep_end = QPointF(
                     ring_c.x() + math.cos(math.radians(self._radar_angle)) * sweep_r,
                     ring_c.y() + math.sin(math.radians(self._radar_angle)) * sweep_r)
@@ -1501,11 +1529,13 @@ class EnhancedFlexieOrb(QWidget):
                                 int((self._radar_angle - 30) * 16), 30*16)
 
         # ═══════════════════════════════════════════════════════════════════
-        # LAYER 4 – Particles with fading trails (50% parallax)
+        # LAYER 4 – Particles with fading trails & connection lines (50% parallax)
         # ═══════════════════════════════════════════════════════════════════
         if v > 0.4:
+            p_coords = []
             for p in self.particles:
                 px, py = p.update(st, part_c.x(), part_c.y())
+                p_coords.append((px, py, p.life))
                 if len(p.history) > 1:
                     for k in range(len(p.history)-1):
                         seg_alpha = int(max(0, p.life) * 90 * (k / len(p.history)))
@@ -1516,91 +1546,119 @@ class EnhancedFlexieOrb(QWidget):
                 painter.setBrush(dot_c); painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(QPointF(px, py), p.size*scale, p.size*scale)
 
+            # Subtle animated connection lines between nearby orbital particles
+            num_pts = min(len(p_coords), 24)
+            thresh_sq = (30 * scale) ** 2
+            for i in range(num_pts):
+                x1, y1, l1 = p_coords[i]
+                for j in range(i + 1, num_pts):
+                    x2, y2, l2 = p_coords[j]
+                    d2 = (x1 - x2)**2 + (y1 - y2)**2
+                    if d2 < thresh_sq:
+                        prox = 1.0 - math.sqrt(d2) / (30 * scale)
+                        line_a = int(min(l1, l2) * prox * 65 * v)
+                        painter.setPen(QPen(QColor(ar, ag, ab, line_a), 0.8 * scale))
+                        painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+
         # ═══════════════════════════════════════════════════════════════════
-        # LAYER 5 – Face body + energy core (70% parallax)
+        # LAYER 5 – Face body + spherical lighting (70% parallax)
         # ═══════════════════════════════════════════════════════════════════
-        face_w = 102 * scale; face_h = 87 * scale
-        face_rect = QRectF(face_c.x() - face_w/2, face_c.y() - face_h/2, face_w, face_h)
+        orb_size = 98 * scale
+        orb_r = orb_size / 2
+        face_rect = QRectF(face_c.x() - orb_r, face_c.y() - orb_r, orb_size, orb_size)
 
         # energy core (behind face body)
-        core_r = face_w * 0.55 * self._core_pulse
+        core_r = orb_size * 0.55 * self._core_pulse
         cg = QRadialGradient(face_c, core_r)
         cg.setColorAt(0, QColor(ar, ag, ab, int(80 * self._glow_intensity * self._core_pulse)))
         cg.setColorAt(0.4, QColor(ar, ag, ab, int(30 * self._core_pulse * v)))
         cg.setColorAt(1, Qt.GlobalColor.transparent)
         painter.setBrush(cg); painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(face_c, core_r*1.4, core_r*1.4)
+        painter.drawEllipse(face_c, core_r*1.3, core_r*1.3)
 
-        # face body gradient
-        bg_tint_c = QColor(8, 18, 8, int(210 * v))   # deep dark green-tinted bg
-        bg2 = QRadialGradient(face_c, face_w)
-        bg2.setColorAt(0,   QColor(bg_tint_c.red(), bg_tint_c.green(), bg_tint_c.blue(), int(210*v)))
-        bg2.setColorAt(0.65,QColor(secondary.red(), secondary.green(), secondary.blue(), int(60*v)))
-        bg2.setColorAt(1,   QColor(2, 8, 2, int(180*v)))
+        # face body gradient (deep black and dark-green spherical glass)
+        bg2 = QRadialGradient(QPointF(face_c.x(), face_c.y() - orb_r * 0.25), orb_size * 1.05)
+        bg2.setColorAt(0.0,  QColor(4, 20, 10, int(225 * v)))
+        bg2.setColorAt(0.60, QColor(2, 10, 5, int(240 * v)))
+        bg2.setColorAt(0.85, QColor(secondary.red(), secondary.green(), secondary.blue(), int(55 * v)))
+        bg2.setColorAt(1.0,  QColor(0, 4, 2, int(255 * v)))
         painter.setBrush(bg2)
-        border_a = int(130*v + self._pulse * 0.9)
-        painter.setPen(QPen(QColor(ar, ag, ab, border_a), 2.5*scale))
-        painter.drawRoundedRect(face_rect, 35*v, 35*v)
+        border_a = int(140*v + self._pulse * 0.9)
+        painter.setPen(QPen(QColor(ar, ag, ab, border_a), 2.4*scale))
+        painter.drawEllipse(face_c, orb_r, orb_r)
 
-        # SPEAKING – mouth pulse bar at bottom of face
-        if st == "SPEAKING" and v > 0.5:
-            mouth_y  = face_c.y() + face_h * 0.3
-            mouth_w  = face_w * 0.5 * (0.5 + self._mouth_open * 0.5)
-            mouth_h  = max(2.0, 6 * scale * self._mouth_open)
-            mc = QColor(ar, ag, ab, int(200 * self._mouth_open * v))
-            painter.setBrush(mc); painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(
-                QRectF(face_c.x() - mouth_w/2, mouth_y - mouth_h/2, mouth_w, mouth_h),
-                3, 3)
+        # Bottom rim bounce light (subtle spherical glass refraction)
+        painter.setClipPath(self._get_face_path(face_c, QPointF(0,0), orb_size, orb_size))
+        rim_g = QLinearGradient(QPointF(face_c.x(), face_c.y() + orb_r * 0.2),
+                                QPointF(face_c.x(), face_c.y() + orb_r))
+        rim_g.setColorAt(0.0, Qt.GlobalColor.transparent)
+        rim_g.setColorAt(1.0, QColor(ar, ag, ab, int(65 * v)))
+        painter.setBrush(rim_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(face_c, orb_r - 1.5, orb_r - 1.5)
 
         # PROCESSING – scan line inside face
         if st == "PROCESSING" and v > 0.35:
-            painter.setClipPath(self._get_face_path(face_c, QPointF(0,0), face_w, face_h))
             scan_a = int(50 * v)
-            scan_y = face_c.y() - face_h/2 + (self._scan_line % face_h)
+            scan_y = face_c.y() - orb_r + (self._scan_line % orb_size)
             painter.setPen(QPen(QColor(ar, ag, ab, scan_a), 2.5))
-            painter.drawLine(QPointF(face_c.x() - face_w/2, scan_y),
-                             QPointF(face_c.x() + face_w/2, scan_y))
-            flg = QRadialGradient(QPointF(face_c.x(), scan_y), face_w*0.75)
+            painter.drawLine(QPointF(face_c.x() - orb_r, scan_y),
+                             QPointF(face_c.x() + orb_r, scan_y))
+            flg = QRadialGradient(QPointF(face_c.x(), scan_y), orb_size*0.75)
             flg.setColorAt(0, QColor(ar, ag, ab, int(70*v)))
             flg.setColorAt(1, Qt.GlobalColor.transparent)
             painter.setBrush(flg); painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(QPointF(face_c.x(), scan_y), face_w*0.55, 5)
-            painter.setClipping(False)
+            painter.drawEllipse(QPointF(face_c.x(), scan_y), orb_size*0.5, 5)
 
-        # ── Glass reflection (top-left sheen) ───────────────────────────────
-        hl = QPainterPath()
-        hl.addRoundedRect(QRectF(face_rect.x(), face_rect.y(),
-                                  face_rect.width(), face_rect.height()*0.38),
-                           35*v, 35*v)
-        hl_g = QLinearGradient(face_rect.topLeft(),
-                                QPointF(face_rect.left(), face_rect.center().y()))
-        hl_g.setColorAt(0, QColor(255, 255, 255, int(70*v)))
-        hl_g.setColorAt(1, QColor(255, 255, 255, 0))
+        # ── Glass reflection (curved forehead sheen) ────────────────────────
+        hl_g = QLinearGradient(QPointF(face_c.x(), face_c.y() - orb_r),
+                               QPointF(face_c.x(), face_c.y() - orb_r * 0.05))
+        hl_g.setColorAt(0.0, QColor(255, 255, 255, int(90*v)))
+        hl_g.setColorAt(0.55, QColor(255, 255, 255, int(25*v)))
+        hl_g.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.setBrush(hl_g); painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawPath(hl)
+        painter.drawEllipse(QPointF(face_c.x(), face_c.y() - orb_r * 0.44),
+                           orb_r * 0.85, orb_r * 0.42)
 
         # moving holographic sheen (diagonal shimmer)
         sheen_phase = (t * 0.5) % 2.0 - 1.0
-        sheen_x = face_rect.left() + face_rect.width() * (0.5 + sheen_phase * 0.6)
-        sheen_g = QLinearGradient(QPointF(sheen_x - 30, face_rect.top()),
-                                   QPointF(sheen_x + 30, face_rect.bottom()))
+        sheen_x = face_c.x() + orb_size * (sheen_phase * 0.6)
+        sheen_g = QLinearGradient(QPointF(sheen_x - 30, face_c.y() - orb_r),
+                                   QPointF(sheen_x + 30, face_c.y() + orb_r))
         sheen_g.setColorAt(0, QColor(255,255,255, 0))
-        sheen_g.setColorAt(0.5, QColor(255,255,255, int(28*v)))
+        sheen_g.setColorAt(0.5, QColor(255,255,255, int(26*v)))
         sheen_g.setColorAt(1, QColor(255,255,255, 0))
         painter.setBrush(sheen_g); painter.setPen(Qt.PenStyle.NoPen)
-        painter.setClipPath(self._get_face_path(face_c, QPointF(0,0), face_w, face_h))
-        painter.drawRect(face_rect)
+        painter.drawEllipse(face_c, orb_r, orb_r)
         painter.setClipping(False)
+
+        # ── Subtle curved mouth (expressive AI face) ────────────────────
+        if st == "SPEAKING" and v > 0.5:
+            mouth_y  = face_c.y() + orb_size * 0.22
+            mouth_w  = orb_size * 0.36 * (0.5 + self._mouth_open * 0.5)
+            mouth_h  = max(2.5, 6 * scale * self._mouth_open)
+            mc = QColor(ar, ag, ab, int(210 * self._mouth_open * v))
+            painter.setBrush(mc); painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(
+                QRectF(face_c.x() - mouth_w/2, mouth_y - mouth_h/2, mouth_w, mouth_h),
+                mouth_h/2, mouth_h/2)
+        elif not is_sleep and v > 0.4:
+            mouth_y  = face_c.y() + orb_size * 0.22
+            mouth_w  = 18 * scale
+            m_path = QPainterPath()
+            m_path.moveTo(face_c.x() - mouth_w/2, mouth_y)
+            m_path.quadTo(face_c.x(), mouth_y + 3.2 * scale, face_c.x() + mouth_w/2, mouth_y)
+            painter.setPen(QPen(QColor(ar, ag, ab, int(130 * v)), 1.6 * scale, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(m_path)
 
         # ═══════════════════════════════════════════════════════════════════
         # LAYER 6 – Eyes (100% parallax)
         # ═══════════════════════════════════════════════════════════════════
-        eye_gap = 30 * scale
+        eye_gap = 25 * scale
         eye_cx_l = eye_c.x() - eye_gap
         eye_cx_r = eye_c.x() + eye_gap
-        eye_cy   = eye_c.y() - 8 * scale
-        eye_w    = 26 * scale
+        eye_cy   = eye_c.y() - 1 * scale
+        eye_w    = 23 * scale
 
         if is_sleep or self._eye_openness < 0.05:
             # sleeping slit
@@ -1620,20 +1678,29 @@ class EnhancedFlexieOrb(QWidget):
                 p_dx = (self._mouse_pos.x() - center.x()) / 150.0 * (eye_w * 0.18)
                 p_dy = (self._mouse_pos.y() - center.y()) / 150.0 * (eye_h * 0.18)
 
+            # Unified soft ambient visor glow across eye region (eliminates dark center pinch)
+            visor_g = QRadialGradient(QPointF(eye_c.x(), eye_cy), 44 * scale)
+            visor_g.setColorAt(0.0, QColor(ar, ag, ab, int(85 * self._eye_openness * v)))
+            visor_g.setColorAt(0.6, QColor(ar, ag, ab, int(30 * self._eye_openness * v)))
+            visor_g.setColorAt(1.0, Qt.GlobalColor.transparent)
+            painter.setBrush(visor_g); painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QPointF(eye_c.x(), eye_cy), 44 * scale, 18 * scale)
+
             for ecx in (eye_cx_l, eye_cx_r):
-                # eye glow halo
-                eg = QRadialGradient(QPointF(ecx, eye_cy), 30*scale)
-                eg.setColorAt(0,   QColor(ar, ag, ab, int(230 * self._eye_openness)))
-                eg.setColorAt(0.5, QColor(ar, ag, ab, int(90  * self._eye_openness)))
+                # eye glow halo (soft circular glow per eye)
+                glow_r = 18 * scale
+                eg = QRadialGradient(QPointF(ecx, eye_cy), glow_r)
+                eg.setColorAt(0,   QColor(ar, ag, ab, int(220 * self._eye_openness * v)))
+                eg.setColorAt(0.5, QColor(ar, ag, ab, int(70  * self._eye_openness * v)))
                 eg.setColorAt(1,   Qt.GlobalColor.transparent)
                 painter.setBrush(eg); painter.setPen(Qt.PenStyle.NoPen)
-                painter.drawEllipse(QPointF(ecx, eye_cy), 30*scale, 20*scale)
+                painter.drawEllipse(QPointF(ecx, eye_cy), glow_r, glow_r)
 
-                # eye body
+                # eye body (smooth rounded capsule)
                 painter.setBrush(accent)
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawRoundedRect(
-                    QRectF(ecx-eye_w/2, eye_cy-eye_h/2, eye_w, eye_h), 6, 6)
+                    QRectF(ecx-eye_w/2, eye_cy-eye_h/2, eye_w, eye_h), eye_h/2, eye_h/2)
 
                 # PROCESSING – iris spinner
                 if st == "PROCESSING":
@@ -1648,8 +1715,8 @@ class EnhancedFlexieOrb(QWidget):
                         int(self._rot*16 + 180*16), 100*16)
 
                 # pupil highlight (tracks mouse / scan)
-                hw = eye_w * 0.24; hh = eye_h * 0.32
-                painter.setBrush(QColor(255, 255, 255, int(230 * self._eye_openness)))
+                hw = eye_w * 0.22; hh = eye_h * 0.30
+                painter.setBrush(QColor(255, 255, 255, int(240 * self._eye_openness)))
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(
                     QPointF(ecx + eye_w*0.14 + p_dx, eye_cy - eye_h*0.14 + p_dy),
