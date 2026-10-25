@@ -175,8 +175,9 @@ class CodeGenerator:
         token_budget: Optional[int] = None,
         max_tokens_per_call: Optional[int] = None,
     ):
-        self.token_budget = token_budget or getattr(Config, "JOB_TOKEN_BUDGET", 50000)
-        self.max_tokens_per_call = max_tokens_per_call or getattr(Config, "CODE_MAX_TOKENS", 4096)
+        self.token_budget = token_budget or getattr(Config, "JOB_TOKEN_BUDGET", 200000)
+        # 8192 keeps a full 300-line file without truncation; Config.CODE_MAX_TOKENS overrides
+        self.max_tokens_per_call = max_tokens_per_call or getattr(Config, "CODE_MAX_TOKENS", 8192)
         # Re-read live config caps so .env changes take effect without restart
         MAX_FILES_PER_PROJECT = getattr(Config, "JOB_MAX_FILES", 60)
         MAX_FILE_SIZE_BYTES = getattr(Config, "JOB_MAX_FILE_SIZE_KB", 300) * 1024
@@ -245,10 +246,18 @@ DO NOT write code. Output only the plain text plan (max 200 words)."""
             logger.error("Job %s: %s", job.id, msg)
             return False, msg
 
-        # Skip regenerating files that already exist from template
-        if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0 and file_spec.name != "README.md":
-            logger.info("File %s already exists from template; keeping it.", file_spec.name)
-            return True, ""
+        # Skip regenerating files that already exist from a real template (not stubs)
+        if os.path.exists(dest_path) and file_spec.name != "README.md":
+            try:
+                with open(dest_path, "r", encoding="utf-8") as _ef:
+                    _existing = _ef.read()
+                # Keep only if it has substantial content (> 2 non-comment lines)
+                _real_lines = [l for l in _existing.splitlines() if l.strip() and not l.strip().startswith("#")]
+                if len(_real_lines) >= 2:
+                    logger.info("File %s already has real content; keeping it.", file_spec.name)
+                    return True, ""
+            except Exception:
+                pass
             
         # Enhance the intent before generating code
         enhanced_purpose = self._enhance_intent(brain, file_spec, spec, job)

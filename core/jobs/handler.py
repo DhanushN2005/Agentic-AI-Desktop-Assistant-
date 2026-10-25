@@ -40,6 +40,32 @@ def handle_job_intent(orch: Any, intent: str, command: str) -> bool:
     c_clean = command.strip().lower()
 
     if intent in ("dev_build", "build_project"):
+        # Route edit/update/improve requests for an existing job to debug_job (repair pass)
+        _edit_verbs = re.compile(
+            r"\b(?:update|edit|modify|improve|change|add\s+(?:a\s+)?(?:feature|button|page|section|dark\s+mode|dual\s+theme|option)|make\s+(?:it\s+)?(?:responsive|darker|lighter|animated))\b",
+            re.IGNORECASE,
+        )
+        if _edit_verbs.search(command):
+            existing = mgr.get_latest_job()
+            if existing:
+                ok = mgr.debug_job(command, job_id=existing.id)
+                orch.speak(
+                    f"Updating {existing.title} — running a repair pass for your changes."
+                    if ok
+                    else "No recent project found to update."
+                )
+                return True
+
+        # Deduplication: don't spawn a second job while one is already running/queued
+        from core.jobs.models import JobStatus
+        _active = mgr.get_latest_job()
+        if _active and _active.status in (JobStatus.RUNNING, JobStatus.QUEUED):
+            orch.speak(
+                f"A build for '{_active.title}' is already in progress. "
+                "Say 'build status' to check it or 'cancel build' to stop it first."
+            )
+            return True
+
         cleaned = re.sub(
             r"^(can you please|could you please|can you|could you|please|kindly|i want you to|i need you to|help me)\s+",
             "",

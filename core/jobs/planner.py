@@ -95,17 +95,8 @@ class ProjectSpec:
 def is_vague_request(request: str) -> bool:
     """Check if the user request lacks both explicit stack and clear purpose."""
     c = request.strip().lower()
-    if not c or len(c.split()) < 3:
+    if not c:
         return True
-
-    # Generic request markers without substance
-    generic_patterns = [
-        r"^(build|create|make|code|start)\s+(an?\s+)?(new\s+)?(project|app|application|program|thing)$",
-        r"^(build|create|make)\s+something(\s+cool|\s+useful)?$",
-    ]
-    for pat in generic_patterns:
-        if re.match(pat, c):
-            return True
 
     known_stacks = {
         "python", "flask", "react", "html", "css", "javascript", "js", "vite",
@@ -117,27 +108,43 @@ def is_vague_request(request: str) -> bool:
         "converter", "tracker", "blog", "portfolio", "store", "timer", "notes", "quiz",
         "calendar", "calender", "callender", "planner", "scheduler", "events", "holidays",
         "animation", "animated", "interactive", "modern", "responsive", "app", "tool",
-        "viewer", "browser", "manager", "monitor", "clock", "widget", "form", "login",
-        "authentication", "auth", "database", "crud", "rest", "graphql", "websocket",
-        "chat", "messaging", "notification", "search", "filter", "map", "chart",
+        "viewer", "browser", "manager", "monitor", "clock", "watch", "widget", "form",
+        "login", "authentication", "auth", "database", "crud", "rest", "graphql",
+        "websocket", "messaging", "notification", "search", "filter", "map", "chart",
         "graph", "analytics", "report", "export", "import", "upload", "download",
-        "image", "video", "audio", "music", "player", "editor", "viewer", "preview",
+        "image", "video", "audio", "music", "player", "editor", "preview",
         "markdown", "pdf", "csv", "excel", "json", "xml", "yaml", "toml",
         "website", "landing", "page", "site", "portal", "platform", "system", "service",
-        "microservice", "bot", "assistant", "agent", "automation", "scraper", "crawler",
+        "microservice", "bot", "assistant", "agent", "automation", "crawler",
         "inventory", "expense", "budget", "finance", "invoice", "receipt", "payment",
         "recipe", "food", "fitness", "health", "habit", "workout", "meditation",
-        "flashcard", "study", "learning", "quiz", "exam", "test",
+        "flashcard", "study", "learning", "exam", "stopwatch", "countdown",
     }
 
     words = set(re.findall(r"\w+", c))
     has_stack = bool(words & known_stacks)
     has_purpose = bool(words & known_purposes)
+
+    # Known stack or purpose → specific enough regardless of length
+    if has_stack or has_purpose:
+        return False
+
+    # Generic request markers without substance
+    generic_patterns = [
+        r"^(build|create|make|code|start)\s+(an?\s+)?(new\s+)?(project|app|application|program|thing)$",
+        r"^(build|create|make)\s+something(\s+cool|\s+useful)?$",
+    ]
+    for pat in generic_patterns:
+        if re.match(pat, c):
+            return True
+
     # If the request has at least 5 meaningful words, it's probably specific enough
     meaningful_words = [w for w in words if len(w) > 3]
     if len(meaningful_words) >= 5:
         return False
-    return not (has_stack or has_purpose)
+
+    # Fewer than 2 words with no known stack/purpose → vague
+    return len(c.split()) < 2
 
 
 def clarify_request(

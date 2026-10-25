@@ -100,6 +100,11 @@ NL_OVERRIDES = [
     # Allows adjectives: "build a complete html css js stopwatch app"
     (r"\b(?:build|create|make|generate)\s+(?:a|an)\s+(?:\w+\s+){0,5}(?:app|application|tool|program|website|web\s+app|stopwatch|calculator|timer|clock|todo|game)\b", "dev_build", 0.96),
 
+    # ── Edit/update/improve existing project → job_fix ───────────────────────
+    # "update/edit/modify/improve/add to my project/app" → repair pass, not new build
+    (r"\b(?:update|edit|modify|improve|change|fix|add\s+(?:a\s+)?(?:feature|functionality|button|page|section|dark\s+mode|dual\s+theme))\b.{0,40}\b(?:project|app|application|website|code|build)\b", "job_fix", 0.95),
+    (r"\b(?:make|add)\b.{0,30}\b(?:dark\s+mode|dual\s+theme|responsive|feature|animation)\b.{0,30}\b(?:in|to|for|my)?\s*(?:the\s+)?(?:project|app|application|website|build|it)\b", "job_fix", 0.93),
+
     # ── Play/watch on YouTube → play_youtube (highest priority) ─────────────
     # Route to play_youtube, NOT youtube, so handle_play_youtube runs
     # (handle_youtube treats "play" as a pause/control keyword — wrong for song requests)
