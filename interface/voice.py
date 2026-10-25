@@ -778,7 +778,7 @@ class VoiceInterface:
                 active_speech_duration = 0.0
                 onset_run = 0
                 self.send_to_ui("STATE", "IDLE")
-                continue
+                return ""
 
             logging.info(f"VAD [Timing]: Total buffer capture time: {elapsed_latency:.2f}s. Invoking Google ASR.")
             self.send_to_ui("STATE", "THINKING")
