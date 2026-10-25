@@ -69,12 +69,33 @@ TYPO_MAP = {
     "lauch": "launch", "launche": "launch", "laucnh": "launch",
     "buid": "build", "buildd": "build",
     "creat": "create", "cretae": "create",
+    # Desktop / location typos
+    "destop": "desktop", "deskop": "desktop", "desktoop": "desktop",
+    # YouTube typos (covers "next song in u tube" → "next song in youtube")
+    "utube": "youtube", "youtbe": "youtube", "yotube": "youtube", "youttube": "youtube",
+    # Navigation/control
+    "nextt": "next", "nxt": "next", "nex": "next",
+    # Concatenated voice tokens
+    "applicationfor": "application for", "appfor": "app for",
 }
 
 
 # Natural language override patterns: (pattern, intent, confidence)
 # Checked BEFORE compiled triggers to intercept conversational phrasing.
 NL_OVERRIDES = [
+    # ── Open YouTube directly (no play/search) → browser_navigate ────────────
+    (r"^(?:open|launch|go\s+to|start)\s+(?:youtube|yt)$", "browser_navigate", 0.99),
+
+    # ── YouTube player controls (fast-path, no LLM) ──────────────────────────
+    (r"\b(?:next|skip)\s+(?:song|video|track)\b", "youtube", 0.97),
+    (r"\b(?:pause|resume|stop)\s+(?:the\s+)?(?:song|video|music|youtube|playback)\b", "youtube", 0.97),
+
+    # ── "where is my song / what's playing" → youtube ─────────────────────────
+    (r"\b(?:where(?:'s| is)\s+(?:my\s+|the\s+)?song|what(?:'s| is)\s+(?:playing|the\s+song|the\s+video|this\s+song)|current(?:ly\s+playing|\s+song|\s+video)|what\s+am\s+i\s+(?:watching|listening))\b", "youtube", 0.97),
+
+    # ── Build/create app shortcuts → code_gen ────────────────────────────────
+    (r"\b(?:build|create|make|generate)\s+(?:a|an)\s+(?:app|application|tool|program|website|web\s+app|stopwatch|calculator|timer|clock|todo|game)\b", "code_gen", 0.95),
+
     # ── Play/watch on YouTube → play_youtube (highest priority) ─────────────
     # Route to play_youtube, NOT youtube, so handle_play_youtube runs
     # (handle_youtube treats "play" as a pause/control keyword — wrong for song requests)

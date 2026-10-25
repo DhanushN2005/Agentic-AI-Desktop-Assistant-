@@ -580,7 +580,14 @@ class FlexieOrchestrator:
         c = cmd.strip().lower()
         c = re.sub(r"^(flexi|flexie|hey flexie|ok flexie)\b", "", c).strip()
         c = re.sub(r"^[,\.\!\?\s]+", "", c).strip()
-        
+
+        # Drop obvious garbage: single very-short tokens that aren't real commands
+        # Prevents "ng", "do", "uh" etc. from triggering 15-75s brain.ask() cascades
+        _SHORT_REAL = {"hi", "hey", "yes", "no", "ok", "bye", "run", "go"}
+        if len(c.split()) == 1 and len(c) <= 3 and c not in _SHORT_REAL:
+            self.logger.debug("[orchestrator] Discarding garbage input: %r", c)
+            return
+
         # Intercept Register Storage Command
         if any(x in c for x in ["save the response in", "save this in", "store this in", "store response in", "save it in"]):
             match = re.search(r"(?:in|to)\s+(?:my\s+)?(\w+)(?:\s+register)?", c)

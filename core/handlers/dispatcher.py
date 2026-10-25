@@ -295,6 +295,18 @@ def dispatch_intent(orch, intent, c, silent):
             return handle_mail(orch, intent, c)
         if intent == "power":
             return handle_power(orch, c)
+        if intent == "browser_navigate" or (
+            intent == "youtube"
+            and c in ("open youtube", "launch youtube", "go to youtube", "start youtube", "open yt")
+        ):
+            import subprocess, webbrowser
+            url = "https://www.youtube.com"
+            try:
+                subprocess.Popen(["start", "chrome", url], shell=True)
+            except Exception:
+                webbrowser.open(url)
+            orch.speak("Opening YouTube.")
+            return True
         if intent == "play_youtube":
             return handle_play_youtube(orch, c)
         if intent == "youtube":
