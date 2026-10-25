@@ -83,6 +83,9 @@ TYPO_MAP = {
 # Natural language override patterns: (pattern, intent, confidence)
 # Checked BEFORE compiled triggers to intercept conversational phrasing.
 NL_OVERRIDES = [
+    # ── Filesystem ops — must fire before any youtube pattern ────────────────
+    (r"\b(?:create|make|add)\s+(?:a\s+)?(?:new\s+)?(?:folder|directory)\b", "file_op", 0.99),
+
     # ── Open YouTube directly (no play/search) → browser_navigate ────────────
     (r"^(?:open|launch|go\s+to|start)\s+(?:youtube|yt)$", "browser_navigate", 0.99),
 
@@ -93,8 +96,9 @@ NL_OVERRIDES = [
     # ── "where is my song / what's playing" → youtube ─────────────────────────
     (r"\b(?:where(?:'s| is)\s+(?:my\s+|the\s+)?song|what(?:'s| is)\s+(?:playing|the\s+song|the\s+video|this\s+song)|current(?:ly\s+playing|\s+song|\s+video)|what\s+am\s+i\s+(?:watching|listening))\b", "youtube", 0.97),
 
-    # ── Build/create app shortcuts → code_gen ────────────────────────────────
-    (r"\b(?:build|create|make|generate)\s+(?:a|an)\s+(?:app|application|tool|program|website|web\s+app|stopwatch|calculator|timer|clock|todo|game)\b", "code_gen", 0.95),
+    # ── Build/create app shortcuts → dev_build ───────────────────────────────
+    # Allows adjectives: "build a complete html css js stopwatch app"
+    (r"\b(?:build|create|make|generate)\s+(?:a|an)\s+(?:\w+\s+){0,5}(?:app|application|tool|program|website|web\s+app|stopwatch|calculator|timer|clock|todo|game)\b", "dev_build", 0.96),
 
     # ── Play/watch on YouTube → play_youtube (highest priority) ─────────────
     # Route to play_youtube, NOT youtube, so handle_play_youtube runs

@@ -50,7 +50,7 @@ def handle_play_youtube(orch, c):
 
 
 def handle_youtube(orch, c):
-    if any(k in c for k in ["app", "build", "task", "project", "code"]):
+    if any(k in c for k in ["app", "build", "task", "project", "code", "folder", "directory", "download", "named", "file"]):
         return False
     if any(x in c for x in ["skip ad", "skip the ad", "skip the add", "kip ad", "kip the ad"]):
         orch.speak("Attempting to skip advertisement.")
