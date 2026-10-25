@@ -35,6 +35,36 @@ class CommandRequest(BaseModel):
     params: dict[str, Any] | None = None
 
 
+class MailSendRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    html: bool = False
+    body_html: str | None = None
+
+
+class MailReplyRequest(BaseModel):
+    to: str
+    subject: str | None = None
+    body: str
+    ai_draft: bool = False
+
+
+class MailSearchRequest(BaseModel):
+    query: str
+    count: int = 10
+
+
+class MailActionRequest(BaseModel):
+    email_id: str
+    folder: str | None = None  # for move_to_folder
+
+
+class MailComposeRequest(BaseModel):
+    to: str
+    topic: str
+
+
 class ApprovalRequestPayload(BaseModel):
     request_id: str | None = None
     action: str = "confirm"  # "confirm" or "cancel"
@@ -78,6 +108,7 @@ def create_app(orch: Any = None) -> FastAPI:
     def health():
         return {"status": "ok", "service": "flexiee", "active": orch.active if orch else False}
 
+    @app.post("/page-assist", dependencies=[Depends(verify_token)])
     @app.post("/api/flexie/page-assistant", dependencies=[Depends(verify_token)])
     @app.post("/api/jarvis/page-assistant", dependencies=[Depends(verify_token)])
     def page_assistant(payload: PageAssistRequest):
@@ -108,6 +139,7 @@ def create_app(orch: Any = None) -> FastAPI:
 
         return {"status": "success", "answer": answer}
 
+    @app.post("/command", dependencies=[Depends(verify_token)])
     @app.post("/api/flexie/commands", dependencies=[Depends(verify_token)])
     @app.post("/api/jarvis/commands", dependencies=[Depends(verify_token)])
     def run_command(payload: CommandRequest):
@@ -181,6 +213,104 @@ def create_app(orch: Any = None) -> FastAPI:
         sock.sendto(udp_pack(action_msg).encode("utf-8"), ("127.0.0.1", Config.UDP_PORT_ASSISTANT))
         sock.close()
         return {"status": "rejected", "success": True}
+
+    # ── Mail endpoints ────────────────────────────────────────────────────
+
+    def _email(orch_ref):
+        e = getattr(orch_ref, "email", None)
+        if e is None:
+            raise HTTPException(status_code=503, detail="EmailEngine not available.")
+        return e
+
+    @app.get("/api/flexie/mail/inbox", dependencies=[Depends(verify_token)])
+    def mail_inbox(count: int = 5):
+        """List unread emails."""
+        emails = _email(orch).get_unread_emails_detailed(count=count)
+        return {"emails": emails}
+
+    @app.get("/api/flexie/mail/all", dependencies=[Depends(verify_token)])
+    def mail_all(count: int = 10, folder: str = "INBOX"):
+        emails = _email(orch).get_all_emails(count=count, folder=folder)
+        return {"emails": emails}
+
+    @app.get("/api/flexie/mail/count", dependencies=[Depends(verify_token)])
+    def mail_count():
+        return _email(orch).get_email_count()
+
+    @app.get("/api/flexie/mail/sent", dependencies=[Depends(verify_token)])
+    def mail_sent(count: int = 5):
+        emails = _email(orch).get_sent_emails(count=count)
+        return {"emails": emails}
+
+    @app.get("/api/flexie/mail/folders", dependencies=[Depends(verify_token)])
+    def mail_folders():
+        return {"folders": _email(orch).get_folders()}
+
+    @app.post("/api/flexie/mail/search", dependencies=[Depends(verify_token)])
+    def mail_search(payload: MailSearchRequest):
+        results = _email(orch).search_emails(payload.query, count=payload.count)
+        return {"results": results, "query": payload.query}
+
+    @app.post("/api/flexie/mail/send", dependencies=[Depends(verify_token)])
+    def mail_send(payload: MailSendRequest):
+        eng = _email(orch)
+        if payload.html and payload.body_html:
+            result = eng.send_email_html(payload.to, payload.subject, payload.body, payload.body_html)
+        else:
+            result = eng.send_email(payload.to, payload.subject, payload.body)
+        return {"result": result}
+
+    @app.post("/api/flexie/mail/reply", dependencies=[Depends(verify_token)])
+    def mail_reply(payload: MailReplyRequest):
+        eng = _email(orch)
+        brain = getattr(orch, "brain", None) if payload.ai_draft else None
+        if brain and eng._last_inbox:
+            target = eng._last_inbox[0]
+            body = eng.ai_draft_reply(brain, target, payload.body)
+        else:
+            body = payload.body
+        result = eng.reply_email(payload.to, body, payload.subject)
+        return {"result": result}
+
+    @app.post("/api/flexie/mail/compose-ai", dependencies=[Depends(verify_token)])
+    def mail_compose_ai(payload: MailComposeRequest):
+        brain = getattr(orch, "brain", None)
+        if not brain:
+            raise HTTPException(status_code=503, detail="Brain not available.")
+        composed = _email(orch).ai_compose(brain, payload.to, payload.topic)
+        return {"to": payload.to, **composed}
+
+    @app.post("/api/flexie/mail/summarize", dependencies=[Depends(verify_token)])
+    def mail_summarize_inbox(count: int = 5):
+        brain = getattr(orch, "brain", None)
+        if not brain:
+            raise HTTPException(status_code=503, detail="Brain not available.")
+        summary = _email(orch).ai_summarize_inbox(brain, count=count)
+        return {"summary": summary}
+
+    @app.post("/api/flexie/mail/delete", dependencies=[Depends(verify_token)])
+    def mail_delete(payload: MailActionRequest):
+        return {"result": _email(orch).delete_email(payload.email_id)}
+
+    @app.post("/api/flexie/mail/archive", dependencies=[Depends(verify_token)])
+    def mail_archive(payload: MailActionRequest):
+        return {"result": _email(orch).archive_email(payload.email_id)}
+
+    @app.post("/api/flexie/mail/mark-read", dependencies=[Depends(verify_token)])
+    def mail_mark_read(payload: MailActionRequest):
+        return {"result": _email(orch).mark_as_read(payload.email_id)}
+
+    @app.post("/api/flexie/mail/draft", dependencies=[Depends(verify_token)])
+    def mail_draft(payload: MailSendRequest):
+        return {"result": _email(orch).save_draft(payload.to, payload.subject, payload.body)}
+
+    @app.post("/api/flexie/mail/move", dependencies=[Depends(verify_token)])
+    def mail_move(payload: MailActionRequest):
+        if not payload.folder:
+            raise HTTPException(status_code=400, detail="folder is required")
+        return {"result": _email(orch).move_to_folder(payload.email_id, payload.folder)}
+
+    # ─────────────────────────────────────────────────────────────────────
 
     @app.get("/api/flexie/events", dependencies=[Depends(verify_token)])
     @app.get("/api/jarvis/events", dependencies=[Depends(verify_token)])

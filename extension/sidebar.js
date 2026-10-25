@@ -292,6 +292,9 @@ document.getElementById("btnDebugCode")?.addEventListener("click", () => {
 document.getElementById("btnResearch")?.addEventListener("click", () =>
   askFlexie(`Research related topics for "${pageData.title}" and compile a synthesis.`, "research"));
 
+document.getElementById("btnCheckMail")?.addEventListener("click", () =>
+  sendMailCommand("inbox"));
+
 // ── Context from background (right-click menu) ────────────────────────
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.flexie_active_context) {
@@ -339,6 +342,120 @@ if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
   );
 } else {
   if (btnVoice) btnVoice.style.display = "none";
+}
+
+// ── Mail API helpers ─────────────────────────────────────────────────
+
+async function mailGet(path) {
+  const stored = await chrome.storage.local.get(["flexie_token"]);
+  const token  = stored.flexie_token || "";
+  const headers = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, { headers });
+  return res.ok ? res.json() : null;
+}
+
+async function mailPost(path, body) {
+  const stored = await chrome.storage.local.get(["flexie_token"]);
+  const token  = stored.flexie_token || "";
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST", headers, body: JSON.stringify(body)
+  });
+  return res.ok ? res.json() : null;
+}
+
+function renderEmailList(emails, title) {
+  if (!emails || !emails.length) {
+    addMessage("flexie", `No emails found.`);
+    return;
+  }
+  const lines = emails.slice(0, 8).map((e, i) =>
+    `${i + 1}. From: ${e.from}\n   Subject: ${e.subject}\n   Date: ${e.date}`
+  ).join("\n\n");
+  addMessage("flexie", `${title} (${emails.length}):\n\n${lines}`, false);
+}
+
+async function sendMailCommand(action, extra = {}) {
+  const loadEl = addSystemMsg(`Mail: ${action}…`);
+  try {
+    if (action === "inbox") {
+      const data = await mailGet("/api/flexie/mail/inbox?count=5");
+      if (data) renderEmailList(data.emails, "Unread Inbox");
+      else addMessage("flexie", "Could not reach Flexie mail API. Is api_server.py running?");
+    } else if (action === "count") {
+      const data = await mailGet("/api/flexie/mail/count");
+      if (data?.error) addMessage("flexie", data.error);
+      else if (data) addMessage("flexie", `You have ${data.unread} unread email(s) out of ${data.total} total.`);
+    } else if (action === "sent") {
+      const data = await mailGet("/api/flexie/mail/sent?count=5");
+      if (data) renderEmailList(data.emails, "Sent");
+    } else if (action === "summarize") {
+      addSystemMsg("Asking AI to summarize inbox…");
+      const data = await mailPost("/api/flexie/mail/summarize", {});
+      if (data) addMessage("flexie", data.summary || "Done.", false);
+    } else if (action === "search") {
+      const data = await mailPost("/api/flexie/mail/search", { query: extra.query, count: 5 });
+      if (data) renderEmailList(data.results, `Search: "${extra.query}"`);
+    } else if (action === "send") {
+      const data = await mailPost("/api/flexie/mail/send", extra);
+      addMessage("flexie", data?.result || "Send failed.");
+    } else if (action === "compose-ai") {
+      const data = await mailPost("/api/flexie/mail/compose-ai", extra);
+      if (data) {
+        addMessage("flexie",
+          `AI Draft ready:\nTo: ${data.to}\nSubject: ${data.subject}\n\n${data.body.slice(0, 300)}…`,
+          false);
+      }
+    } else if (action === "delete") {
+      const data = await mailPost("/api/flexie/mail/delete", extra);
+      addMessage("flexie", data?.result || "Delete failed.");
+    } else if (action === "archive") {
+      const data = await mailPost("/api/flexie/mail/archive", extra);
+      addMessage("flexie", data?.result || "Archive failed.");
+    } else if (action === "folders") {
+      const data = await mailGet("/api/flexie/mail/folders");
+      if (data) addMessage("flexie", `Folders: ${data.folders.join(", ")}`);
+    }
+  } catch (err) {
+    addMessage("flexie", `Mail error: ${err.message}`);
+  }
+}
+
+// Extend DOM command parser with mail commands
+const _origHandleDomCommand = handleDomCommand;
+async function handleDomCommand(raw) {
+  const cmd = raw.trim().toLowerCase();
+
+  // Mail commands — natural language wired through the extension
+  if (/\b(check|show|open|view|hek|chek)\s+(my\s+)?(mail|inbox|emails?)\b/i.test(raw)) {
+    await sendMailCommand("inbox"); return true;
+  }
+  if (/\bhow\s+many\s+(unread\s+)?(emails?|mails?)\b/i.test(raw)) {
+    await sendMailCommand("count"); return true;
+  }
+  if (/\bsummarize\s+(my\s+)?(inbox|emails?|mail)\b/i.test(raw)) {
+    await sendMailCommand("summarize"); return true;
+  }
+  if (/\bcheck\s+(sent|sent\s+emails?)\b/i.test(raw)) {
+    await sendMailCommand("sent"); return true;
+  }
+  if (/\b(list|show)\s+(my\s+)?folders\b/i.test(raw)) {
+    await sendMailCommand("folders"); return true;
+  }
+  const mailSearchMatch = raw.match(/\bsearch\s+(?:emails?\s+)?(?:for\s+|about\s+)?(.+)/i);
+  if (mailSearchMatch) {
+    await sendMailCommand("search", { query: mailSearchMatch[1].trim() }); return true;
+  }
+  const sendMatch = raw.match(/\bsend\s+(?:email\s+)?to\s+([\w.+@\-]+@[\w.-]+\.\w+)\s+(?:about|saying|subject)\s+(.+)/i);
+  if (sendMatch) {
+    const [, to, topic] = sendMatch;
+    await sendMailCommand("compose-ai", { to, topic }); return true;
+  }
+
+  // Fall through to original DOM command parser
+  return _origHandleDomCommand(raw);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────

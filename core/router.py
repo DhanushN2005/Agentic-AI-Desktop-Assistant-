@@ -21,6 +21,14 @@ TYPO_MAP = {
     "seting": "setting", "settign": "setting",
     "secnd": "second", "secod": "second", "seond": "second", "secound": "second",
     "alaram": "alarm", "alarma": "alarm",
+    # Mail typos / voice errors
+    "hek": "check", "chek": "check", "chck": "check",
+    "mial": "mail", "maill": "mail", "emal": "email", "emial": "email",
+    "snend": "send", "sned": "send",
+    "rply": "reply", "repply": "reply",
+    "srch": "search", "serch": "search",
+    "dleete": "delete", "delet": "delete",
+    "archve": "archive", "archiev": "archive",
     "remnder": "reminder", "remindr": "reminder", "remider": "reminder",
     "weahter": "weather", "wether": "weather", "wheather": "weather",
     "genrate": "generate", "generat": "generate", "generete": "generate",
@@ -76,6 +84,57 @@ NL_OVERRIDES = [
 
     # News
     (r"\b(what'?s?\s+(?:happening|going\s+on|in\s+the\s+news|new\s+today)|tell\s+me\s+(?:the\s+)?(?:news|headlines)|any\s+(?:news|updates|happening)|what\s+(?:are?\s+)?the\s+(?:latest|headlines))\b", "news", 0.9),
+
+    # ── Mail / Email ────────────────────────────────────────────────────
+    # Check / inbox  (highest priority — catch "check mail", "hek mail", "open inbox")
+    (r"\b(check|read|open|show|get|fetch|load|view|hek|chek)\s+(?:my\s+)?(?:mail|inbox|emails?|messages?)\b", "mail_check", 0.95),
+    (r"\b(what(?:'?s|\s+is)\s+(?:in\s+)?(?:my\s+)?(?:inbox|mail|email))\b", "mail_check", 0.95),
+    (r"\b(any\s+(?:new\s+)?(?:mail|email|messages?))\b", "mail_check", 0.9),
+    (r"\b(unread\s+(?:emails?|messages?|mail))\b", "mail_check", 0.9),
+    (r"\b(check\s+gmail|open\s+gmail|gmail\s+inbox)\b", "mail_check", 0.95),
+    # Count
+    (r"\b(how\s+many\s+(?:unread\s+)?(?:emails?|messages?|mails?))\b", "mail_count", 0.95),
+    (r"\b((?:email|mail)\s+count|count\s+(?:my\s+)?(?:emails?|mails?))\b", "mail_count", 0.9),
+    # Read a specific email
+    (r"\b(read\s+email\s+\d+|open\s+email\s+\d+|show\s+email\s+\d+)\b", "mail_read", 0.97),
+    (r"\b(read\s+(?:the\s+)?(?:email|mail|message)\s+from)\b", "mail_read", 0.95),
+    (r"\b(what\s+(?:does|did)\s+(?:the\s+)?(?:email|mail)\s+(?:from|say))\b", "mail_read", 0.9),
+    # Send
+    (r"\b(send\s+(?:an?\s+)?(?:email|mail|message)\s+to)\b", "mail_send", 0.97),
+    (r"\b(compose\s+(?:and\s+send|an?\s+)?(?:email|mail)\s+to)\b", "mail_send", 0.95),
+    (r"\b(email\s+[\w.+@\-]+@[\w.-]+\.\w+)\b", "mail_send", 0.93),
+    # Reply
+    (r"\b(reply\s+to\s+(?:the\s+)?(?:email|mail|message|last))\b", "mail_reply", 0.97),
+    (r"\b(reply\s+(?:with|saying))\b", "mail_reply", 0.93),
+    (r"\b(respond\s+to\s+(?:the\s+)?(?:email|mail|message))\b", "mail_reply", 0.93),
+    # Forward
+    (r"\b(forward\s+(?:the\s+)?(?:email|mail|message)\s+to)\b", "mail_forward", 0.95),
+    (r"\b(forward\s+email\s+\d+\s+to)\b", "mail_forward", 0.97),
+    # Search
+    (r"\b(search\s+(?:my\s+)?(?:inbox|emails?|mail)\s+(?:for|about))\b", "mail_search", 0.95),
+    (r"\b(find\s+(?:emails?|mails?)\s+(?:from|about|with|containing))\b", "mail_search", 0.93),
+    (r"\b(look\s+for\s+(?:emails?|mails?)\s+(?:from|about|with))\b", "mail_search", 0.9),
+    # Delete
+    (r"\b(delete\s+(?:email|mail)\s+(?:\d+|from|the))\b", "mail_delete", 0.95),
+    (r"\b(trash\s+(?:email|mail)\s+(?:\d+|the))\b", "mail_delete", 0.93),
+    # Archive
+    (r"\b(archive\s+(?:email|mail)\s+(?:\d+|the|from))\b", "mail_archive", 0.95),
+    (r"\b(move\s+(?:email|mail)\s+to\s+archive)\b", "mail_archive", 0.9),
+    # Mark as read
+    (r"\b(mark\s+(?:email|mail|it)\s+(?:as\s+)?read)\b", "mail_mark_read", 0.93),
+    # Draft
+    (r"\b(save\s+(?:as\s+)?draft|draft\s+(?:an?\s+)?(?:email|mail))\b", "mail_draft", 0.93),
+    # Sent
+    (r"\b((?:show|check|view|list)\s+(?:my\s+)?(?:sent\s+(?:emails?|mails?|messages?)|sent\s+folder))\b", "mail_sent", 0.93),
+    (r"\b(emails?\s+i\s+(?:sent|have\s+sent))\b", "mail_sent", 0.9),
+    # Folders
+    (r"\b((?:list|show|view)\s+(?:my\s+)?(?:mail\s+)?folders?)\b", "mail_folders", 0.9),
+    (r"\b(what\s+(?:email|mail)\s+folders?\s+(?:do\s+i\s+have|are\s+there))\b", "mail_folders", 0.9),
+    # Summarize inbox
+    (r"\b(summarize\s+(?:my\s+)?(?:inbox|emails?|mail)|(?:inbox|email)\s+summary|brief\s+(?:me\s+on\s+)?(?:my\s+)?(?:inbox|emails?))\b", "mail_summarize", 0.95),
+    # AI compose
+    (r"\b(compose\s+(?:an?\s+)?(?:email|mail)|write\s+(?:an?\s+)?(?:email|mail)\s+to|draft\s+(?:an?\s+)?(?:email|mail)\s+to)\b", "mail_compose", 0.93),
+    # ────────────────────────────────────────────────────────────────────
 
     # Translate (must come BEFORE daily_briefing to avoid "translate good morning" hijack)
     (r"\b(translate|translation|translate\s+this\s+to|say\s+it\s+in|in\s+(?:spanish|french|hindi|german|japanese|chinese|korean|arabic|portuguese|italian|russian))\b", "translate", 0.9),

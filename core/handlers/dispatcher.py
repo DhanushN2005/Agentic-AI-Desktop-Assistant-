@@ -13,6 +13,7 @@ from core.handlers.browser import (
     handle_browser_tabs,
     handle_gmail,
 )
+from core.handlers.mail import handle_mail
 from core.handlers.clipboard_mgr import handle_clipboard_mgr
 from core.handlers.code_gen import handle_artifact_command, handle_code_gen
 from core.handlers.code_search import handle_local_code_search
@@ -284,8 +285,14 @@ def dispatch_intent(orch, intent, c, silent):
             return handle_browser_tabs(orch, c)
         if intent == "browser_extract":
             return handle_browser_extract(orch, c)
-        if intent == "gmail":
-            return handle_gmail(orch)
+        if intent in (
+            "gmail", "check_mail", "inbox",
+            "mail_check", "mail_count", "mail_read", "mail_send",
+            "mail_reply", "mail_forward", "mail_search", "mail_delete",
+            "mail_archive", "mail_mark_read", "mail_draft", "mail_sent",
+            "mail_folders", "mail_summarize", "mail_compose",
+        ):
+            return handle_mail(orch, intent, c)
         if intent == "power":
             return handle_power(orch, c)
         if intent == "play_youtube":
