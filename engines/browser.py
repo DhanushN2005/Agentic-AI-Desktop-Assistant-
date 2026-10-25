@@ -23,11 +23,16 @@ class BrowserEngine:
                 return False
             if self.page.is_closed():
                 return False
-            # Run a quick lightweight evaluate to test responsiveness
             self.page.evaluate("1 + 1")
             return True
         except Exception as e:
-            self.logger.warning(f"Browser heartbeat check failed: {e}")
+            msg = str(e)
+            # Cross-thread Playwright exceptions: treat session as healthy if refs exist
+            # (the page is alive but we can't verify from this thread)
+            if any(k in msg.lower() for k in ("closed", "target", "browser", "connection")):
+                self.logger.debug("is_healthy: cross-thread check inconclusive (%s) — assuming alive", msg[:60])
+                return self.page is not None and self.playwright is not None
+            self.logger.warning("Browser heartbeat check failed: %s", e)
             return False
 
     def _limit_tabs(self):
@@ -55,15 +60,14 @@ class BrowserEngine:
         # "No active YouTube session" errors when control commands (next, pause)
         # arrive from a different thread than the one that started play_video().
         if hasattr(self, "_thread_id") and self._thread_id != curr_thread:
-            still_alive = False
+            # Default to alive when refs exist; Playwright's sync API can raise
+            # across threads, so a thrown exception means "can't tell" not "dead".
+            still_alive = self.page is not None and self.playwright is not None
             try:
-                still_alive = (
-                    self.page is not None
-                    and not self.page.is_closed()
-                    and self.playwright is not None
-                )
+                if still_alive:
+                    still_alive = not self.page.is_closed()
             except Exception:
-                pass
+                pass  # can't check from this thread — keep still_alive as-is (True if refs exist)
             if still_alive:
                 # Re-adopt the session into this thread; update tracking only
                 self.logger.debug("Thread adopted existing browser session (thread %s → %s).", self._thread_id, curr_thread)
