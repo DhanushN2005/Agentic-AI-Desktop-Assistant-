@@ -160,20 +160,20 @@ class ApiKeysDialog(QDialog):
         self.setMinimumWidth(580)
         self.setMaximumWidth(660)
         self.setStyleSheet("""
-            QDialog { background: rgba(10,15,25,245); border-radius: 16px; }
+            QDialog { background: rgba(8,12,20,248); border-radius: 16px; border: 1px solid rgba(0,255,100,55); }
             QLabel { color: rgba(255,255,255,200); font-size: 11px; }
             QLabel#DialogTitle { color: #FFFFFF; font-size: 16px; font-weight: 800; letter-spacing: 2px; }
-            QLabel#Help { color: rgba(0,210,255,180); font-size: 10px; }
+            QLabel#Help { color: rgba(0,255,100,180); font-size: 10px; }
             QLabel#Status { color: #00FF41; font-size: 11px; font-weight: 600; }
-            QLineEdit { background: rgba(0,0,0,80); border: 1px solid rgba(255,255,255,15); border-radius: 8px; color: #FFFFFF; padding: 8px 10px; font-size: 11px; }
-            QLineEdit:focus { border: 1px solid #00D2FF; }
-            QComboBox { background: rgba(0,0,0,80); border: 1px solid rgba(255,255,255,15); border-radius: 8px; color: #FFFFFF; padding: 6px 10px; font-size: 11px; }
-            QComboBox:hover { border: 1px solid #00D2FF; }
-            QComboBox QAbstractItemView { background: rgba(15,20,35,250); color: #FFFFFF; selection-background-color: rgba(0,210,255,40); border: 1px solid rgba(255,255,255,15); }
-            QPushButton { background: rgba(255,255,255,8); color: #FFFFFF; border-radius: 8px; padding: 8px 14px; font-weight: 600; border: 1px solid rgba(255,255,255,12); }
-            QPushButton:hover { background: rgba(0,210,255,20); border: 1px solid rgba(0,210,255,50); }
-            QPushButton#SaveBtn { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #0095FF, stop:1 #0055FF); border: none; padding: 10px; font-size: 13px; }
-            QPushButton#SaveBtn:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #00A5FF, stop:1 #0065FF); }
+            QLineEdit { background: rgba(0,0,0,90); border: 1px solid rgba(0,255,100,22); border-radius: 8px; color: #FFFFFF; padding: 8px 10px; font-size: 11px; }
+            QLineEdit:focus { border: 1px solid rgba(0,255,100,90); background: rgba(0,255,100,6); }
+            QComboBox { background: rgba(0,0,0,90); border: 1px solid rgba(0,255,100,22); border-radius: 8px; color: #FFFFFF; padding: 6px 10px; font-size: 11px; }
+            QComboBox:hover { border: 1px solid rgba(0,255,100,70); }
+            QComboBox QAbstractItemView { background: rgba(8,14,22,252); color: #FFFFFF; selection-background-color: rgba(0,255,100,30); border: 1px solid rgba(0,255,100,30); }
+            QPushButton { background: rgba(0,255,100,6); color: #FFFFFF; border-radius: 8px; padding: 8px 14px; font-weight: 600; border: 1px solid rgba(0,255,100,18); }
+            QPushButton:hover { background: rgba(0,255,100,20); border: 1px solid rgba(0,255,100,60); }
+            QPushButton#SaveBtn { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #00CC55, stop:1 #006622); border: 1px solid rgba(0,255,100,60); padding: 10px; font-size: 13px; }
+            QPushButton#SaveBtn:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #00FF66, stop:1 #008833); }
         """)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
@@ -513,24 +513,24 @@ class ControlPopup(QWidget):
         # Professional Minimalist Glassmorphism
         self.container.setStyleSheet("""
             QFrame#MainContainer {
-                background: rgba(10, 15, 25, 235);
-                border: 1px solid rgba(0, 255, 120, 45);
+                background: rgba(8, 12, 20, 242);
+                border: 1px solid rgba(0, 255, 100, 70);
                 border-radius: 18px;
             }
-            QLabel { 
-                color: rgba(255, 255, 255, 210); 
-                font-family: 'Inter', 'Segoe UI', sans-serif; 
-                font-size: 12px; 
+            QLabel {
+                color: rgba(255, 255, 255, 210);
+                font-family: 'Inter', 'Segoe UI', sans-serif;
+                font-size: 12px;
             }
-            QLabel#Title { 
-                color: #FFFFFF; 
-                font-size: 18px; 
-                font-weight: 800; 
+            QLabel#Title {
+                color: #FFFFFF;
+                font-size: 18px;
+                font-weight: 800;
                 background: transparent;
                 letter-spacing: 3px;
             }
             QLabel#SectionHeader {
-                color: rgba(0, 210, 255, 140);
+                color: rgba(0, 255, 100, 160);
                 font-size: 9px;
                 font-weight: 800;
                 text-transform: uppercase;
@@ -539,49 +539,49 @@ class ControlPopup(QWidget):
                 margin-bottom: 0px;
             }
             QPushButton {
-                background: rgba(255, 255, 255, 8);
-                color: #FFFFFF; 
-                border-radius: 10px; 
-                font-weight: 600; 
+                background: rgba(0, 255, 100, 6);
+                color: #FFFFFF;
+                border-radius: 10px;
+                font-weight: 600;
                 padding: 10px;
                 font-size: 12px;
-                border: 1px solid rgba(255,255,255,12);
+                border: 1px solid rgba(0, 255, 100, 18);
             }
-            QPushButton:hover { 
-                background: rgba(0, 210, 255, 25);
-                border: 1px solid rgba(0, 210, 255, 60);
+            QPushButton:hover {
+                background: rgba(0, 255, 100, 22);
+                border: 1px solid rgba(0, 255, 100, 65);
             }
             QPushButton#WakeButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0095FF, stop:1 #0055FF);
-                border: none;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #00CC55, stop:1 #006622);
+                border: 1px solid rgba(0,255,100,80);
                 padding: 12px;
                 font-size: 13px;
                 letter-spacing: 1px;
             }
             QPushButton#WakeButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #00A5FF, stop:1 #0065FF);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #00FF66, stop:1 #008833);
             }
-            QLineEdit { 
-                background: rgba(0, 0, 0, 80); 
-                border: 1px solid rgba(255, 255, 255, 15); 
-                border-radius: 10px; 
-                color: #FFFFFF; 
+            QLineEdit {
+                background: rgba(0, 0, 0, 90);
+                border: 1px solid rgba(0, 255, 100, 22);
+                border-radius: 10px;
+                color: #FFFFFF;
                 padding: 10px 12px;
                 font-size: 12px;
             }
             QLineEdit:focus {
-                border: 1px solid #00D2FF;
-                background: rgba(0, 210, 255, 5);
+                border: 1px solid rgba(0, 255, 100, 90);
+                background: rgba(0, 255, 100, 6);
             }
-            QComboBox { 
-                background: rgba(0, 0, 0, 80); 
-                color: white; 
-                border-radius: 8px; 
-                padding: 6px 10px; 
-                border: 1px solid rgba(255,255,255,15);
+            QComboBox {
+                background: rgba(0, 0, 0, 90);
+                color: white;
+                border-radius: 8px;
+                padding: 6px 10px;
+                border: 1px solid rgba(0, 255, 100, 22);
                 font-size: 11px;
             }
-            QComboBox:hover { border: 1px solid #00D2FF; }
+            QComboBox:hover { border: 1px solid rgba(0, 255, 100, 70); }
         """)
         self.container.setObjectName("MainContainer")
 
@@ -1007,18 +1007,30 @@ class ControlPopup(QWidget):
         if hasattr(self, "_cpu_load") and self._cpu_load > 90:
             return
 
-        # Draw some subtle tech grid lines behind the glass container
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.container.geometry()
 
-        # Grid overlay on the frame
+        # Subtle neon-green grid overlay
         painter.setClipRect(rect)
-        painter.setPen(QPen(QColor(255,255,255,4), 1))
+        painter.setPen(QPen(QColor(0, 255, 100, 5), 1))
         for x in range(rect.left(), rect.right(), 20):
             painter.drawLine(x, rect.top(), x, rect.bottom())
         for y in range(rect.top(), rect.bottom(), 20):
             painter.drawLine(rect.left(), y, rect.right(), y)
+
+        # Corner accent glows (top-left and bottom-right)
+        painter.setClipping(False)
+        tl_g = QRadialGradient(QPointF(rect.left(), rect.top()), 60)
+        tl_g.setColorAt(0, QColor(0, 255, 100, 18))
+        tl_g.setColorAt(1, QColor(0, 255, 100, 0))
+        painter.setBrush(tl_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(rect.left(), rect.top()), 60, 60)
+        br_g = QRadialGradient(QPointF(rect.right(), rect.bottom()), 50)
+        br_g.setColorAt(0, QColor(0, 200, 80, 12))
+        br_g.setColorAt(1, QColor(0, 200, 80, 0))
+        painter.setBrush(br_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(rect.right(), rect.bottom()), 50, 50)
 
 class Particle:
     """A single floating micro-particle with fading trail and state-reactive behavior."""
@@ -1452,39 +1464,84 @@ class EnhancedFlexieOrb(QWidget):
         if v > 0.45:
             ri = int(self._rot)
 
+            # 0. Outermost ambient ring with 8 glowing nodes
+            r_outer2 = 115 * scale
+            painter.setPen(QPen(QColor(ar, ag, ab, int(25*v)), 0.7*scale, Qt.PenStyle.DotLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(ring_c, r_outer2, r_outer2)
+            for node_i in range(8):
+                node_angle = math.radians((self._rot * 0.5 + node_i * 45) % 360)
+                nx = ring_c.x() + math.cos(node_angle) * r_outer2
+                ny = ring_c.y() + math.sin(node_angle) * r_outer2
+                node_pulse = int(80 * v * (0.5 + 0.5 * abs(math.sin(t * 2.2 + node_i * 0.78))))
+                nhalo = QRadialGradient(QPointF(nx, ny), 5 * scale)
+                nhalo.setColorAt(0, QColor(ar, ag, ab, node_pulse))
+                nhalo.setColorAt(1, QColor(ar, ag, ab, 0))
+                painter.setBrush(nhalo); painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(QPointF(nx, ny), 4*scale, 4*scale)
+
             # 1. Inner concentric tech ring
             r_inner = 65 * scale
             painter.setPen(QPen(QColor(ar, ag, ab, int(65*v)), 1.0*scale, Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(ring_c, r_inner, r_inner)
 
-            # Rotating glowing orbital nodes on the inner ring
-            for node_i in range(3):
-                node_angle = math.radians((self._rot * 1.6 + node_i * 120) % 360)
+            # 6 rotating glowing orbital nodes with halos + cross-connections
+            node_positions = []
+            for node_i in range(6):
+                node_angle = math.radians((self._rot * 1.6 + node_i * 60) % 360)
                 nx = ring_c.x() + math.cos(node_angle) * r_inner
                 ny = ring_c.y() + math.sin(node_angle) * r_inner
-                painter.setBrush(QColor(ar, ag, ab, int(220*v)))
-                painter.setPen(Qt.PenStyle.NoPen)
+                node_positions.append(QPointF(nx, ny))
+                halo_r = 5 * scale
+                nhalo = QRadialGradient(QPointF(nx, ny), halo_r)
+                nhalo.setColorAt(0, QColor(ar, ag, ab, int(160 * v)))
+                nhalo.setColorAt(1, QColor(ar, ag, ab, 0))
+                painter.setBrush(nhalo); painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(QPointF(nx, ny), halo_r, halo_r)
+                painter.setBrush(QColor(ar, ag, ab, int(255*v)))
                 painter.drawEllipse(QPointF(nx, ny), 2.2*scale, 2.2*scale)
+            # Cross-connections between opposite nodes
+            for ci in range(3):
+                cj = ci + 3
+                painter.setPen(QPen(QColor(ar, ag, ab, int(35*v)), 0.6*scale))
+                painter.drawLine(node_positions[ci], node_positions[cj])
 
-            # 2. Middle concentric orbital ring with quadrant micro-ticks
+            # 2. Middle concentric orbital ring with full-circumference tick marks
             r_mid = 80 * scale
             painter.setPen(QPen(QColor(ar, ag, ab, int(45*v)), 0.9*scale, Qt.PenStyle.SolidLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(ring_c, r_mid, r_mid)
-            for q_idx in range(4):
-                qa = math.radians(q_idx * 90 + self._rot * 0.25)
-                qp1 = QPointF(ring_c.x() + math.cos(qa) * (r_mid - 3.5*scale),
-                             ring_c.y() + math.sin(qa) * (r_mid - 3.5*scale))
-                qp2 = QPointF(ring_c.x() + math.cos(qa) * (r_mid + 3.5*scale),
-                             ring_c.y() + math.sin(qa) * (r_mid + 3.5*scale))
-                painter.setPen(QPen(QColor(ar, ag, ab, int(130*v)), 1.2*scale))
-                painter.drawLine(qp1, qp2)
+            for tick_i in range(60):
+                ta = math.radians(tick_i * 6 + self._rot * 0.15)
+                is_major = (tick_i % 5 == 0)
+                tlen = 5.0 * scale if is_major else 2.5 * scale
+                talpha = int(120 * v) if is_major else int(50 * v)
+                tp1 = QPointF(ring_c.x() + math.cos(ta) * (r_mid - tlen),
+                              ring_c.y() + math.sin(ta) * (r_mid - tlen))
+                tp2 = QPointF(ring_c.x() + math.cos(ta) * r_mid,
+                              ring_c.y() + math.sin(ta) * r_mid)
+                painter.setPen(QPen(QColor(ar, ag, ab, talpha),
+                                    1.0*scale if is_major else 0.6*scale))
+                painter.drawLine(tp1, tp2)
 
-            # 3. Outer dashed orbit ring
+            # 3. Outer dashed orbit ring with outward-facing radial ticks
+            r_outer = 97 * scale
             painter.setPen(QPen(QColor(ar, ag, ab, int(55*v)), 1.0*scale, Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(ring_c, 97*scale, 97*scale)
+            painter.drawEllipse(ring_c, r_outer, r_outer)
+            for tick_i in range(60):
+                ta = math.radians(tick_i * 6 - self._rot * 0.1)
+                is_major = (tick_i % 10 == 0)
+                tlen = 6.0 * scale if is_major else 2.5 * scale
+                talpha = int(110 * v) if is_major else int(38 * v)
+                tp1 = QPointF(ring_c.x() + math.cos(ta) * r_outer,
+                              ring_c.y() + math.sin(ta) * r_outer)
+                tp2 = QPointF(ring_c.x() + math.cos(ta) * (r_outer + tlen),
+                              ring_c.y() + math.sin(ta) * (r_outer + tlen))
+                painter.setPen(QPen(QColor(ar, ag, ab, talpha),
+                                    1.0*scale if is_major else 0.5*scale))
+                painter.drawLine(tp1, tp2)
 
             if st == "PROCESSING":
                 # Three stacked rotating arcs at different speeds
@@ -1609,23 +1666,31 @@ class EnhancedFlexieOrb(QWidget):
             painter.setBrush(flg); painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(QPointF(face_c.x(), scan_y), orb_size*0.5, 5)
 
-        # ── Glass reflection (curved forehead sheen) ────────────────────────
-        hl_g = QLinearGradient(QPointF(face_c.x(), face_c.y() - orb_r),
+        # ── Glass reflection (curved forehead sheen — enhanced) ─────────────
+        hl_g = QLinearGradient(QPointF(face_c.x() - orb_r*0.25, face_c.y() - orb_r),
                                QPointF(face_c.x(), face_c.y() - orb_r * 0.05))
-        hl_g.setColorAt(0.0, QColor(255, 255, 255, int(90*v)))
-        hl_g.setColorAt(0.55, QColor(255, 255, 255, int(25*v)))
+        hl_g.setColorAt(0.0, QColor(255, 255, 255, int(120*v)))
+        hl_g.setColorAt(0.45, QColor(255, 255, 255, int(45*v)))
         hl_g.setColorAt(1.0, QColor(255, 255, 255, 0))
         painter.setBrush(hl_g); painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(QPointF(face_c.x(), face_c.y() - orb_r * 0.44),
-                           orb_r * 0.85, orb_r * 0.42)
+        painter.drawEllipse(QPointF(face_c.x() - orb_r*0.12, face_c.y() - orb_r * 0.44),
+                           orb_r * 0.72, orb_r * 0.38)
+        # Small bright specular dot (top-left quadrant)
+        spec_g = QRadialGradient(QPointF(face_c.x() - orb_r*0.28, face_c.y() - orb_r*0.52), orb_r*0.22)
+        spec_g.setColorAt(0.0, QColor(255, 255, 255, int(180*v)))
+        spec_g.setColorAt(0.5, QColor(255, 255, 255, int(55*v)))
+        spec_g.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setBrush(spec_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(face_c.x() - orb_r*0.28, face_c.y() - orb_r*0.52),
+                           orb_r*0.22, orb_r*0.14)
 
-        # moving holographic sheen (diagonal shimmer)
+        # Moving holographic sheen (diagonal shimmer)
         sheen_phase = (t * 0.5) % 2.0 - 1.0
         sheen_x = face_c.x() + orb_size * (sheen_phase * 0.6)
         sheen_g = QLinearGradient(QPointF(sheen_x - 30, face_c.y() - orb_r),
                                    QPointF(sheen_x + 30, face_c.y() + orb_r))
         sheen_g.setColorAt(0, QColor(255,255,255, 0))
-        sheen_g.setColorAt(0.5, QColor(255,255,255, int(26*v)))
+        sheen_g.setColorAt(0.5, QColor(255,255,255, int(30*v)))
         sheen_g.setColorAt(1, QColor(255,255,255, 0))
         painter.setBrush(sheen_g); painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(face_c, orb_r, orb_r)
