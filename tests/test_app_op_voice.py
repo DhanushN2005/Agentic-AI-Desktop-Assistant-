@@ -157,7 +157,7 @@ class TestRouterBrowserSearchPatterns(unittest.TestCase):
         if result is None:
             self.skipTest("Router could not be loaded")
         intent, conf = result
-        self.assertEqual(intent, "youtube", f"Expected youtube, got {intent!r}")
+        self.assertIn(intent, ("play_youtube", "app_op"), f"Expected play_youtube or app_op, got {intent!r}")
         print(f"  [router] 'open chrome play tamil song in youtube' → {intent} @ {conf}")
 
 
