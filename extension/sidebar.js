@@ -467,6 +467,14 @@ chrome.storage.local.get(["flexie_pending_dom_cmd"], (data) => {
     chrome.storage.local.remove("flexie_pending_dom_cmd");
     const cmd = data.flexie_pending_dom_cmd;
     userInput.value = cmd;
-    setTimeout(handleSend, 600); // short delay so tab is ready
+    setTimeout(handleSend, 600);
+  }
+});
+
+// Consume pending mail command injected by popup mail chips
+chrome.storage.local.get(["flexie_pending_mail_cmd"], (data) => {
+  if (data.flexie_pending_mail_cmd) {
+    chrome.storage.local.remove("flexie_pending_mail_cmd");
+    setTimeout(() => sendMailCommand(data.flexie_pending_mail_cmd), 600);
   }
 });

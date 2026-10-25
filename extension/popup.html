@@ -158,6 +158,15 @@
     <span class="icon">🌐</span> Open Web Dashboard
   </button>
 
+  <!-- Mail quick actions -->
+  <div class="section-label">MAIL</div>
+  <div class="chips">
+    <div class="chip" data-mail="inbox">✉ Inbox</div>
+    <div class="chip" data-mail="count">🔢 Count</div>
+    <div class="chip" data-mail="summarize">🤖 AI Summary</div>
+    <div class="chip" data-mail="sent">📤 Sent</div>
+  </div>
+
   <!-- DOM quick-run chips -->
   <div class="section-label">QUICK DOM TASKS</div>
   <div class="chips">
@@ -233,6 +242,18 @@
     document.getElementById("btnOpenDashboard").addEventListener("click", () => {
       chrome.tabs.create({ url: "http://localhost:8766/" });
       window.close();
+    });
+
+    // Mail chips — stash a mail action key and open sidebar
+    document.querySelectorAll(".chip[data-mail]").forEach(chip => {
+      chip.addEventListener("click", async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) {
+          await chrome.storage.local.set({ flexie_pending_mail_cmd: chip.dataset.mail });
+          if (chrome.sidePanel?.open) chrome.sidePanel.open({ tabId: tab.id });
+          window.close();
+        }
+      });
     });
 
     // DOM quick chips — open sidebar with pre-typed command
