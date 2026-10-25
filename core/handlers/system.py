@@ -138,33 +138,100 @@ def handle_mode_prefix(orch, c, silent):
     return True
 
 
+_BROWSER_APPS = ("chrome", "edge", "firefox", "browser", "opera", "brave")
+
+
+def _open_browser_only(orch, browser_name: str, silent: bool):
+    """Open a browser app and mark context. Returns True."""
+    res = None
+    try:
+        res = orch.files.open_item(browser_name)
+    except Exception as _e:
+        logging.debug("[handle_app_op] open_item error: %s", _e)
+
+    _browser_names = ("chrome", "edge", "firefox", "browser", "opera", "brave")
+    if any(b in browser_name for b in _browser_names):
+        orch.ctx.set_browser_open(browser_name)
+    orch.ctx.update(app=browser_name)
+
+    if res and "NOT_FOUND" not in str(res):
+        if not silent:
+            orch.speak(res)
+    else:
+        # Chrome may already be open — just acknowledge
+        if not silent:
+            orch.speak(f"Chrome is ready for you.")
+    return True
+
+
 def handle_app_op(orch, c, silent):
-    # REDIRECTION: If the command contains search-like keywords, redirect to search intent
-    if any(x in c for x in ["search", "google", "find ", "who is", "what is", "earch", "arch"]):
-        search_cmd = re.sub(r"^(open|launch|start)\s+(chrome|browser|google|edge)\s+(?:search\s+)?", "search for ", c).strip()
-        if "search for" not in search_cmd:
+    cl = c.lower()
+
+    # ── Multi-step: "open chrome play X in youtube" / "open chrome and play X" ──
+    yt_follow = re.search(
+        r"\b(?:play|watch)\s+(.+?)\s+(?:in|on)\s+youtube\b",
+        cl
+    )
+    if yt_follow and any(b in cl for b in _BROWSER_APPS):
+        browser = next((b for b in _BROWSER_APPS if b in cl), "chrome")
+        _open_browser_only(orch, browser, silent=True)
+        play_cmd = re.sub(
+            r"^.*?(?:open|launch|start)\s+(?:the\s+)?(?:chrome|browser|edge|firefox|opera|brave)\s+(?:and\s+)?",
+            "", cl
+        ).strip() or yt_follow.group(0)
+        return orch.handle_command(play_cmd, is_subcommand=True, silent=silent)
+
+    # ── Multi-step: "open chrome search for X" ──────────────────────────────
+    if any(x in cl for x in ["search", "google", "find ", "who is", "what is"]):
+        browser = next((b for b in _BROWSER_APPS if b in cl), None)
+        if browser:
+            _open_browser_only(orch, browser, silent=True)
+        search_cmd = re.sub(
+            r"^(?:open|launch|start)\s+(?:the\s+)?(?:chrome|browser|google|edge|firefox)\s+(?:and\s+)?(?:search\s+)?",
+            "search for ", cl
+        ).strip()
+        if not search_cmd.startswith("search for"):
             search_cmd = "search for " + search_cmd
-        orch.handle_command(search_cmd, is_subcommand=True, silent=silent)
+        return orch.handle_command(search_cmd, is_subcommand=True, silent=silent)
+
+    # ── Simple: "open chrome" / "open edge" ────────────────────────────────
+    browser_hit = next((b for b in _BROWSER_APPS if b in cl), None)
+    is_close = "close" in cl or "kill" in cl
+
+    if browser_hit and not is_close:
+        return _open_browser_only(orch, browser_hit, silent=silent)
+
+    # ── General app open / close ────────────────────────────────────────────
+    target = re.sub(r"\b(open|run|launch|start|close|kill|app|the)\b", "", cl).strip()
+    if not target:
+        if not silent:
+            orch.speak("What app would you like me to open?")
         return True
 
-    target = re.sub(r"(open|run|launch|start|close|kill|app|the)", "", c).strip()
-    if "close" in c or "kill" in c:
+    if is_close:
         SystemCtrl.close_app(target)
-        orch.speak(f"Closed {target}.")
+        if not silent:
+            orch.speak(f"Closed {target}.")
     else:
-        # Context chaining: check if we should pass a target path
         t_path = None
-        if "same" in c or " it" in c or "this" in c or "that" in c:
+        if "same" in cl or " it" in cl or "this" in cl or "that" in cl:
             t_path = orch.ctx.last_path
 
-        res = orch.files.open_item(target, target_path=t_path)
-        if "NOT_FOUND" not in res:
+        try:
+            res = orch.files.open_item(target, target_path=t_path)
+        except Exception as _e:
+            logging.debug("[handle_app_op] open_item error: %s", _e)
+            res = None
+
+        if res and "NOT_FOUND" not in str(res):
             orch.ctx.update(app=target)
-            # Mark browser as open for situation-aware routing
-            _browser_names = ("chrome", "edge", "firefox", "browser", "opera", "brave")
-            if any(b in target.lower() for b in _browser_names):
-                orch.ctx.set_browser_open(target.lower())
-        orch.speak(res)
+            if any(b in target for b in _BROWSER_APPS):
+                orch.ctx.set_browser_open(target)
+            if not silent:
+                orch.speak(res)
+        else:
+            if not silent:
+                orch.speak(f"I couldn't find {target} on your system. Is it installed?")
     return True
 
 

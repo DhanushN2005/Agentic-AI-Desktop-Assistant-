@@ -75,6 +75,10 @@ TYPO_MAP = {
 # Natural language override patterns: (pattern, intent, confidence)
 # Checked BEFORE compiled triggers to intercept conversational phrasing.
 NL_OVERRIDES = [
+    # ── Compound "open chrome + play/watch in youtube" → youtube (highest) ──
+    (r"\b(?:open|launch|start)\s+(?:the\s+)?(?:chrome|browser|edge|firefox)\b.{0,40}\b(?:play|watch)\b.{0,60}\b(?:youtube|yt)\b", "youtube", 0.99),
+    (r"\b(?:play|watch)\b.{0,60}\b(?:in|on)\s+youtube\b", "youtube", 0.98),
+
     # ── Situation-aware browser search (highest priority) ──────────────────
     # "in the opened chrome search for X", "search for X in the opened browser"
     (r"\bin\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|firefox|browser|opera|brave)\s+(?:search|look|find|go|type|navigate)\b", "browser_search", 0.99),
