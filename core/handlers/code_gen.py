@@ -298,6 +298,20 @@ def handle_artifact_command(orch, cmd):
                 orch.speak(f"Attempting to fix and resume background build for {latest.title}.")
                 mgr.resume_job(latest.id)
                 return True
+            if latest and latest.status == JobStatus.DONE:
+                from core.jobs.launcher import launch_job_workspace
+                res = launch_job_workspace(latest, auto_browser=True)
+                parts = []
+                if res.get("browser_opened"):
+                    parts.append(f"opened {latest.title} in your browser")
+                if res.get("vscode_opened"):
+                    parts.append("opened the project folder")
+                if not parts:
+                    import os as _os
+                    _os.startfile(latest.workspace_path)
+                    parts.append(f"opened the project at {latest.workspace_path}")
+                orch.speak(f"Done — {' and '.join(parts)}.", record_chat=False)
+                return True
         except Exception:
             pass
         orch.speak("I don't have an active generated file for that follow-up yet.", record_chat=False)

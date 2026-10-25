@@ -350,7 +350,16 @@ class Brain:
                         raise e
                     logging.debug("[core/brain.py:228] Swallowed exception: %s: %s", type(e).__name__, e)
                     print(f"[Groq Error]: {e} - Falling back")
-                    if active == 'groq': return self._ddg_search(prompt) if online else ""
+                    if active == 'groq':
+                        # Tool-call error: model generated a tool call despite tool_choice=none.
+                        # Try other providers before falling back to DDG.
+                        is_tool_err = "tool choice" in err_str or "tool_use_failed" in err_str or "tool_use" in err_str
+                        if is_tool_err:
+                            r = self._ask_openai_compatible(self.openai_client, getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini'), prompt, sys_p, max_tokens, history)
+                            if r: return r
+                            r = self._ask_openai_compatible(self.deepseek_client, getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat'), prompt, sys_p, max_tokens, history)
+                            if r: return r
+                        return self._ddg_search(prompt) if online else ""
             if active in ('auto','openai'):
                 r = self._ask_openai_compatible(self.openai_client, getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini'), prompt, sys_p, max_tokens, history)
                 if r: return r

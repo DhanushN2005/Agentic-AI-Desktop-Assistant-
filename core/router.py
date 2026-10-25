@@ -210,6 +210,11 @@ NL_OVERRIDES = [
     (r"\b(?:start\s+)?(?:run|open|launch|show)\s+(?:the\s+)?(?:\w+\s+){1,8}(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|website)\b", "job_open", 0.98),
     (r"\b(?:start\s+)?(?:running|opening|launching)\s+(?:the\s+)?(?:(?:\w+\s+){0,5})(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?)\s+(?:that\s+(?:you|i)\s+(?:build|built|created|made|generated)|now|please)\b", "job_open", 0.97),
 
+    # Contextual follow-ups after a build: "to see time/clock", "to see it", "to view it"
+    # Users say this after building a clock app, calendar, etc. to mean "open/run it"
+    (r"\bto\s+(?:see|view|check|use|run|try)\s+(?:the\s+)?(?:time|clock|timer|calendar|app|result|it|output)\b", "job_open", 0.93),
+    (r"\b(?:i\s+)?want\s+to\s+(?:see|view|check|use|try)\s+(?:the\s+)?(?:time|clock|timer|calendar|it|that)\b", "job_open", 0.93),
+
     # Dev Assistant Autonomous Build & Control
     (r"\b(?:can you\s+|could you\s+|please\s+)?(build|create|make|code|develop|generate)\b.*\b(project|web\s*app|application|website|cal[l]*[ea]nd[ea]r|portal|service)\b", "dev_build", 0.96),
     (r"\b(?:can you\s+|could you\s+|please\s+)?(build|create|make|code|develop)\s+(?:me\s+)?(?:a\s+)?(?:an\s+)?(?:modern\s+|interactive\s+|full\s+)?(?:app|application|website|web\s*app|cal[l]*[ea]nd[ea]r|system|tool)\b", "dev_build", 0.96),
