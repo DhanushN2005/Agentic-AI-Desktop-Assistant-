@@ -202,7 +202,9 @@ def handle_app_op(orch, c, silent):
 
     # ── General app open / close ────────────────────────────────────────────
     target = re.sub(r"\b(open|run|launch|start|close|kill|app|the)\b", "", cl).strip()
-    if not target:
+    # Reject filler-only targets produced by compound-command splitting ("open for me", "open it")
+    _FILLERS = {"", "me", "for me", "it", "this", "that", "us", "please", "for", "now"}
+    if target in _FILLERS:
         if not silent:
             orch.speak("What app would you like me to open?")
         return True

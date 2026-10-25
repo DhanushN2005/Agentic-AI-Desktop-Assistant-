@@ -53,10 +53,14 @@ def handle_youtube(orch, c):
         orch.speak(res)
         return True
 
+    # "play next song" / "skip next" — must be caught before "play" maps to pause
+    if any(x in c for x in ["next", "skip"]):
+        orch.speak(orch.yt.control_player("next"))
+        return True
+
     # Advanced Controls (Substring based)
     yt_actions = {
         "pause": ["pause", "stop", "halt", "resume", "play", "mute", "unmute"],
-        "next": ["next", "skip"],
         "fullscreen": ["fullscreen", "full screen", "maximize"],
         "theatre": ["theatre", "theater", "wide"],
         "captions": ["caption", "subtitle", "cc "],
