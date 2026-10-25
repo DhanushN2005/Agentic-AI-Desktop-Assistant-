@@ -15,10 +15,7 @@ class YouTubeController(BrowserEngine):
         self._ad_monitor_active = False
 
     def is_session_active(self) -> bool:
-        """Checks if there is an active YouTube session running. Thread-safe."""
-        if hasattr(self, "_thread_id") and self._thread_id != threading.get_ident():
-            return False # Thread mismatch, session not 'active' for this caller
-
+        """Checks if there is an active YouTube session running."""
         try:
             return self.page is not None and not self.page.is_closed() and "youtube.com" in self.page.url
         except Exception as _e:

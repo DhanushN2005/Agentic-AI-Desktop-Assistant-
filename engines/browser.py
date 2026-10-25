@@ -49,16 +49,31 @@ class BrowserEngine:
         """Maintains a persistent browser session with user data for logins."""
         import threading
         curr_thread = threading.get_ident()
-        
-        # If thread changed, we must re-init Playwright references as it's not thread-safe.
-        # We nullify the references without calling thread-unsafe self.cleanup() on the old session.
+
+        # Thread changed — but only reset if the page is actually gone/unusable.
+        # Destroying a healthy session because the calling thread changed causes
+        # "No active YouTube session" errors when control commands (next, pause)
+        # arrive from a different thread than the one that started play_video().
         if hasattr(self, "_thread_id") and self._thread_id != curr_thread:
-            self.logger.warning("Thread change detected. Resetting browser session references safely...")
-            self.page = None
-            self.context = None
-            self.browser = None
-            self.playwright = None
-        
+            still_alive = False
+            try:
+                still_alive = (
+                    self.page is not None
+                    and not self.page.is_closed()
+                    and self.playwright is not None
+                )
+            except Exception:
+                pass
+            if still_alive:
+                # Re-adopt the session into this thread; update tracking only
+                self.logger.debug("Thread adopted existing browser session (thread %s → %s).", self._thread_id, curr_thread)
+            else:
+                self.logger.warning("Thread change + dead session — resetting browser refs.")
+                self.page = None
+                self.context = None
+                self.browser = None
+                self.playwright = None
+
         self._thread_id = curr_thread
 
         # Browser heartbeat check for existing session
