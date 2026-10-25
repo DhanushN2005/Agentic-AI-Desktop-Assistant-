@@ -75,9 +75,12 @@ TYPO_MAP = {
 # Natural language override patterns: (pattern, intent, confidence)
 # Checked BEFORE compiled triggers to intercept conversational phrasing.
 NL_OVERRIDES = [
-    # ── Compound "open chrome + play/watch in youtube" → youtube (highest) ──
-    (r"\b(?:open|launch|start)\s+(?:the\s+)?(?:chrome|browser|edge|firefox)\b.{0,40}\b(?:play|watch)\b.{0,60}\b(?:youtube|yt)\b", "youtube", 0.99),
-    (r"\b(?:play|watch)\b.{0,60}\b(?:in|on)\s+youtube\b", "youtube", 0.98),
+    # ── Play/watch on YouTube → play_youtube (highest priority) ─────────────
+    # Route to play_youtube, NOT youtube, so handle_play_youtube runs
+    # (handle_youtube treats "play" as a pause/control keyword — wrong for song requests)
+    (r"\b(?:open|launch|start)\s+(?:the\s+)?(?:chrome|browser|edge|firefox)\b.{0,60}\b(?:play|watch)\b.{0,60}\b(?:youtube|yt)\b", "play_youtube", 0.99),
+    (r"\b(?:play|watch)\b.{0,60}\b(?:in|on)\s+(?:youtube|yt)\b", "play_youtube", 0.99),
+    (r"\b(?:open|launch|start)\s+(?:the\s+)?(?:chrome|browser|edge|firefox)\b.{0,30}\b(?:play|watch)\b", "play_youtube", 0.97),
 
     # ── Situation-aware browser search (highest priority) ──────────────────
     # "in the opened chrome search for X", "search for X in the opened browser"

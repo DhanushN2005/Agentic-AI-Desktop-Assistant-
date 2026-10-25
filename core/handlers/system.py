@@ -167,19 +167,18 @@ def _open_browser_only(orch, browser_name: str, silent: bool):
 def handle_app_op(orch, c, silent):
     cl = c.lower()
 
-    # ── Multi-step: "open chrome play X in youtube" / "open chrome and play X" ──
-    yt_follow = re.search(
-        r"\b(?:play|watch)\s+(.+?)\s+(?:in|on)\s+youtube\b",
-        cl
-    )
+    # ── Multi-step: "open chrome play X [in youtube]" / "open chrome and play X" ──
+    # Match "play/watch" anywhere after the browser name (with or without "in youtube")
+    yt_follow = re.search(r"\b(?:play|watch)\s+(.+)", cl)
     if yt_follow and any(b in cl for b in _BROWSER_APPS):
-        browser = next((b for b in _BROWSER_APPS if b in cl), "chrome")
-        _open_browser_only(orch, browser, silent=True)
-        play_cmd = re.sub(
-            r"^.*?(?:open|launch|start)\s+(?:the\s+)?(?:chrome|browser|edge|firefox|opera|brave)\s+(?:and\s+)?",
-            "", cl
-        ).strip() or yt_follow.group(0)
-        return orch.handle_command(play_cmd, is_subcommand=True, silent=silent)
+        # Make sure the play comes AFTER the browser mention, not before
+        browser_pos = min((cl.find(b) for b in _BROWSER_APPS if b in cl), default=-1)
+        play_pos = cl.find(yt_follow.group(0))
+        if browser_pos != -1 and play_pos > browser_pos:
+            browser = next((b for b in _BROWSER_APPS if b in cl), "chrome")
+            _open_browser_only(orch, browser, silent=True)
+            play_cmd = yt_follow.group(0).strip()  # e.g. "play tamil song in youtube"
+            return orch.handle_command(play_cmd, is_subcommand=True, silent=silent)
 
     # ── Multi-step: "open chrome search for X" ──────────────────────────────
     if any(x in cl for x in ["search", "google", "find ", "who is", "what is"]):
