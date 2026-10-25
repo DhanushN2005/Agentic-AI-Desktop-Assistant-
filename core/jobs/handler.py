@@ -56,9 +56,10 @@ def handle_job_intent(orch: Any, intent: str, command: str) -> bool:
         desc = re.sub(r"^[\u2013\u2014\-\u2015]+\s*", "", desc).strip()
         if not desc:
             desc = cleaned.strip()
-        # Only ask clarification if the remaining description is too short (<3 meaningful words)
+        # Only ask clarification if the remaining description is too short (<2 meaningful words)
+        # "wall clock", "todo app" etc. are valid 2-word descriptions — don't ask again
         meaningful = [w for w in re.findall(r"\w+", desc) if len(w) > 2]
-        if len(meaningful) < 3:
+        if len(meaningful) < 2:
             orch.speak("What kind of project should I build for you?")
             if hasattr(orch, "voice") and orch.voice:
                 extra = orch.voice.listen(timeout=max(5, getattr(Config, "JOB_VOICE_CLARIFY_TIMEOUT", 20) // 2))

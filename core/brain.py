@@ -436,7 +436,7 @@ class Brain:
             return ollama_res
         if online:
             return self._ddg_search(prompt)
-        return "I am currently offline and my local intelligence (Ollama) is not responding. How can I help you with offline system tasks?"
+        return "All AI providers are unavailable right now — online LLMs and local Ollama both failed. Check your internet connection or start Ollama if you'd like local processing."
 
     def ask_stream(self, prompt: str, system_override: Optional[str] = None, use_rag: bool = False, max_tokens: Optional[int] = None, history=None):
         """Streaming version - yields text chunks as they arrive (Groq/OpenAI streaming, else fallback)."""
