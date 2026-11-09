@@ -1,7 +1,7 @@
 import importlib.util
+import logging
 import subprocess
 import sys
-import logging
 
 # Pip distribution names. Kept as plain strings (external scripts check
 # membership, e.g. `"PyAudio" in REQUIRED_PACKAGES`).
@@ -69,6 +69,8 @@ def install_missing():
     """Install missing distributions. Returns the list of packages that
     could NOT be installed (empty on success). Failures are logged as
     warnings — never silently swallowed."""
+    if getattr(sys, "frozen", False):
+        return []
     missing = []
     for pkg in REQUIRED_PACKAGES:
         if importlib.util.find_spec(_import_name(pkg)) is None:

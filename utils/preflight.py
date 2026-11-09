@@ -12,13 +12,12 @@ import shutil
 import socket
 import subprocess
 import sys
-import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger("flexie.preflight")
 
 
-def _resolve_code_cli() -> Optional[str]:
+def _resolve_code_cli() -> str | None:
     """Find VS Code CLI on PATH or standard Windows install locations."""
     which_code = shutil.which("code") or shutil.which("code.cmd")
     if which_code:
@@ -34,7 +33,7 @@ def _resolve_code_cli() -> Optional[str]:
     return None
 
 
-def _check_binary(name: str, alias_cmd: Optional[str] = None) -> Dict[str, Any]:
+def _check_binary(name: str, alias_cmd: str | None = None) -> dict[str, Any]:
     """Check if a CLI binary is installed and executable without raising."""
     try:
         resolved = shutil.which(name) or (shutil.which(alias_cmd) if alias_cmd else None)
@@ -85,7 +84,7 @@ def _check_binary(name: str, alias_cmd: Optional[str] = None) -> Dict[str, Any]:
         }
 
 
-def run_preflight(workspace_root: Optional[str] = None) -> Dict[str, Any]:
+def run_preflight(workspace_root: str | None = None) -> dict[str, Any]:
     """Execute preflight health check. Never crashes.
 
     Returns a structured dict with status of:
@@ -96,10 +95,10 @@ def run_preflight(workspace_root: Optional[str] = None) -> Dict[str, Any]:
     - free disk space (>= 2GB)
     - write access to workspace root
     """
-    checks: Dict[str, Any] = {}
-    missing_tools: List[str] = []
-    errors: List[str] = []
-    warnings: List[str] = []
+    checks: dict[str, Any] = {}
+    missing_tools: list[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
 
     # 1. Python version
     try:
@@ -175,12 +174,12 @@ def run_preflight(workspace_root: Optional[str] = None) -> Dict[str, Any]:
 
     # 4. Ollama reachable & pulled models
     try:
-        import urllib.request
         import json
+        import urllib.request
         ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
         tags_url = f"{ollama_url}/api/tags"
         req = urllib.request.Request(tags_url, headers={"User-Agent": "FlexiePreflight/2.0"})
-        models: List[str] = []
+        models: list[str] = []
         with urllib.request.urlopen(req, timeout=1.5) as resp:
             if resp.status == 200:
                 payload = json.loads(resp.read().decode("utf-8"))

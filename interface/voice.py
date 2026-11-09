@@ -856,30 +856,41 @@ class VoiceInterface:
 
     def _recognize_offline(self, audio_data, raw_bytes, sample_rate) -> str:
         """Handles offline speech recognition with multi-layered fallbacks."""
-        # Fallback Tier 0: Whisper (best offline quality, no model download needed for tiny)
-        try:
-            import whisper as _whisper
-            import tempfile, wave, os as _os
-            if not getattr(self, "_whisper_model", None):
-                self._whisper_model = _whisper.load_model("tiny.en")  # ~40MB, loads once
-            # Write raw_bytes to a temp wav file for Whisper
-            fd, wav_path = tempfile.mkstemp(suffix=".wav")
-            _os.close(fd)
-            with wave.open(wav_path, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)  # 16-bit
-                wf.setframerate(sample_rate)
-                wf.writeframes(raw_bytes)
-            result = self._whisper_model.transcribe(wav_path, language="en", fp16=False)
-            _os.unlink(wav_path)
-            text = result.get("text", "").strip().lower()
-            if text and len(text) > 1:
-                logging.info(f"VAD [Offline Whisper]: \"{text}\"")
-                return text
-        except ImportError:
-            logging.debug("Whisper not installed; skipping tier 0 offline ASR")
-        except Exception as e:
-            logging.warning(f"Whisper offline ASR failed: {e}")
+        # Fallback Tier 0: Whisper (best offline quality, fast-fails if ffmpeg unavailable)
+        if getattr(self, "_whisper_available", True):
+            try:
+                import whisper as _whisper
+                import tempfile, wave, os as _os
+                if not getattr(self, "_whisper_model", None):
+                    self._whisper_model = _whisper.load_model("tiny.en")  # ~40MB, loads once
+                # Write raw_bytes to a temp wav file for Whisper
+                fd, wav_path = tempfile.mkstemp(suffix=".wav")
+                _os.close(fd)
+                try:
+                    with wave.open(wav_path, "wb") as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2)  # 16-bit
+                        wf.setframerate(sample_rate)
+                        wf.writeframes(raw_bytes)
+                    result = self._whisper_model.transcribe(wav_path, language="en", fp16=False)
+                    text = result.get("text", "").strip().lower()
+                    if text and len(text) > 1:
+                        logging.info(f"VAD [Offline Whisper]: \"{text}\"")
+                        return text
+                finally:
+                    if _os.path.exists(wav_path):
+                        try:
+                            _os.unlink(wav_path)
+                        except OSError:
+                            pass
+            except ImportError:
+                self._whisper_available = False
+                logging.debug("Whisper not installed; disabling tier 0 offline ASR")
+            except FileNotFoundError as e:
+                self._whisper_available = False
+                logging.info(f"ffmpeg not found; caching Whisper as unavailable: {e}")
+            except Exception as e:
+                logging.warning(f"Whisper offline ASR failed: {e}")
 
         # Fallback Tier 1: Vosk (High quality local ASR)
         try:
@@ -945,4 +956,15 @@ class VoiceInterface:
         ans = self.listen(timeout=6)
         if not ans:
             return False
-        return any(x in ans.lower() for x in ["yes", "yeah", "yep", "sure", "do it", "confirm", "open", "run", "okay", "ok"])
+        clean = ans.strip().lower()
+        try:
+            from core.danger_gate import DangerGate
+            gate = DangerGate()
+            if gate.is_cancellation(clean):
+                return False
+            if gate.is_confirmation(clean):
+                return True
+        except Exception:
+            pass
+        tokens = set(clean.split())
+        return bool(tokens & {"yes", "yeah", "yep", "sure", "confirm", "ok", "okay"})

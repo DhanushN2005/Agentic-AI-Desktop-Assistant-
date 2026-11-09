@@ -5,7 +5,7 @@
 
 A **zero-config, Windows-native autonomous AI agent** with 30+ free plugins, self-awareness, persistent memory, hybrid agentic routing, browser automation, MCP server integration, specialist multi-agent delegation, REST/SSE API, browser extension, and autonomous dev-assistant build jobs — all running locally on Windows.
 
-**LLM Chain:** Groq → OpenAI → DeepSeek → Mistral → Gemini → Anthropic → Ollama (offline) → DuckDuckGo fallback. Streaming, VAD, desktop control, self-correction, and cheap-first cascade routing included.
+**LLM Chain (local-first):** Ollama when available → Groq → OpenAI → DeepSeek → Mistral → Gemini → Anthropic → DuckDuckGo fallback. Streaming, VAD, desktop control, self-correction, and cheap-first cascade routing included. Set `FLEXIE_LOCAL_FIRST=0` to skip the local attempt.
 
 **Voice:** Edge neural TTS (Jarvis-style, `en-GB-RyanNeural` default) with offline SAPI fallback, natural sentence-batched speech, and markdown/emoji-free spoken prose.
 
@@ -49,7 +49,7 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 
 **Not a cloud SaaS** — data stays on your machine. External calls only to free LLM APIs (Groq, Gemini) and free public APIs (weather, news, Wikipedia).
 
-**35+ test files, 600+ test cases** — CI runs pytest (blocking) + ruff on every push via `.github/workflows/ci.yml`.
+**650 test cases across 44 test files** — CI runs pytest (blocking) + ruff on every push via `.github/workflows/ci.yml`.
 
 ---
 
@@ -145,7 +145,7 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 ### Phase 5 — Model Hub & Intelligent Routing
 - **Model Hub** (`core/brain.py`) — task-based LLM routing: code tasks → Groq code model, vision → Gemini, chat → cheap-first cascade.
 - **Cheap-first cascade** — attempts the cheapest capable model first; promotes to smarter model only on failure or low-confidence output.
-- **OpenAI Bridge** — drop-in OpenAI-compatible API endpoint for third-party tools to call Flexie's LLM chain.
+- **OpenAI Bridge** — drop-in OpenAI-compatible API (`POST /v1/chat/completions` on the REST server and the localhost bridge) for third-party tools to call Flexie's LLM chain.
 - **Task-based routing** — `CODING`, `VISION`, `RESEARCH`, `CONVERSATION` task types each select the optimal LLM.
 
 ### Phase 6 — Desktop & IDE Integration
@@ -611,6 +611,8 @@ python interface/api_server.py  # http://localhost:8768
 | `GROQ_API_KEY` | `""` | Groq `openai/gpt-oss-20b` (primary, `brain.py`) |
 | `GEMINI_API_KEY` | `""` | Gemini `2.0-flash` `brain.py` (vision + chat fallback) |
 | `OPENAI_API_KEY` | `""` | OpenAI GPT-4o-mini (fallback in LLM chain) |
+| `FLEXIE_LOCAL_FIRST` | `1` | Try local Ollama before cloud providers |
+| `FLEXIE_ENGINE` | `auto` | Preferred inference engine (`auto`, `ollama`, `brain`) |
 | `FLEXIE_VOICE` | `en-GB-RyanNeural` | Edge neural voice for TTS (e.g. `en-US-GuyNeural`, `en-IN-PrabhatNeural`) |
 | `FLEXIE_TTS_MODE` | `neural` | `neural` (Edge TTS) or `sapi` (offline Windows SAPI fallback) |
 | `FLEXIE_EMAIL`/`FLEXIE_PASS` | `""` | EmailEngine IMAP/SMTP `engines/email_engine.py:8` |
@@ -682,7 +684,7 @@ flexie_v2/
 │   ├── path_jail.py (workspace escape prevention)
 │   └── installer.py (no --upgrade on every start)
 ├── workspace/ (autonomous job workspaces) [NEW]
-├── tests/ (35+ files, 600+ test cases) [EXPANDED]
+├── tests/ (44 files, 650 test cases) [EXPANDED]
 ├── requirements.txt (playwright>=1.52,<2, google-genai>=1.0,<2, ddgs>=8, fastapi, uvicorn)
 └── main.py (install_missing + orchestrator.run)
 ```
@@ -693,7 +695,7 @@ flexie_v2/
 
 ```bash
 python -m pytest tests/ -v
-# 600+ passed (35+ test files)
+# 650 passed (44 test files)
 
 # Feature routing check (75 commands)
 python -c "from core.router import IntentRouter; r=IntentRouter(); print(r.route('tell me binary search code and save to downloads'))"
@@ -786,8 +788,7 @@ python -m pytest tests/test_ide_integration.py -v
 
 ## License
 
-No LICENSE file is committed yet — add one before distributing (placeholder:
-MIT recommended for the app code). Note that `pymupdf` (PyMuPDF) is
+MIT — see [LICENSE](LICENSE). Note that `pymupdf` (PyMuPDF) is
 **AGPL-licensed**: distributing binaries that link it requires AGPL compliance
 or a commercial PyMuPDF license.
 

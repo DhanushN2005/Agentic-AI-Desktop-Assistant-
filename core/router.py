@@ -59,8 +59,7 @@ TYPO_MAP = {
     "morse": "morse", "morss": "morse",
     # Common voice command typos
     "tha": "the", "thet": "the", "teh": "the",
-    "opended": "opened", "opend": "opened", "openned": "opened", "opeen": "opened",
-    "searh": "search", "serch": "search", "sarch": "search", "seach": "search",
+    "opended": "opened", "opend": "opened", "openned": "opened", "opeen": "opened", "seach": "search",
     "crhome": "chrome", "chorme": "chrome", "chrme": "chrome",
     "borwser": "browser", "broser": "browser", "broswe": "browser",
     "calender": "calendar", "calander": "calendar", "calandar": "calendar",
@@ -72,9 +71,9 @@ TYPO_MAP = {
     # Desktop / location typos
     "destop": "desktop", "deskop": "desktop", "desktoop": "desktop",
     # YouTube typos (covers "next song in u tube" → "next song in youtube")
-    "utube": "youtube", "youtbe": "youtube", "yotube": "youtube", "youttube": "youtube",
+    "utube": "youtube", "youttube": "youtube",
     # Navigation/control
-    "nextt": "next", "nxt": "next", "nex": "next",
+    "nextt": "next", "nex": "next",
     # Concatenated voice tokens
     "applicationfor": "application for", "appfor": "app for",
 }
@@ -144,7 +143,7 @@ NL_OVERRIDES = [
     (r"\b(what(?:'?s|\s+is)\s+(?:in\s+)?(?:my\s+)?(?:inbox|mail|email))\b", "mail_check", 0.95),
     (r"\b(any\s+(?:new\s+)?(?:mail|email|messages?))\b", "mail_check", 0.9),
     (r"\b(unread\s+(?:emails?|messages?|mail))\b", "mail_check", 0.9),
-    (r"\b(check\s+gmail|open\s+gmail|gmail\s+inbox)\b", "mail_check", 0.95),
+    (r"\b(check\s+gmail|open\s+gmail|gmail\s+inbox)\b", "gmail", 0.95),
     # Count
     (r"\b(how\s+many\s+(?:unread\s+)?(?:emails?|messages?|mails?))\b", "mail_count", 0.95),
     (r"\b((?:email|mail)\s+count|count\s+(?:my\s+)?(?:emails?|mails?))\b", "mail_count", 0.9),

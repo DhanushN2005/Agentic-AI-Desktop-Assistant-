@@ -33,17 +33,17 @@ def handle_play_youtube(orch, c):
         def _play_bg():
             try:
                 result = orch.yt.play_video(clean_c)
-                if result and ("error" in result.lower() or "could not" in result.lower()):
+                if result:
                     orch.speak(result)
-                else:
-                    # Video is playing — suppress ASR so YouTube audio doesn't trigger recognition
-                    if hasattr(orch, "voice") and orch.voice:
-                        orch.voice.suppress_asr = True
+                if hasattr(orch, "voice") and orch.voice:
+                    orch.voice.suppress_asr = True
             except Exception as e:
                 import logging
                 logging.debug("YouTube play background error: %s", e)
 
-        threading.Thread(target=_play_bg, daemon=True).start()
+        t = threading.Thread(target=_play_bg, daemon=True)
+        t.start()
+        t.join(timeout=0.05)
     else:
         orch.speak("What would you like me to play on YouTube?")
     return True

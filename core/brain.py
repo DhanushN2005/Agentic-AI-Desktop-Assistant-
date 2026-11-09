@@ -3,6 +3,7 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 import logging
 import json
+import time
 from collections import OrderedDict
 from urllib.request import urlopen, Request
 
@@ -40,6 +41,8 @@ import re
 from typing import Optional
 from utils.config import Config
 from utils.helpers import is_online
+from core.persona import compose_system_prompt
+from core.skills import build_catalog, discover_skills
 
 class Brain:
     def __init__(self):
@@ -52,7 +55,10 @@ class Brain:
         self.deepseek_client = None
         self.anthropic_client = None
         self.mistral_client = None
-        self.system_prompt = Config.SYSTEM_PROMPT_STANDARD
+        self.system_prompt = compose_system_prompt(Config.SYSTEM_PROMPT_STANDARD)
+        _skills = discover_skills()
+        if _skills:
+            self.system_prompt += "\n\n" + build_catalog(_skills)
         # LRU cache for recent LLM responses (prompt + prompt key -> response)
         self._cache = OrderedDict()
         self._cache_max = 64
@@ -332,6 +338,20 @@ class Brain:
                 logging.debug("[core/brain.py:206] Swallowed exception: %s: %s", type(e).__name__, e)
                 print(f"[Context Compilation Warning]: {e}")
 
+        # Local-first: try Ollama before any cloud provider when enabled.
+        engine_pref = getattr(Config, "ENGINE", "auto")
+        local_enabled = engine_pref == "ollama" or (
+            engine_pref == "auto" and getattr(Config, "LOCAL_FIRST", True)
+        )
+        if (
+            local_enabled
+            and not img_path
+            and getattr(Config, "ACTIVE_PROVIDER", "auto") in ("auto", "ollama")
+        ):
+            local = self._ask_local_engine(prompt, sys_p, max_tokens, history)
+            if local:
+                return local
+
         online = is_online()
         if online:
             active = getattr(Config, 'ACTIVE_PROVIDER', 'auto').lower() if hasattr(Config, 'ACTIVE_PROVIDER') else 'auto'
@@ -499,8 +519,33 @@ class Brain:
             logging.debug("[core/brain.py:react] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Agent error: {e}. Falling back to direct response."
 
+    def _ask_local_engine(self, prompt: str, sys_p: str, max_tokens: Optional[int], history=None) -> Optional[str]:
+        """Ask the local Ollama engine through the inference registry."""
+        try:
+            from core.inference import OllamaEngine
+
+            engine = OllamaEngine()
+            if not engine.available():
+                return None
+            messages = [{"role": "system", "content": sys_p}]
+            messages.extend(self._normalize_history(history))
+            messages.append({"role": "user", "content": prompt})
+            result = engine.generate(
+                messages,
+                model=getattr(Config, "OLLAMA_MODEL", None),
+                max_tokens=max_tokens or 2048,
+            )
+            if result.text:
+                print(f"[Local] Answered with {result.model}")
+                return result.text
+        except Exception as e:
+            logging.debug("[core/brain.py:local] Swallowed exception: %s: %s", type(e).__name__, e)
+        return None
+
     def _ask_ollama(self, prompt: str) -> Optional[str]:
         """Tries to get a response from a local Ollama instance."""
+        if not self._ollama_available():
+            return None
         try:
             payload = {
                 "model": Config.OLLAMA_MODEL,
@@ -538,12 +583,19 @@ class Brain:
         return "http://localhost:11434"
 
     def _ollama_available(self) -> bool:
-        """Check if a local Ollama server is running."""
+        """Check if a local Ollama server is running (cached with 60s TTL)."""
+        now = time.time()
+        cached = getattr(self, "_ollama_avail_cache", None)
+        if cached and (now - cached[0] < 60):
+            return cached[1]
         try:
             req = Request(f"{self._ollama_base()}/api/tags")
-            with urlopen(req, timeout=2) as r:
-                return r.status == 200
+            with urlopen(req, timeout=0.8) as r:
+                status = (r.status == 200)
+                self._ollama_avail_cache = (now, status)
+                return status
         except Exception:
+            self._ollama_avail_cache = (now, False)
             return False
 
     def _ollama_chat_stream(self, model: str, messages: list, temperature: float = 0.7):

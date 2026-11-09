@@ -37,17 +37,7 @@ def _make_orch(browser_open=False, browser_name="chrome"):
 
 # ── Import the handler under test ────────────────────────────────────────────
 
-# Stub heavy dependencies before import
-for mod in [
-    "engines.system", "engines.self_awareness",
-    "utils.config", "utils.helpers",
-]:
-    sys.modules.setdefault(mod, MagicMock())
-
-sys.modules["engines.system"].SystemCtrl = MagicMock()
-
 import importlib
-import os, types as _t
 
 # Patch open_item before importing system.py
 with patch.dict("sys.modules", {

@@ -32,17 +32,12 @@ class SandboxExecutor:
 
     def run_python_code(self, code: str) -> str:
         """Executes a raw python block inside the sandbox environment."""
-        # Save temp file
-        temp_file = f"temp_code_{int(time.time())}.py"
-        with open(temp_file, "w", encoding="utf-8") as f:
-            f.write(code)
-
-        try:
-            res = self.run_python_script(temp_file)
-            return res
-        finally:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="flexie_sandbox_") as tmpdir:
+            temp_file = os.path.join(tmpdir, "script.py")
+            with open(temp_file, "w", encoding="utf-8") as f:
+                f.write(code)
+            return self.run_python_script(temp_file)
 
     def _deny(self, reason: str) -> str:
         return (

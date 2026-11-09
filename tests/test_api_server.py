@@ -39,6 +39,19 @@ def test_command_with_auth_token(test_client):
     mock_orch.cmd_queue.put.assert_called_with("open chrome")
 
 
+def test_openai_compatible_chat_completion(test_client):
+    client, mock_orch = test_client
+    mock_orch.brain.ask.return_value = "hello from flexie"
+    headers = {"Authorization": "Bearer valid-test-token"}
+    resp = client.post(
+        "/v1/chat/completions",
+        json={"model": "flexie", "messages": [{"role": "user", "content": "hi"}]},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "hello from flexie"
+
+
 def test_approve_and_reject_endpoints(test_client):
     client, mock_orch = test_client
     headers = {"Authorization": "Bearer valid-test-token"}

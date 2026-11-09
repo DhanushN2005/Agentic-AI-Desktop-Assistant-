@@ -1,11 +1,17 @@
+import logging
+import os
+import subprocess
 import psutil
 import pyautogui
 from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-import screen_brightness_control as sbc
+try:
+    import screen_brightness_control as sbc
+except Exception as _e:
+    logging.debug("[engines/system.py:6] screen_brightness_control unavailable: %s", _e)
+    sbc = None
 from utils.helpers import is_online
-import logging
 try:
     import pygetwindow as gw
 except ImportError as _e:
@@ -78,7 +84,6 @@ class SystemCtrl:
         for k, argv in table.items():
             if k in action.lower():
                 try:
-                    import subprocess
                     subprocess.Popen(argv, shell=False)
                 except Exception as _e:
                     logging.debug("[engines/system.py:power] Swallowed exception: %s: %s", type(_e).__name__, _e)
@@ -167,8 +172,9 @@ class SystemCtrl:
             return "Command not allowed. Use: dir, cd, type, echo, cls, or ver commands only."
         
         try:
+            exec_args = ["cmd.exe", "/c", command] if os.name == "nt" else command
             result = subprocess.run(
-                command, 
+                exec_args, 
                 capture_output=True, 
                 text=True, 
                 timeout=10,

@@ -162,7 +162,7 @@ def test_dashboard_url_matches_bridge_http_port():
 def test_web_ui_detects_uninjected_token():
     html = (ROOT / "interface" / "web_ui.html").read_text(encoding="utf-8")
     assert "TOKEN_INJECTED" in html
-    assert "NO TOKEN" in html
+    assert "Auth token missing" in html
     # sendCmd must keep the user's text when the link is down.
     assert "if (sendRaw(val))" in html
 

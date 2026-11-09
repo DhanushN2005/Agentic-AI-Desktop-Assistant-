@@ -40,6 +40,12 @@ jobs:
           GEMINI_API_KEY: ""
         run: pytest tests -q --timeout=120
 
+      - name: Routing eval gate
+        env:
+          GROQ_API_KEY: ""
+          GEMINI_API_KEY: ""
+        run: python -m evals.run --min-accuracy 0.95
+
   lint-strict:
     name: Ruff (strict gate on core safety modules)
     runs-on: windows-latest

@@ -40,7 +40,7 @@ def _read_token_file() -> str:
     normally started orchestrator.
     """
     try:
-        with open(TOKEN_FILE, "r", encoding="utf-8") as fh:
+        with open(TOKEN_FILE, encoding="utf-8") as fh:
             return fh.read().strip()
     except OSError:
         return ""

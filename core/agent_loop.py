@@ -7,6 +7,7 @@ Uses a local Ollama deepseek-r1 model for reasoning by default.
 """
 import logging
 import json
+import os
 from typing import TypedDict, List, Optional
 from urllib.request import urlopen, Request
 
@@ -51,13 +52,18 @@ def _ollama_chat(model: str, messages: list, temperature: float = 0.3) -> str:
 
 def _execute_tool(tool_name: str, tool_args: dict, registry=None) -> str:
     """Execute a registered tool by name. Returns string result."""
-    if registry and hasattr(registry, 'get_tool'):
-        try:
-            tool = registry.get_tool(tool_name)
-            if tool and hasattr(tool, 'execute'):
-                return tool.execute(**tool_args)
-        except Exception as e:
-            return f"Tool '{tool_name}' error: {e}"
+    if registry:
+        getter = getattr(registry, "get_tool", None) or getattr(registry, "get", None)
+        if getter:
+            try:
+                tool = getter(tool_name)
+                if tool:
+                    execute = getattr(tool, "execute_fn", None) or getattr(tool, "execute", None)
+                    if execute:
+                        result = execute(**tool_args)
+                        return getattr(result, "message", str(result))
+            except Exception as e:
+                return f"Tool '{tool_name}' error: {e}"
     return f"Tool '{tool_name}' not available in registry."
 
 
@@ -90,11 +96,11 @@ def _create_tool_node(tool_registry):
     return tool_node
 
 
-def _create_llm_node(system_prompt: str):
+def _create_llm_node(system_prompt: str, model: str):
     """Factory for the LLM reasoning node."""
     def llm_node(state: AgentState) -> dict:
         messages = [{"role": "system", "content": system_prompt}] + list(state["messages"])
-        response = _ollama_chat("deepseek-r1", messages)
+        response = _ollama_chat(model, messages)
         new_messages = list(state["messages"]) + [{"role": "assistant", "content": response}]
         return {"messages": new_messages, "reasoning": response, "step": state["step"] + 1}
     return llm_node
@@ -115,11 +121,12 @@ def _create_router_node(tool_registry):
 class ReActAgent:
     """ReAct agent loop: Reason → Act → Observe → Reflect → Repeat."""
 
-    def __init__(self, system_prompt: str = None, tool_registry=None, max_steps: int = 5):
+    def __init__(self, system_prompt: str = None, tool_registry=None, max_steps: int = 5, model: str = None):
         self.system_prompt = system_prompt or ("You are an autonomous agent. Reason step by step, "
                                                "call tools when needed, and produce the final answer.")
         self.tool_registry = tool_registry
         self.max_steps = max_steps
+        self.model = model or os.getenv("FLEXIE_REACT_MODEL", "deepseek-r1")
         self.graph = None
         self._build_graph()
 
@@ -131,7 +138,7 @@ class ReActAgent:
 
         workflow = StateGraph(AgentState)
 
-        llm_node = _create_llm_node(self.system_prompt)
+        llm_node = _create_llm_node(self.system_prompt, self.model)
         tool_node_fn = _create_tool_node(self.tool_registry)
         router_fn = _create_router_node(self.tool_registry)
 

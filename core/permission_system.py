@@ -62,6 +62,7 @@ class PermissionSystem:
                 r"\b(git\s+(add|commit|push|pull|merge|rebase|reset|stash))\b",
                 r"\b(organize|sort|clean|arrange)\s+(desktop|folder|files)\b",
                 r"\b(run|execute)\s+(script|code|python|node|npm|pip)\b",
+                r"\b(powershell|bash|sh|cmd|python|node|npx|pip)\b",
             ],
             PermissionLevel.SENSITIVE: [
                 r"\b(terminate|kill|force stop|end process)\b",

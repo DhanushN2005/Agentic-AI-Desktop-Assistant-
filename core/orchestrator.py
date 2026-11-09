@@ -25,6 +25,7 @@ from core.action_result import ActionResult
 from core.context_memory import ContextMemory
 from core.workflow_executor import WorkflowExecutor
 from core.handlers import dispatch_intent, handle_context_command
+from core.traces import StepType, TraceCollector
 
 MAX_PLANNING_DEPTH = 2
 
@@ -94,6 +95,7 @@ class FlexieOrchestrator:
         self.capability_registry = CapabilityRegistry()
         self.execution_graph = ExecutionGraph()
         self.adaptive_router = AdaptiveRouter()
+        self.trace_collector = TraceCollector()
         self.workflow = WorkflowExecutor(self)
         # LRU route cache: skips regex+LLM routing for recently-seen commands.
         # Key: normalised command string. Value: (intent, confidence).
@@ -458,6 +460,31 @@ class FlexieOrchestrator:
         return full.strip()
 
     def handle_command(self, cmd: str, is_subcommand=False, silent=False, source: str = "user", depth: int = 0):
+        """Trace-wrapped command entry point; implementation lives in _handle_command_impl."""
+        if not cmd:
+            return
+        trace = self.trace_collector.start(
+            cmd,
+            agent="orchestrator",
+            model=getattr(Config, "OLLAMA_MODEL", ""),
+            engine=getattr(Config, "ENGINE", "auto"),
+        )
+        started = time.perf_counter()
+        try:
+            result = self._handle_command_impl(cmd, is_subcommand, silent, source, depth)
+            self.trace_collector.step(
+                trace,
+                StepType.RESPOND,
+                output={"result": str(result)[:500]},
+                duration_seconds=time.perf_counter() - started,
+            )
+            self.trace_collector.finish(trace, result=str(result)[:1000], outcome="success")
+            return result
+        except Exception:
+            self.trace_collector.finish(trace, outcome="failure")
+            raise
+
+    def _handle_command_impl(self, cmd: str, is_subcommand=False, silent=False, source: str = "user", depth: int = 0):
         if not cmd: return
 
         # FIX 4: Normalize internal DAG/planner command format to router-compatible
@@ -734,7 +761,7 @@ class FlexieOrchestrator:
         if intent == "conversational":
             # Allow short conversational inputs instead of dropping them
             if not c.strip():
-                self.logger.info(f"[ORCHESTRATOR] Ignoring completely empty input.")
+                self.logger.info("[ORCHESTRATOR] Ignoring completely empty input.")
                 return
 
         if confidence < 0.4 and intent != "conversational":

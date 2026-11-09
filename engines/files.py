@@ -459,22 +459,49 @@ class FileManager:
             return f"Delete failed: '{name}' is a protected system location."
         
         try:
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-            else:
-                os.remove(path)
+            self._recycle_or_remove(path)
             return f"Successfully deleted '{name}'."
         except Exception as e:
             logging.debug("[engines/files.py:365] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Delete failed: {e}"
 
+    def _recycle_or_remove(self, path: str):
+        """Send item to Windows Recycle Bin with undo capability, falling back to standard delete."""
+        if os.name == "nt":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                class _SHFILEOPSTRUCTW(ctypes.Structure):
+                    _fields_ = [
+                        ("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT),
+                        ("pFrom", wintypes.LPCWSTR), ("pTo", wintypes.LPCWSTR),
+                        ("fFlags", wintypes.WORD), ("fAnyOperationsAborted", wintypes.BOOL),
+                        ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR),
+                    ]
+                fileop = _SHFILEOPSTRUCTW(
+                    None, 3, os.path.abspath(path) + "\0\0", None,
+                    0x0040 | 0x0010 | 0x0004, False, None, None
+                )
+                if ctypes.windll.shell32.SHFileOperationW(ctypes.byref(fileop)) == 0 and not os.path.exists(path):
+                    return
+            except Exception as e:
+                logging.debug("Recycle bin delete failed, falling back: %s", e)
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+
     def save_file(self, content: str, filename: str) -> str:
         """Saves content to a file in the Documents folder by default with strict verification."""
+        from utils.path_jail import is_basename_safe
+        clean_name = os.path.basename(filename.strip().replace("\\", "/"))
+        if not is_basename_safe(clean_name):
+            return "Save failed: Invalid or unsafe filename."
         loc = Config.FOLDER_SHORTCUTS.get("documents", Config.USER_HOME)
-        if not filename.endswith((".txt", ".md", ".py", ".js")):
-            filename += ".txt"
+        if not clean_name.endswith((".txt", ".md", ".py", ".js")):
+            clean_name += ".txt"
         
-        path = os.path.join(loc, filename)
+        path = os.path.join(loc, clean_name)
         
         success = False
         err_msg = ""

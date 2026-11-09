@@ -1,8 +1,8 @@
-import os
 import logging
+import os
 import re
 import tempfile
-from typing import Dict
+
 from dotenv import load_dotenv
 
 # Load .env file from project root
@@ -88,7 +88,7 @@ _KNOWN_ENV_KEYS = {
     "FLEXIE_VOICE_LISTEN_TIMEOUT", "FLEXIE_CODE_OUTPUT_DIR",
     "FLEXIE_ARTIFACT_BACKUP_DIR", "FLEXIE_JOB_TOKEN_BUDGET",
     "FLEXIE_OPENAI_BRIDGE_ENABLED", "FLEXIE_OPENAI_BRIDGE_PORT",
-    "FLEXIE_CHEAP_FIRST_ENABLED",
+    "FLEXIE_CHEAP_FIRST_ENABLED", "FLEXIE_LOCAL_FIRST", "FLEXIE_ENGINE",
     # Job/build pipeline tunables
     "FLEXIE_JOB_MAX_FILES", "FLEXIE_JOB_MAX_FILE_SIZE_KB",
     "FLEXIE_JOB_VENV_TIMEOUT", "FLEXIE_JOB_INSTALL_TIMEOUT",
@@ -125,7 +125,7 @@ def _read_env_file() -> dict:
     if not os.path.exists(path):
         return data
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
@@ -153,7 +153,7 @@ def _write_env_file(updates: dict) -> bool:
     existing_keys = set()
     if os.path.exists(path):
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 lines = f.readlines()
             for l in lines:
                 s = l.strip()
@@ -243,6 +243,8 @@ class Config:
     OPENAI_BRIDGE_ENABLED = _env_bool("FLEXIE_OPENAI_BRIDGE_ENABLED", False)
     OPENAI_BRIDGE_PORT = _env_number("FLEXIE_OPENAI_BRIDGE_PORT", 9899, int)
     CHEAP_FIRST_ENABLED = _env_bool("FLEXIE_CHEAP_FIRST_ENABLED", True)
+    LOCAL_FIRST = _env_bool("FLEXIE_LOCAL_FIRST", True)
+    ENGINE = os.getenv("FLEXIE_ENGINE", "auto")
     ARTIFACT_BACKUP_DIR = os.getenv("FLEXIE_ARTIFACT_BACKUP_DIR", os.path.join(os.getcwd(), "context", "artifact_backups"))
     # Build / Job pipeline tunables (all overridable via .env)
     JOB_MAX_FILES         = _env_number("FLEXIE_JOB_MAX_FILES", 60, int)
@@ -419,7 +421,7 @@ class Config:
         cls.VOICE_LISTEN_TIMEOUT = _env_number("FLEXIE_VOICE_LISTEN_TIMEOUT", cls.VOICE_LISTEN_TIMEOUT, float)
         cls.CODE_OUTPUT_DIR = os.getenv("FLEXIE_CODE_OUTPUT_DIR", cls.CODE_OUTPUT_DIR)
         cls.ARTIFACT_BACKUP_DIR = os.getenv("FLEXIE_ARTIFACT_BACKUP_DIR", cls.ARTIFACT_BACKUP_DIR)
-    
+
     # Available Modes
     MODES = ["professional", "developer", "hacker", "minimal", "focus"]
 
@@ -501,7 +503,7 @@ class Config:
     # Path Management
     USER_HOME = os.path.expanduser("~")
 
-    APPS: Dict[str, str] = {
+    APPS: dict[str, str] = {
         "chrome":       r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         "firefox":      r"C:\Program Files\Mozilla Firefox\firefox.exe",
         "vscode":       os.path.join(USER_HOME, r"AppData\Local\Programs\Microsoft VS Code\Code.exe"),
@@ -522,14 +524,14 @@ class Config:
         "maps":         "https://maps.google.com",
         "classroom":    "https://classroom.google.com",
         "chatgpt":      "https://chatgpt.com",
-        "antigravity":  "https://antigravity.ai", 
+        "antigravity":  "https://antigravity.ai",
         "wikipedia":    "https://en.wikipedia.org/wiki/",
         "amazon":       "https://www.amazon.in/s?k=",
         "reddit":       "https://www.reddit.com/search/?q=",
         "github_search":"https://github.com/search?q=",
     }
 
-    FOLDER_SHORTCUTS: Dict[str, str] = {
+    FOLDER_SHORTCUTS: dict[str, str] = {
         "desktop":   os.path.join(USER_HOME, "Desktop"),
         "downloads": os.path.join(USER_HOME, "Downloads"),
         "documents": os.path.join(USER_HOME, "Documents"),
@@ -555,16 +557,16 @@ class Config:
     DEFAULT_NOTIFY_TIMEOUT   = 300  # seconds
     DEFAULT_REMINDER_MINUTES = 5.0
     TIME_FORMAT            = "%I:%M %p"
-    
+
     # Content Security
     RESTRICTED_WORDS = [
-        "sexy", "porn", "xvideo", "xhamster", "brazzers", "fuck", "nude", 
+        "sexy", "porn", "xvideo", "xhamster", "brazzers", "fuck", "nude",
         "hot video", "adult", "erotic", "sex", "sunny leone", "mia khalifa",
         "poker", "gambling", "casino"
     ]
-    
+
     DANGER_DOM_WORDS = [
-        "delete", "remove", "format", "purchase", "buy", "pay", "unsubscribe", 
+        "delete", "remove", "format", "purchase", "buy", "pay", "unsubscribe",
         "transfer", "confirm payment", "logout", "sign out", "deactivate",
         "terminate", "erase", "clear all"
     ]

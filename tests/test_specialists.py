@@ -63,6 +63,33 @@ def test_agent_team_delegate():
     assert mock_brain.ask.called
 
 
+def test_specialist_uses_tool_loop_when_generate_supplied():
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="file_read",
+        description="Read file",
+        params=[ToolSchema(name="path", type="str")],
+        permission=PermissionLevel.READ_ONLY,
+        execute_fn=lambda path: ActionResult.ok("content"),
+        tags=["file"],
+    ))
+    responses = [
+        {"content": "", "tool_calls": [
+            {"id": "1", "function": {"name": "file_read", "arguments": {"path": "a.txt"}}}
+        ]},
+        {"content": "read done", "tool_calls": []},
+    ]
+    coder = SpecialistAgent(
+        name="Coder",
+        role=SpecialistRole.CODER,
+        system_prompt="You code.",
+        tool_tags=["file"],
+        tool_registry=registry,
+        generate=lambda messages, tools=None: responses.pop(0),
+    )
+    assert coder.run("read a.txt") == "read done"
+
+
 def test_capability_delegation_to_specialist():
     from core.capability_registry import CapabilityRegistry
     from core.handlers.agents import handle_capability_delegation

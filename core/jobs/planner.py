@@ -107,7 +107,7 @@ def is_vague_request(request: str) -> bool:
         "calculator", "todo", "game", "dashboard", "api", "scraper", "weather", "chat",
         "converter", "tracker", "blog", "portfolio", "store", "timer", "notes", "quiz",
         "calendar", "calender", "callender", "planner", "scheduler", "events", "holidays",
-        "animation", "animated", "interactive", "modern", "responsive", "app", "tool",
+        "animation", "animated", "interactive", "modern", "responsive", "tool",
         "viewer", "browser", "manager", "monitor", "clock", "watch", "widget", "form",
         "login", "authentication", "auth", "database", "crud", "rest", "graphql",
         "websocket", "messaging", "notification", "search", "filter", "map", "chart",

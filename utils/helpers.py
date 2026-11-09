@@ -1,9 +1,9 @@
+import logging
 import os
 import re
 import shutil
 import socket
 import time
-import logging
 
 
 def find_executable(name: str, default_path: str = None) -> str:

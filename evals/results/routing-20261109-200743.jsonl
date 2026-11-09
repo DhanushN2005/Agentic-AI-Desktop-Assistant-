@@ -1,0 +1,45 @@
+{"task_id": "route-001", "query": "open chrome", "expected": "app_op", "predicted": "app_op", "confidence": 1.0, "correct": true, "latency_ms": 70.68190000018149}
+{"task_id": "route-002", "query": "open vscode", "expected": "app_op", "predicted": "app_op", "confidence": 1.0, "correct": true, "latency_ms": 1.1344000004100963}
+{"task_id": "route-003", "query": "close chrome", "expected": "app_op", "predicted": "app_op", "confidence": 1.0, "correct": true, "latency_ms": 1.2026000003970694}
+{"task_id": "route-004", "query": "set volume to 50", "expected": "media", "predicted": "media", "confidence": 0.8, "correct": true, "latency_ms": 2.132800000254065}
+{"task_id": "route-005", "query": "increase brightness", "expected": "media", "predicted": "media", "confidence": 1.0, "correct": true, "latency_ms": 1.5536000000793138}
+{"task_id": "route-006", "query": "play some music", "expected": "play_youtube", "predicted": "play_youtube", "confidence": 0.85, "correct": true, "latency_ms": 1.192599999740196}
+{"task_id": "route-007", "query": "play a song", "expected": "play_youtube", "predicted": "play_youtube", "confidence": 0.85, "correct": true, "latency_ms": 0.9563000003254274}
+{"task_id": "route-008", "query": "shutdown pc", "expected": "power", "predicted": "power", "confidence": 1.0, "correct": true, "latency_ms": 1.0980000001836743}
+{"task_id": "route-009", "query": "lock screen", "expected": "power", "predicted": "power", "confidence": 1.0, "correct": true, "latency_ms": 2.1477000000231783}
+{"task_id": "route-010", "query": "what is photosynthesis", "expected": "search", "predicted": "search", "confidence": 0.95, "correct": true, "latency_ms": 1.0723999998845102}
+{"task_id": "route-011", "query": "search for quantum computing", "expected": "research", "predicted": "research", "confidence": 0.85, "correct": true, "latency_ms": 1.497199999903387}
+{"task_id": "route-012", "query": "google search cats", "expected": "research", "predicted": "research", "confidence": 0.85, "correct": true, "latency_ms": 1.2796999999409309}
+{"task_id": "route-013", "query": "hello", "expected": "social", "predicted": "social", "confidence": 1.0, "correct": true, "latency_ms": 0.8386999998037936}
+{"task_id": "route-014", "query": "calculate 5 plus 5", "expected": "calc", "predicted": "calc", "confidence": 0.95, "correct": true, "latency_ms": 1.0035999998763145}
+{"task_id": "route-015", "query": "what is 12 times 12", "expected": "calc", "predicted": "calc", "confidence": 0.95, "correct": true, "latency_ms": 1.0677999998733867}
+{"task_id": "route-016", "query": "check battery", "expected": "status", "predicted": "status", "confidence": 0.8, "correct": true, "latency_ms": 1.7565999996804749}
+{"task_id": "route-017", "query": "remember that my name is Dhanush", "expected": "memory", "predicted": "memory", "confidence": 0.95, "correct": true, "latency_ms": 3.376800000296498}
+{"task_id": "route-018", "query": "translate good morning to Spanish", "expected": "translate", "predicted": "translate", "confidence": 0.9, "correct": true, "latency_ms": 1.355399999738438}
+{"task_id": "route-019", "query": "convert 100 dollars to rupees", "expected": "convert", "predicted": "convert", "confidence": 0.95, "correct": true, "latency_ms": 6.2138000002960325}
+{"task_id": "route-020", "query": "convert 5 kilometers to miles", "expected": "convert", "predicted": "convert", "confidence": 0.95, "correct": true, "latency_ms": 3.686200000174722}
+{"task_id": "route-021", "query": "delete file report.txt", "expected": "file_delete", "predicted": "file_delete", "confidence": 0.95, "correct": true, "latency_ms": 3.180799999881856}
+{"task_id": "route-022", "query": "rename file a.txt to b.txt", "expected": "file_rename", "predicted": "file_rename", "confidence": 0.95, "correct": true, "latency_ms": 4.778600000008737}
+{"task_id": "route-023", "query": "create a folder called work", "expected": "file_op", "predicted": "file_op", "confidence": 0.99, "correct": true, "latency_ms": 2.3420000002261077}
+{"task_id": "route-024", "query": "build a website", "expected": "dev_build", "predicted": "dev_build", "confidence": 0.96, "correct": true, "latency_ms": 1.0655999999471533}
+{"task_id": "route-025", "query": "create an app", "expected": "dev_build", "predicted": "dev_build", "confidence": 0.96, "correct": true, "latency_ms": 0.8900000002540764}
+{"task_id": "route-026", "query": "create a login page using html and css", "expected": "code_gen", "predicted": "code_gen", "confidence": 0.95, "correct": true, "latency_ms": 2.206399999977293}
+{"task_id": "route-027", "query": "create a login page", "expected": "code_gen", "predicted": "code_gen", "confidence": 0.95, "correct": true, "latency_ms": 1.209399999879679}
+{"task_id": "route-028", "query": "make me a sign-in page with html", "expected": "code_gen", "predicted": "code_gen", "confidence": 0.95, "correct": true, "latency_ms": 1.7404000000169617}
+{"task_id": "route-029", "query": "build a registration form using html", "expected": "code_gen", "predicted": "code_gen", "confidence": 0.95, "correct": true, "latency_ms": 1.6652999997859297}
+{"task_id": "route-030", "query": "create a dashboard interface", "expected": "code_gen", "predicted": "code_gen", "confidence": 0.95, "correct": true, "latency_ms": 1.1686999996527447}
+{"task_id": "route-031", "query": "analyze my screen", "expected": "vision_analyze", "predicted": "vision_analyze", "confidence": 1.0, "correct": true, "latency_ms": 1.8423999999868101}
+{"task_id": "route-032", "query": "take a screenshot", "expected": "vision_capture", "predicted": "vision_capture", "confidence": 0.8, "correct": true, "latency_ms": 2.190600000176346}
+{"task_id": "route-033", "query": "new tab", "expected": "browser_tabs", "predicted": "browser_tabs", "confidence": 1.0, "correct": true, "latency_ms": 0.6490999999186897}
+{"task_id": "route-034", "query": "skip the ad", "expected": "youtube", "predicted": "youtube", "confidence": 1.0, "correct": true, "latency_ms": 1.4691999999740801}
+{"task_id": "route-035", "query": "check gmail", "expected": "gmail", "predicted": "gmail", "confidence": 0.95, "correct": true, "latency_ms": 0.7845000000088476}
+{"task_id": "route-036", "query": "search my files for notes", "expected": "knowledge_search", "predicted": "knowledge_search", "confidence": 0.9, "correct": true, "latency_ms": 1.753399999870453}
+{"task_id": "route-037", "query": "remind me to buy milk", "expected": "remind_me", "predicted": "remind_me", "confidence": 0.95, "correct": true, "latency_ms": 2.4314000002050307}
+{"task_id": "route-038", "query": "remind me in 10 minutes to drink water", "expected": "remind_me", "predicted": "remind_me", "confidence": 0.95, "correct": true, "latency_ms": 3.8592000000789994}
+{"task_id": "route-039", "query": "set a reminder for 5pm to call mom", "expected": "remind_me", "predicted": "remind_me", "confidence": 0.9, "correct": true, "latency_ms": 1.748300000144809}
+{"task_id": "route-040", "query": "list reminders", "expected": "list_reminders", "predicted": "list_reminders", "confidence": 0.9, "correct": true, "latency_ms": 0.6791999999222753}
+{"task_id": "route-041", "query": "show reminders", "expected": "list_reminders", "predicted": "list_reminders", "confidence": 0.9, "correct": true, "latency_ms": 0.6329000002551766}
+{"task_id": "route-042", "query": "start dictation", "expected": "dictation_mode", "predicted": "dictation_mode", "confidence": 1.0, "correct": true, "latency_ms": 0.9240999997928157}
+{"task_id": "route-043", "query": "good morning flexie", "expected": "daily_briefing", "predicted": "daily_briefing", "confidence": 1.0, "correct": true, "latency_ms": 1.2677999998231826}
+{"task_id": "route-044", "query": "unknown gibberish xyz", "expected": "conversational", "predicted": "conversational", "confidence": 0.0, "correct": true, "latency_ms": 1.8629000001055829}
+{"task_id": "route-045", "query": "", "expected": "conversational", "predicted": "conversational", "confidence": 0.0, "correct": true, "latency_ms": 0.0018000000636675395}

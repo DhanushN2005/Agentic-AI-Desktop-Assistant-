@@ -22,6 +22,7 @@ from enum import Enum
 from typing import Any
 
 from core.action_result import ActionResult
+from core.capabilities import CapabilityPolicy
 
 
 class PermissionLevel(Enum):
@@ -72,10 +73,27 @@ class ToolSpec:
     max_retries: int = 2
     tags: list[str] = field(default_factory=list)  # for grouping: "browser", "file", "system"
     enabled: bool = True
+    capabilities: list[str] = field(default_factory=list)
 
     def input_schema_dict(self) -> dict:
         """Returns JSON-schema-like dict for LLM consumption."""
         return {p.name: p.to_dict() for p in self.params}
+
+    def effective_capabilities(self) -> list[str]:
+        """Declared capabilities, or a conservative set inferred from tags/permission."""
+        if self.capabilities:
+            return list(self.capabilities)
+        caps: set[str] = set()
+        tags = set(self.tags)
+        if tags & {"terminal", "shell"}:
+            caps.add("shell:execute")
+        if tags & {"file", "filesystem", "code"}:
+            caps.add("filesystem:read")
+        if self.permission.value >= PermissionLevel.USER_CONFIRMATION.value:
+            caps.add("filesystem:write")
+        if tags & {"browser", "search", "network"}:
+            caps.add("network:fetch")
+        return sorted(caps)
 
     def validate_args(self, args: dict) -> tuple[bool, str]:
         """Validates provided args against the schema. Returns (ok, error_msg)."""
@@ -111,12 +129,16 @@ class ToolRegistry:
     to find available tools, and calls execute() to run them.
     """
 
-    def __init__(self):
+    def __init__(self, policy: CapabilityPolicy | None = None):
         self._tools: dict[str, ToolSpec] = {}
         self.logger = logging.getLogger("Flexie.ToolRegistry")
+        self.policy = policy or CapabilityPolicy()
 
     def register(self, tool: ToolSpec):
         """Register a tool. Overwrites if name already exists."""
+        ok, err = self.policy.validate(tool.effective_capabilities())
+        if not ok:
+            self.logger.warning("[TOOL] %s declares invalid capabilities: %s", tool.name, err)
         self._tools[tool.name] = tool
         self.logger.debug(f"[TOOL] Registered: {tool.name} (permission={tool.permission.name})")
 
@@ -189,6 +211,14 @@ class ToolRegistry:
             return ActionResult.fail(message=f"Unknown tool: {tool_name}", intent=tool_name)
         if not tool.enabled:
             return ActionResult.fail(message=f"Tool disabled: {tool_name}", intent=tool_name)
+
+        cap_ok, cap_err = self.policy.validate(tool.effective_capabilities())
+        if not cap_ok:
+            return ActionResult.fail(
+                message=f"Capability denied: {cap_err}",
+                intent=tool_name,
+                data={"error": cap_err},
+            )
 
         # Validate args
         ok, err = tool.validate_args(args)

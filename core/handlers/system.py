@@ -150,7 +150,7 @@ def _open_browser_only(orch, browser_name: str, silent: bool):
         logging.debug("[handle_app_op] open_item error: %s", _e)
 
     _browser_names = ("chrome", "edge", "firefox", "browser", "opera", "brave")
-    if any(b in browser_name for b in _browser_names):
+    if any(b in browser_name for b in _browser_names) and hasattr(orch.ctx, "set_browser_open"):
         orch.ctx.set_browser_open(browser_name)
     orch.ctx.update(app=browser_name)
 
@@ -178,7 +178,8 @@ def handle_app_op(orch, c, silent):
             browser = next((b for b in _BROWSER_APPS if b in cl), "chrome")
             _open_browser_only(orch, browser, silent=True)
             play_cmd = yt_follow.group(0).strip()  # e.g. "play tamil song in youtube"
-            return orch.handle_command(play_cmd, is_subcommand=True, silent=silent)
+            res = orch.handle_command(play_cmd, is_subcommand=True, silent=silent)
+            return True if res is None else bool(res)
 
     # ── Multi-step: "open chrome search for X" ──────────────────────────────
     if any(x in cl for x in ["search", "google", "find ", "who is", "what is"]):
@@ -191,7 +192,8 @@ def handle_app_op(orch, c, silent):
         ).strip()
         if not search_cmd.startswith("search for"):
             search_cmd = "search for " + search_cmd
-        return orch.handle_command(search_cmd, is_subcommand=True, silent=silent)
+        res = orch.handle_command(search_cmd, is_subcommand=True, silent=silent)
+        return True if res is None else bool(res)
 
     # ── Simple: "open chrome" / "open edge" ────────────────────────────────
     browser_hit = next((b for b in _BROWSER_APPS if b in cl), None)
@@ -226,7 +228,7 @@ def handle_app_op(orch, c, silent):
 
         if res and "NOT_FOUND" not in str(res):
             orch.ctx.update(app=target)
-            if any(b in target for b in _BROWSER_APPS):
+            if any(b in target for b in _BROWSER_APPS) and hasattr(orch.ctx, "set_browser_open"):
                 orch.ctx.set_browser_open(target)
             if not silent:
                 orch.speak(res)

@@ -272,8 +272,8 @@ def register_coding_tools(registry: ToolRegistry, orch) -> int:
         try:
             if use_sandbox:
                 from sandbox.executor import SandboxExecutor
-                # allow_host_fallback=True so it works without Docker, but still logged
-                ex = SandboxExecutor(timeout=timeout, allow_host_fallback=True)
+                allow_fallback = getattr(Config, "ALLOW_HOST_FALLBACK", False)
+                ex = SandboxExecutor(timeout=timeout, allow_host_fallback=allow_fallback)
                 out = ex.run_python_code(code)
                 if "Execution Failure" in out or "Execution Error" in out or "refused" in out.lower():
                     return ActionResult.fail(message=out[:2000], intent="python.exec", data={"output": out})

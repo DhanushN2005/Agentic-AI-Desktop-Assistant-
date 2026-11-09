@@ -34,6 +34,8 @@ class SpecialistAgent:
         tool_tags: list[str],
         tool_registry: Any = None,
         brain: Any = None,
+        generate: Any = None,
+        max_turns: int = 3,
     ):
         self.name = name
         self.role = role
@@ -41,6 +43,8 @@ class SpecialistAgent:
         self.tool_tags = tool_tags
         self.tool_registry = tool_registry
         self.brain = brain
+        self.generate = generate
+        self.max_turns = max_turns
 
     def get_scoped_tools(self) -> list[str]:
         """Returns the list of tool names this specialist is authorized to use."""
@@ -60,6 +64,19 @@ class SpecialistAgent:
             f"Task: {task}\n"
             f"Context: {context or {}}"
         )
+
+        if self.generate and self.tool_registry:
+            from core.agents import AgentContext, ToolUsingAgent
+
+            loop = ToolUsingAgent(
+                agent_id=self.name,
+                generate=self.generate,
+                tool_registry=self.tool_registry,
+                max_turns=self.max_turns,
+                system_prompt=self.system_prompt,
+            )
+            agent_context = AgentContext(tools=tools, metadata=context or {})
+            return loop.run(task, agent_context).content
 
         if self.brain and hasattr(self.brain, "ask"):
             try:
