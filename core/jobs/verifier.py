@@ -463,7 +463,7 @@ class SmokeResult:
 
 _PYTHON_LAUNCHERS = {"python", "python3", "py"}
 _PY_MODULE_LAUNCHERS = {"flask", "uvicorn", "gunicorn", "streamlit"}
-_ADDR_IN_USE = re.compile(r"address already in use|eaddrinuse|only one usage of each socket|winerror 10048|errno 98|errno 10048", re.I)
+_ADDR_IN_USE = re.compile(r"address already in use|eaddrinuse|only one usage of each socket|winerror 10048|winerror 10013|forbidden by its access permissions|errno 98|errno 10048", re.I)
 
 
 def _interpreter_for(stack: str, workspace_path: str) -> str:
