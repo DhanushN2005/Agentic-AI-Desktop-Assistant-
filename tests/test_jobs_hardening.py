@@ -246,7 +246,7 @@ class TestWorkspaceIsolation:
 class TestPathSafety:
     @pytest.mark.parametrize("bad", [
         "../x", "..\\x", "a/../../x", "/etc/passwd", "\\\\server\\share\\f", "C:\\Windows\\x",
-        "C:x", "con", "nul.txt", "sub/aux.py", "a:b", "", "   ", None, 5, "x\x00y", "trail.", "a/b ",
+        "C:x", "con", "nul.txt", "sub/aux.py", "a:b", "", "   ", None, 5, "x\x00y", "trail.", "a/b .",
         "~/x", "a|b",
     ])
     def test_safe_join_rejects(self, tmp_path, bad):
