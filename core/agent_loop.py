@@ -5,26 +5,26 @@ until the task is complete or max steps reached.
 
 Uses a local Ollama deepseek-r1 model for reasoning by default.
 """
-import logging
 import json
+import logging
 import os
-from typing import TypedDict, List, Optional
-from urllib.request import urlopen, Request
+from typing import TypedDict
+from urllib.request import Request, urlopen
 
-from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
 
 logger = logging.getLogger("AgentLoop")
 
 
 class AgentState(TypedDict):
-    messages: List[dict]
-    tools: List[dict]
+    messages: list[dict]
+    tools: list[dict]
     step: int
     max_steps: int
-    result: Optional[str]
-    tool_outputs: List[dict]
-    reasoning: Optional[str]
+    result: str | None
+    tool_outputs: list[dict]
+    reasoning: str | None
 
 
 def _ollama_available() -> bool:
@@ -53,15 +53,13 @@ def _ollama_chat(model: str, messages: list, temperature: float = 0.3) -> str:
 def _execute_tool(tool_name: str, tool_args: dict, registry=None) -> str:
     """Execute a registered tool by name. Returns string result."""
     if registry:
-        getter = getattr(registry, "get_tool", None) or getattr(registry, "get", None)
-        if getter:
+        # Go through ToolRegistry.execute so permission/capability checks and arg
+        # validation always apply — never call a tool's execute_fn directly.
+        executor = getattr(registry, "execute", None)
+        if executor:
             try:
-                tool = getter(tool_name)
-                if tool:
-                    execute = getattr(tool, "execute_fn", None) or getattr(tool, "execute", None)
-                    if execute:
-                        result = execute(**tool_args)
-                        return getattr(result, "message", str(result))
+                result = executor(tool_name, tool_args)
+                return getattr(result, "message", str(result))
             except Exception as e:
                 return f"Tool '{tool_name}' error: {e}"
     return f"Tool '{tool_name}' not available in registry."
@@ -77,8 +75,8 @@ def _create_tool_node(tool_registry):
                     tc = json.loads(msg["tool_calls"]) if isinstance(msg["tool_calls"], str) else msg["tool_calls"]
                     for call in tc:
                         tool_calls.append(call)
-                except (json.JSONDecodeError, TypeError):
-                    pass
+                except (json.JSONDecodeError, TypeError) as _e:
+                    logging.debug("[core/agent_loop.py:80] Swallowed exception: %s: %s", type(_e).__name__, _e)
         outputs = []
         for tc in tool_calls:
             name = tc.get("name", tc.get("function", {}).get("name", ""))
@@ -86,8 +84,8 @@ def _create_tool_node(tool_registry):
             if isinstance(args, str):
                 try:
                     args = json.loads(args)
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as _e:
+                    logging.debug("[core/agent_loop.py:89] Swallowed exception: %s: %s", type(_e).__name__, _e)
             result = _execute_tool(name, args if isinstance(args, dict) else {}, tool_registry)
             outputs.append({"name": name, "result": result})
             state["messages"].append({"role": "tool", "content": result, "tool_call_id": tc.get("id")})

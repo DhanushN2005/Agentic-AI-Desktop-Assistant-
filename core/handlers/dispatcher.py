@@ -1,3 +1,4 @@
+import logging
 import re
 
 from core.handlers.age import handle_age
@@ -11,16 +12,13 @@ from core.handlers.browser import (
     handle_browser_extract,
     handle_browser_navigate,
     handle_browser_tabs,
-    handle_gmail,
 )
-from core.handlers.mail import handle_mail
 from core.handlers.clipboard_mgr import handle_clipboard_mgr
 from core.handlers.code_gen import handle_artifact_command, handle_code_gen
 from core.handlers.code_search import handle_local_code_search
 from core.handlers.color_info import handle_color
 from core.handlers.converter import handle_convert
-from core.handlers.dev import handle_briefing, handle_clipboard, handle_dev_build, handle_dev_explain, handle_intel
-from core.jobs.handler import handle_job_intent
+from core.handlers.dev import handle_briefing, handle_clipboard, handle_dev_explain, handle_intel
 from core.handlers.dictionary import handle_dictionary
 from core.handlers.facts import handle_facts
 from core.handlers.files import (
@@ -36,6 +34,7 @@ from core.handlers.ip_lookup import handle_ip_lookup
 from core.handlers.jokes import handle_jokes
 from core.handlers.json_fmt import handle_json
 from core.handlers.lorem import handle_lorem
+from core.handlers.mail import handle_mail
 from core.handlers.media import handle_media, handle_play_youtube, handle_youtube
 from core.handlers.memory_system import handle_memory_system
 from core.handlers.news import handle_news
@@ -66,11 +65,13 @@ from core.handlers.system import (
 )
 from core.handlers.text_tools import handle_text_tools
 from core.handlers.tip import handle_tip
+from core.handlers.todo import handle_todo
 from core.handlers.tools import handle_calc, handle_memory, handle_status, handle_translate
 from core.handlers.uuid import handle_uuid
 from core.handlers.vision import handle_camera_capture, handle_vision
 from core.handlers.weather import handle_weather
 from core.handlers.wiki import handle_wiki
+from core.jobs.handler import handle_job_intent
 from utils.config import Config
 
 SNAP_KEYWORDS = ["snap ", "maximize", "minimize", "split screen", "put notepad", "put chrome", "put edge", "move notepad", "move chrome", "move edge"]
@@ -160,8 +161,8 @@ def handle_conversational(orch, c):
                 f"Workspace: {latest.workspace_path}). If user asks about the app or background build, "
                 f"you are fully aware and running it in the background."
             )
-    except Exception:
-        pass
+    except Exception as _e:
+        logging.debug("[core/handlers/dispatcher.py:162] Swallowed exception: %s: %s", type(_e).__name__, _e)
     max_tokens = MODE_MAX_TOKENS.get(orch.current_mode)
     history = _conversation_history(orch, c)
     chunks = []
@@ -299,7 +300,8 @@ def dispatch_intent(orch, intent, c, silent):
             intent == "youtube"
             and c in ("open youtube", "launch youtube", "go to youtube", "start youtube", "open yt")
         ):
-            import subprocess, webbrowser
+            import subprocess
+            import webbrowser
             url = "https://www.youtube.com"
             try:
                 subprocess.Popen(["start", "chrome", url], shell=True)
@@ -307,14 +309,14 @@ def dispatch_intent(orch, intent, c, silent):
                 webbrowser.open(url)
             orch.speak("Opening YouTube.")
             return True
+        if "volume" in c or any(x in c for x in ["mute", "unmute"]) or (intent == "media" and any(x in c for x in ["louder", "quieter", "sound"])):
+            return handle_volume(orch, c, silent)
+        if "brightness" in c or (intent == "media" and any(x in c for x in ["dim", "brighten"])):
+            return handle_brightness(orch, c, silent)
         if intent == "play_youtube":
             return handle_play_youtube(orch, c)
         if intent == "youtube":
             return handle_youtube(orch, c)
-        if "volume" in c:
-            return handle_volume(orch, c, silent)
-        if "brightness" in c:
-            return handle_brightness(orch, c, silent)
         if c.startswith("mode "):
             return handle_mode_prefix(orch, c, silent)
         if intent == "media":
@@ -362,6 +364,8 @@ def dispatch_intent(orch, intent, c, silent):
                 if ctx and getattr(ctx, "browser_open", False):
                     intent = "browser_search"
             return handle_search(orch, c)
+        if intent == "todo_list":
+            return handle_todo(orch, c)
         if intent == "remind_me":
             return handle_remind(orch, c)
         if intent == "list_reminders":

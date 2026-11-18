@@ -40,8 +40,8 @@ python-dotenv>=1.0.0
 pillow>=10.0.0
 pytesseract>=0.3.10
 
-# PDF Reading (NOTE: PyMuPDF is AGPL-licensed — see LICENSE section below)
-pymupdf>=1.23.0
+# PDF Reading (pypdf is BSD-3-Clause, compatible with this project's MIT license)
+pypdf>=4.0.0,<7.0.0
 
 # UI
 PyQt6>=6.5.0
@@ -54,6 +54,11 @@ nest-asyncio>=1.5.8
 # Optional: Vector Store (for semantic memory) — enables ChromaDB in core/vector_store.py
 chromadb>=0.4.0,<2.0.0
 onnxruntime>=1.17.0
+
+# REST/SSE API bridge (interface/api_server.py) + its test client
+fastapi>=0.110.0,<1.0.0
+uvicorn>=0.27.0,<1.0.0
+httpx>=0.27.0,<1.0.0
 
 # Agentic Framework
 langgraph>=0.0.299,<2.0.0

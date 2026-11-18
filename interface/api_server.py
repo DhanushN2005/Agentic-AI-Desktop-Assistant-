@@ -12,9 +12,10 @@ import json
 import logging
 import os
 import sys
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -25,10 +26,29 @@ if _ROOT_DIR not in sys.path:
     sys.path.insert(0, _ROOT_DIR)
 
 from utils.config import Config
-from utils.udp_auth import get_token, pack as udp_pack
+from utils.udp_auth import get_token
+from utils.udp_auth import pack as udp_pack
 
 logger = logging.getLogger("Flexie.APIServer")
 security = HTTPBearer(auto_error=False)
+
+
+_DEFAULT_ORIGINS = (
+    "http://localhost:8766", "http://127.0.0.1:8766",
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:8000", "http://127.0.0.1:8000",
+)
+
+
+def _allowed_origins() -> set[str]:
+    """Trusted browser origins: fixed dashboard origins plus extensions listed in
+    FLEXIE_EXTENSION_IDS (comma-separated IDs from chrome://extensions)."""
+    origins = set(_DEFAULT_ORIGINS)
+    for ext_id in os.getenv("FLEXIE_EXTENSION_IDS", "").split(","):
+        ext_id = ext_id.strip()
+        if ext_id and ext_id != "*":
+            origins.add(f"chrome-extension://{ext_id}")
+    return origins
 
 
 class CommandRequest(BaseModel):
@@ -108,25 +128,28 @@ def create_app(orch: Any = None) -> FastAPI:
     """Application factory for Flexiee REST/SSE service."""
     app = FastAPI(title="Flexiee API", version="2.0")
 
+    allowed_origins = _allowed_origins()
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:8766",
-            "http://127.0.0.1:8766",
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:8000",
-            "http://127.0.0.1:8000",
-        ],
-        allow_origin_regex=r"^(chrome-extension://.*|http://(localhost|127\.0\.0\.1)(:\d+)?)$",
+        allow_origins=sorted(allowed_origins),
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     @app.get("/health")
-    def health():
-        return {"status": "ok", "service": "flexiee", "active": orch.active if orch else False}
+    def health(request: Request):
+        body = {
+            "status": "ok",
+            "service": "flexiee",
+            "active": orch.active if orch else False,
+        }
+        # The bearer token is only issued to explicitly trusted origins
+        # (dashboard / configured extension IDs). Unknown origins, other
+        # extensions and arbitrary localhost web apps never receive it.
+        if request.headers.get("origin", "") in allowed_origins:
+            body["token"] = get_token()
+        return body
 
     @app.post("/page-assist", dependencies=[Depends(verify_token)])
     @app.post("/api/flexie/page-assistant", dependencies=[Depends(verify_token)])
@@ -232,6 +255,15 @@ def create_app(orch: Any = None) -> FastAPI:
         if orch and hasattr(orch, "job_manager") and orch.job_manager:
             info["job_status"] = orch.job_manager.get_status_summary()
         return info
+
+    @app.get("/api/flexie/usage", dependencies=[Depends(verify_token)])
+    @app.get("/api/jarvis/usage", dependencies=[Depends(verify_token)])
+    def usage(limit: int = 20):
+        """Token / cost / latency totals for LLM calls, plus the most recent commands."""
+        from core.telemetry.usage import get_tracker
+
+        tracker = get_tracker()
+        return {"summary": tracker.summary(), "recent_commands": tracker.recent_commands(max(1, min(limit, 100)))}
 
     @app.get("/api/flexie/jobs", dependencies=[Depends(verify_token)])
     @app.get("/api/jarvis/jobs", dependencies=[Depends(verify_token)])
@@ -395,6 +427,19 @@ def start_api_server(host: str = "127.0.0.1", port: int = 8768, orch: Any = None
     import uvicorn
     app = create_app(orch)
     uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+def start_api_server_background(host: str = "127.0.0.1", port: int = 8768, orch: Any = None):
+    """Run the API server inside a daemon background thread."""
+    import threading
+
+    import uvicorn
+    app = create_app(orch)
+    config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    t = threading.Thread(target=server.run, daemon=True, name="flexie_api_server")
+    t.start()
+    return t
 
 
 if __name__ == "__main__":

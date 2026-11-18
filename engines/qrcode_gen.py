@@ -1,7 +1,7 @@
+import logging
 import os
 import urllib.parse
 import urllib.request
-import logging
 
 
 class QRCodeEngine:

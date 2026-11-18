@@ -1,11 +1,10 @@
+import logging
 import os
 import re
 import shutil
 import time
 import webbrowser
 from pathlib import Path
-
-import logging
 
 from utils.config import Config
 
@@ -43,7 +42,7 @@ def _artifact_state(orch):
 
 def _read_artifact_source(path):
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        with open(path, encoding="utf-8", errors="replace") as handle:
             text = handle.read(Config.ARTIFACT_SOURCE_CHARS + 1)
     except OSError:
         return None
@@ -312,8 +311,8 @@ def handle_artifact_command(orch, cmd):
                     parts.append(f"opened the project at {latest.workspace_path}")
                 orch.speak(f"Done — {' and '.join(parts)}.", record_chat=False)
                 return True
-        except Exception:
-            pass
+        except Exception as _e:
+            logging.debug("[core/handlers/code_gen.py:314] Swallowed exception: %s: %s", type(_e).__name__, _e)
         orch.speak("I don't have an active generated file for that follow-up yet.", record_chat=False)
         return False
     if kind == "artifact_open" or (kind == "artifact_run" and str(artifact.get("path")).lower().endswith((".html", ".htm"))):

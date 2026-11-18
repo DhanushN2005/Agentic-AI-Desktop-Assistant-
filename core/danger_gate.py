@@ -61,14 +61,35 @@ class DangerGate:
             return False
         return any(p.search(command) for p in self._compiled)
 
+    # Words that may appear in a pure approval reply. Anything else (e.g. "ok but
+    # first delete everything", "sure, what does that do?") is NOT an approval.
+    _FILLER_WORDS = frozenset({
+        "please", "flexie", "flexi", "hey", "thanks", "thank", "you",
+        "it", "that", "this", "do", "now", "and", "then", "the", "a",
+    })
+    _MAX_CONFIRM_WORDS = 5
+
     def is_confirmation(self, text: str) -> bool:
-        """Returns True when the user's reply grants permission."""
+        """True only when the reply is a short, pure approval.
+
+        Fails closed: the reply must consist solely of confirmation vocabulary and
+        harmless filler, contain no negation, and be at most a few words long.
+        """
         if not text:
             return False
         t = " " + text.lower().strip() + " "
         if self._negation_re.search(t):
             return False
-        return self._confirm_re.search(t) is not None
+        words = re.findall(r"[a-z']+", t)
+        if not words or len(words) > self._MAX_CONFIRM_WORDS:
+            return False
+        vocab = {w for phrase in self.confirm_phrases for w in re.findall(r"[a-z']+", phrase)}
+        vocab |= {"yep", "yup"}
+        allowed = vocab | self._FILLER_WORDS
+        if any(w not in allowed for w in words):
+            return False
+        # Must contain at least one real approval word (filler alone is not consent).
+        return any(w in vocab and w not in self._FILLER_WORDS for w in words)
 
     def is_cancellation(self, text: str) -> bool:
         """Returns True when the user's reply denies permission."""

@@ -1,11 +1,13 @@
 import sqlite3
 import threading
 
+from utils.paths import data_file
+
 
 class GlobalMemory:
     """Sidecar module for Long-Term User Profiling (Production Tier)."""
     def __init__(self):
-        self.db_path = "flexie_global_profile.db"
+        self.db_path = data_file("flexie_global_profile.db")
         self._lock = threading.Lock()
         self._init_db()
 

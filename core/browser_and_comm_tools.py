@@ -7,7 +7,7 @@ enabling the AI agent loop, multi-step planner, and MCP systems to execute them 
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from core.action_result import ActionResult
 from core.tool_registry import PermissionLevel, ToolRegistry, ToolSchema, ToolSpec
@@ -128,7 +128,7 @@ def register_browser_and_comm_tools(registry: ToolRegistry, orch: Any) -> int:
     count += 1
 
     # 7. Email Reply
-    def _email_reply(to: str, body: str, subject: Optional[str] = None) -> ActionResult:
+    def _email_reply(to: str, body: str, subject: str | None = None) -> ActionResult:
         if not hasattr(orch, "email") or not orch.email:
             return ActionResult.fail("Email engine is not available.", intent="email_reply")
         res = orch.email.reply_email(to=to, body=body, subject=subject)

@@ -16,16 +16,16 @@ import json
 import logging
 import os
 import random
-import re
 import socketserver
 import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
+from core.telemetry.pricing import BLENDED_PER_1K
 from utils.config import Config
 
 logger = logging.getLogger("flexie.model_hub")
@@ -50,7 +50,7 @@ class ModelTaskMapping:
     temperature: float
 
 
-DEFAULT_TASK_MAPPINGS: Dict[str, ModelTaskMapping] = {
+DEFAULT_TASK_MAPPINGS: dict[str, ModelTaskMapping] = {
     TaskType.ROUTE.value: ModelTaskMapping("llama3.2:1b", "groq", "llama-3.1-8b-instant", 512, 0.1),
     TaskType.CLASSIFY.value: ModelTaskMapping("llama3.2:1b", "groq", "llama-3.1-8b-instant", 512, 0.1),
     TaskType.PLAN.value: ModelTaskMapping("deepseek-r1:latest", "groq", "deepseek-r1-distill-llama-70b", 4096, 0.3),
@@ -67,8 +67,8 @@ class CircuitBreaker:
     def __init__(self, failure_threshold: int = 3, cooldown_seconds: float = 300.0):
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
-        self._failures: Dict[str, int] = {}
-        self._tripped_at: Dict[str, float] = {}
+        self._failures: dict[str, int] = {}
+        self._tripped_at: dict[str, float] = {}
         self._lock = threading.Lock()
 
     def record_success(self, provider: str) -> None:
@@ -112,21 +112,15 @@ class TokenTracker:
     """Thread-safe tracking of tokens and estimated costs across jobs and providers."""
 
     # Approximate price per 1k tokens in USD for cloud models
-    PRICE_PER_1K = {
-        "groq": 0.0001,
-        "openai": 0.0015,
-        "gemini": 0.0005,
-        "anthropic": 0.003,
-        "ollama": 0.0,
-    }
+    PRICE_PER_1K = BLENDED_PER_1K  # single source of truth: core/telemetry/pricing.py
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._job_tokens: Dict[str, TokenRecord] = {}
-        self._provider_tokens: Dict[str, TokenRecord] = {}
-        self._task_tokens: Dict[str, TokenRecord] = {}
+        self._job_tokens: dict[str, TokenRecord] = {}
+        self._provider_tokens: dict[str, TokenRecord] = {}
+        self._task_tokens: dict[str, TokenRecord] = {}
 
-    def record(self, provider: str, task: str, prompt_tokens: int, completion_tokens: int, job_id: Optional[str] = None) -> None:
+    def record(self, provider: str, task: str, prompt_tokens: int, completion_tokens: int, job_id: str | None = None) -> None:
         with self._lock:
             # By provider
             p_rec = self._provider_tokens.setdefault(provider, TokenRecord())
@@ -147,7 +141,7 @@ class TokenTracker:
                 j_rec.completion_tokens += completion_tokens
                 j_rec.calls += 1
 
-    def get_job_report(self, job_id: str) -> Dict[str, Any]:
+    def get_job_report(self, job_id: str) -> dict[str, Any]:
         with self._lock:
             rec = self._job_tokens.get(job_id, TokenRecord())
             return {
@@ -158,7 +152,7 @@ class TokenTracker:
                 "calls": rec.calls,
             }
 
-    def get_summary_report(self) -> Dict[str, Any]:
+    def get_summary_report(self) -> dict[str, Any]:
         with self._lock:
             total_prompt = sum(r.prompt_tokens for r in self._provider_tokens.values())
             total_comp = sum(r.completion_tokens for r in self._provider_tokens.values())
@@ -179,7 +173,7 @@ class TokenTracker:
 class ModelHub:
     """Unified AI Model Hub managing task-based routing, cheap-first cascade, and resilience."""
 
-    _instance: Optional[ModelHub] = None
+    _instance: ModelHub | None = None
     _lock = threading.Lock()
 
     @classmethod
@@ -189,21 +183,21 @@ class ModelHub:
                 cls._instance = cls()
             return cls._instance
 
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(self, config_file: str | None = None):
         self.circuit_breaker = CircuitBreaker()
         self.tracker = TokenTracker()
         self.config_file = config_file or os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "context", "model_config.json"
         )
         self.task_mappings = self._load_task_mappings()
-        self._bridge_server: Optional[OpenAIBridgeServer] = None
+        self._bridge_server: OpenAIBridgeServer | None = None
 
-    def _load_task_mappings(self) -> Dict[str, ModelTaskMapping]:
+    def _load_task_mappings(self) -> dict[str, ModelTaskMapping]:
         """Load mappings from JSON configuration with built-in defaults."""
         mappings = dict(DEFAULT_TASK_MAPPINGS)
         if os.path.exists(self.config_file):
             try:
-                with open(self.config_file, "r", encoding="utf-8") as f:
+                with open(self.config_file, encoding="utf-8") as f:
                     data = json.load(f)
                 for task_name, m_data in data.items():
                     mappings[task_name] = ModelTaskMapping(
@@ -221,7 +215,7 @@ class ModelHub:
         t_key = task.value if isinstance(task, TaskType) else str(task)
         return self.task_mappings.get(t_key, DEFAULT_TASK_MAPPINGS[TaskType.GENERAL.value])
 
-    def check_ollama_health(self) -> Tuple[bool, List[str]]:
+    def check_ollama_health(self) -> tuple[bool, list[str]]:
         """Verify reachability and pulled models of local Ollama server."""
         ollama_url = getattr(Config, "OLLAMA_URL", "http://localhost:11434").rstrip("/")
         try:
@@ -236,7 +230,7 @@ class ModelHub:
             self.circuit_breaker.record_failure("ollama")
         return False, []
 
-    def _execute_ollama(self, prompt: str, model_name: str, system: Optional[str] = None, timeout: float = 12.0) -> Optional[str]:
+    def _execute_ollama(self, prompt: str, model_name: str, system: str | None = None, timeout: float = 12.0) -> str | None:
         """Direct query to local Ollama server with exponential backoff on retry."""
         ollama_url = getattr(Config, "OLLAMA_URL", "http://localhost:11434").rstrip("/")
         payload = {
@@ -274,8 +268,8 @@ class ModelHub:
         prompt: str,
         task: TaskType | str = TaskType.GENERAL,
         brain: Any = None,
-        system_override: Optional[str] = None,
-        job_id: Optional[str] = None,
+        system_override: str | None = None,
+        job_id: str | None = None,
         use_rag: bool = False,
     ) -> str:
         """Execute a task-based query using cheap-first local trial and resilient cloud failover."""
@@ -325,7 +319,7 @@ class ModelHub:
 
         return ""
 
-    def start_openai_bridge(self, port: Optional[int] = None, token: Optional[str] = None) -> bool:
+    def start_openai_bridge(self, port: int | None = None, token: str | None = None) -> bool:
         """Start the localhost-only OpenAI-compatible API bridge."""
         if self._bridge_server is not None:
             return True
@@ -430,8 +424,8 @@ class OpenAIBridgeServer:
         self.hub = hub
         self.port = port
         self.token = token
-        self._server: Optional[socketserver.TCPServer] = None
-        self._thread: Optional[threading.Thread] = None
+        self._server: socketserver.TCPServer | None = None
+        self._thread: threading.Thread | None = None
 
     def start(self) -> bool:
         handler = _OpenAIBridgeHandler

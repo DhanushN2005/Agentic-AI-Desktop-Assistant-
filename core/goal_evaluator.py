@@ -38,7 +38,7 @@ class GoalEvaluation:
 class GoalEvaluator:
     """
     Evaluates whether the original user goal was fully achieved.
-    
+
     Usage:
         evaluator = GoalEvaluator()
         evaluation = evaluator.evaluate(
@@ -59,11 +59,11 @@ class GoalEvaluator:
     def evaluate(self, original_goal: str, execution_state: dict[str, Any]) -> GoalEvaluation:
         """
         Evaluate if the original goal was achieved.
-        
+
         Args:
             original_goal: The user's original command
             execution_state: Dictionary of what was actually done
-        
+
         Returns:
             GoalEvaluation with pass/fail for each check
         """

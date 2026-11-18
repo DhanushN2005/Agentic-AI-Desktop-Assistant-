@@ -1,12 +1,14 @@
-import os
-import sys
-import shlex
-import subprocess
-import shutil
-import webbrowser
-import re
-from utils.config import Config
 import logging
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import webbrowser
+
+from utils.config import Config
+
 
 class DeveloperEngine:
     DANGER_CMDS = ["rm ", "del ", "format ", "rmdir /s", ">", "mkfs", "rd /s"]
@@ -20,8 +22,8 @@ class DeveloperEngine:
         """Executes terminal command and returns a speech-friendly summary of the result."""
         # Security check - SafetyGuard + DangerGate
         try:
-            from core.safety import SafetyGuard
             from core.danger_gate import DangerGate
+            from core.safety import SafetyGuard
             if not SafetyGuard().validate(cmd):
                 return "Blocked by safety guard: command contains dangerous patterns."
             gate = DangerGate()
@@ -51,7 +53,7 @@ class DeveloperEngine:
                 output = result.stdout.strip()
                 if not output:
                     return f"Command '{cmd}' executed successfully with no visible output."
-                
+
                 # If output is long or technical, summarize for speech
                 if len(output) > 150 or not output.replace(" ", "").isalnum():
                     summary = self.flexie.brain.ask(f"Summarize this terminal output in one simple conversational sentence for speech: {output[:1000]}")
@@ -71,12 +73,12 @@ class DeveloperEngine:
             status = subprocess.check_output(["git", "status", "--short"], text=True).strip()
             if not status:
                 return "Your Git repository is clean. Everything is up to date."
-            
+
             summary = self.flexie.brain.ask(f"Summarize this git status short output into a natural sentence about what files changed: {status}")
             return f"Here is your git status: {summary}"
         except Exception as _e:
             logging.debug("[engines/developer.py:61] Swallowed exception: %s: %s", type(_e).__name__, _e)
-            return "Dhanush, it looks like the current folder is not a Git repository, or Git is not initialized here."
+            return f"{Config.USER_NAME}, it looks like the current folder is not a Git repository, or Git is not initialized here."
 
     def get_git_diff_summary(self) -> str:
         """Returns a conversational summary of recent changes."""
@@ -84,7 +86,7 @@ class DeveloperEngine:
             diff = subprocess.check_output(["git", "diff", "--stat"], text=True).strip()
             if not diff:
                 return "There are no recent changes to report in your repository."
-            
+
             summary = self.flexie.brain.ask(f"Summarize these git changes based on the file stats in one natural sentence: {diff}")
             return f"Recent changes summary: {summary}"
         except Exception as _e:
@@ -95,14 +97,14 @@ class DeveloperEngine:
         """Executes a python script and speaks the result or error summary."""
         if not os.path.exists(file_path):
             return f"I couldn't find the Python file at {file_path}."
-        
+
         try:
             res = subprocess.run([sys.executable, file_path], capture_output=True, text=True, timeout=30)
             if res.returncode == 0:
                 output = res.stdout.strip()
                 if not output:
                     return f"The script {os.path.basename(file_path)} ran successfully but produced no output."
-                
+
                 summary = self.brain.ask(f"Summarize this python script output for speech in one sentence: {output[:1000]}")
                 return f"Script execution successful. Result: {summary}"
             else:
@@ -120,7 +122,7 @@ class DeveloperEngine:
             "I am showing you a screenshot of a developer's workspace. "
             "Please look for any error messages in terminals, IDEs (like VS Code), or browsers. "
             "Explain what the error is in simple terms and suggest a quick fix. "
-            "Speak directly to Dhanush."
+            f"Speak directly to {Config.USER_NAME}."
         )
         return self.vision.analyze_screen(self.brain, prompt)
 
@@ -134,7 +136,8 @@ class DeveloperEngine:
                     continue  # never leak dotfiles (.env) into LLM prompts
                 if f.endswith(('.py', '.js', '.html', '.css', '.md', '.json', '.ts', '.jsx', '.tsx')):
                     files.append(os.path.join(os.path.relpath(root, cwd), f))
-            if len(files) > max_files: break
+            if len(files) > max_files:
+                break
         return os.path.basename(cwd), "\n".join(files)
 
     def explain_project(self) -> str:
@@ -151,8 +154,9 @@ class DeveloperEngine:
                 "## Architect View (Architecture overview, Sequence flow, Dependencies)"
             )
             res = self.brain.ask(prompt)
-            if not res: return "I'm sorry, I couldn't generate the project explanation. The AI model might be offline or out of memory."
-            
+            if not res:
+                return "I'm sorry, I couldn't generate the project explanation. The AI model might be offline or out of memory."
+
             with open("flexie_project_explanation.md", "w", encoding="utf-8") as f:
                 f.write(res)
             return "I have analyzed the project and saved a detailed multi-level explanation to flexie_project_explanation.md in your project folder."
@@ -178,8 +182,9 @@ class DeveloperEngine:
                 "- Risk Areas\n"
             )
             res = self.brain.ask(prompt)
-            if not res: return "I'm sorry, I couldn't generate the architecture report. The AI model might be offline or the context was too large."
-            
+            if not res:
+                return "I'm sorry, I couldn't generate the architecture report. The AI model might be offline or the context was too large."
+
             with open("flexie_architecture_report.md", "w", encoding="utf-8") as f:
                 f.write(res)
             return "I have completed the repository analysis. The full architectural report has been saved to flexie_architecture_report.md."
@@ -200,8 +205,9 @@ class DeveloperEngine:
                 "For each bug, provide: Location, Explanation, Impact, Suggested Fix."
             )
             res = self.brain.ask(prompt)
-            if not res: return "I'm sorry, the bug hunt failed. The AI model might be offline or out of memory."
-            
+            if not res:
+                return "I'm sorry, the bug hunt failed. The AI model might be offline or out of memory."
+
             with open("flexie_bug_report.md", "w", encoding="utf-8") as f:
                 f.write(res)
             return "I have finished auditing the codebase. A full severity breakdown and bug report has been saved to flexie_bug_report.md."
@@ -222,8 +228,9 @@ class DeveloperEngine:
                 "After the code block, provide a Coverage Report summary showing: Functions Covered, Missing Tests, Critical Paths."
             )
             res = self.brain.ask(prompt)
-            if not res: return "I'm sorry, I couldn't generate tests. The AI model might be offline or out of memory."
-            
+            if not res:
+                return "I'm sorry, I couldn't generate tests. The AI model might be offline or out of memory."
+
             # Extract code block
             match = re.search(r"```(?:python)?\s*(.*?)\s*```", res, re.DOTALL)
             if match:
@@ -232,7 +239,7 @@ class DeveloperEngine:
                 with open("tests/test_main.py", "w", encoding="utf-8") as f:
                     f.write(code)
                 return "I have generated the unit tests and saved them as test_main.py in the tests folder. You can run them using pytest."
-            
+
             return "I generated the tests but couldn't parse the code block correctly. Please try again."
         except Exception as e:
             logging.debug("[engines/developer.py:213] Swallowed exception: %s: %s", type(e).__name__, e)
@@ -240,7 +247,7 @@ class DeveloperEngine:
 
     def autonomous_build(self, user_request: str, autonomous: bool = False) -> str:
         """Plans, creates, configures IDE extensions, and implements an end-to-end project.
-        
+
         Generates:
         - Multi-phase project plan & architecture (saved to PLAN.md)
         - .vscode/settings.json (with Cline & Roo Code free AI model bridges: Ollama, Groq, OpenRouter)
@@ -250,13 +257,13 @@ class DeveloperEngine:
         - Automatic launch in VS Code and Browser / Runtime
         """
         self.flexie.speak("Initiating Autonomous End-to-End Build Sequence. Planning your architecture now...")
-        is_auto = autonomous or getattr(self.flexie, 'current_mode', '') in ('hacker', 'developer')
-        
+        autonomous or getattr(self.flexie, 'current_mode', '') in ('hacker', 'developer')
+
         # 1. End-to-End Architecture & Multi-Step Project Planning
         plan_prompt = f"""
         User Request: {user_request}
         Target Environment: Windows, Multi-step End-to-End Project (Python / HTML / CSS / JS)
-        
+
         Plan a complete project for this request.
         Include all necessary files for a working app plus a PLAN.md documentation file.
         Respond ONLY with a valid JSON object in this format:
@@ -276,30 +283,31 @@ class DeveloperEngine:
             "run_command": "command to run the project (e.g. python main.py or index.html)"
         }}
         """
-        
+
         try:
             raw_plan = self.brain.ask(plan_prompt, system_override="You are a Lead Software Architect. Respond only with raw JSON.", use_rag=False)
             start, end = raw_plan.find('{'), raw_plan.rfind('}')
-            if start == -1 or end == -1: return "I failed to generate an architecture project plan."
-            
+            if start == -1 or end == -1:
+                return "I failed to generate an architecture project plan."
+
             import json
             plan = json.loads(raw_plan[start:end+1])
             folder_name = plan.get("folder_name", "Flexie_Generated_Project")
             files = plan.get("files", [])
             phases = plan.get("phases", [])
             overview = plan.get("overview", user_request)
-            
+
             # Determine base directory
             base_dir = self.flexie.ctx.last_path if getattr(self.flexie.ctx, 'last_path', None) and os.path.isdir(self.flexie.ctx.last_path) else Config.FOLDER_SHORTCUTS.get("desktop")
             folder = os.path.join(base_dir, folder_name)
-            
+
             # Phase 1: Directory & Plan creation
             os.makedirs(folder, exist_ok=True)
             if hasattr(self.flexie, 'ctx'):
                 self.flexie.ctx.update(last_path=folder)
-            
+
             self.flexie.speak(f"Phase 1 complete: Scaffolded '{folder_name}'. Writing project specification...")
-            
+
             # Generate and write PLAN.md
             plan_md_content = f"# {folder_name} - Project Specification\n\n"
             plan_md_content += f"**Overview:** {overview}\n\n## Multi-Step Roadmap\n"
@@ -310,14 +318,14 @@ class DeveloperEngine:
                 plan_md_content += f"- `{f_info['name']}`: {f_info['description']}\n"
             plan_md_content += "\n## Autonomous Assistant Configuration\n"
             plan_md_content += "This project includes pre-configured `.vscode` settings for AI coding assistants (Cline, Roo Code, Antigravity) with free local Ollama (`http://localhost:11434/v1`) and OpenRouter/Groq model bridges.\n"
-            
+
             with open(os.path.join(folder, "PLAN.md"), "w", encoding="utf-8") as f:
                 f.write(plan_md_content)
 
             # Phase 2: IDE & Assistant Extensions Configuration (.vscode)
             vscode_dir = os.path.join(folder, ".vscode")
             os.makedirs(vscode_dir, exist_ok=True)
-            
+
             # .vscode/extensions.json
             extensions_json = {
                 "recommendations": [
@@ -330,7 +338,7 @@ class DeveloperEngine:
             }
             with open(os.path.join(vscode_dir, "extensions.json"), "w", encoding="utf-8") as f:
                 json.dump(extensions_json, f, indent=4)
-                
+
             # .vscode/settings.json - pre-wire free model configurations for Cline/Roo Code
             settings_json = {
                 "editor.formatOnSave": True,
@@ -365,19 +373,19 @@ class DeveloperEngine:
                 json.dump(tasks_json, f, indent=4)
 
             # Phase 3: Code Implementation Loop
-            self.flexie.speak(f"Phase 2 complete: Configured VS Code and AI assistant extensions. Now implementing source files...")
-            
+            self.flexie.speak("Phase 2 complete: Configured VS Code and AI assistant extensions. Now implementing source files...")
+
             for f_info in files:
                 name = f_info["name"]
                 desc = f_info["description"]
-                
+
                 # Skip if already created (e.g. PLAN.md)
                 if os.path.exists(os.path.join(folder, name)) and name == "PLAN.md":
                     continue
-                
+
                 code_prompt = f"Project: {user_request}\nFile: {name} ({desc})\n\nWrite the complete, functional, production-ready source code for {name}. Output ONLY the code, with no conversational remarks or web search summaries."
                 code = self.brain.ask(code_prompt, system_override="You are a Senior Full-Stack Software Engineer. Output ONLY valid, working source code without conversational text or search results.", use_rag=False)
-                
+
                 # Check for DuckDuckGo web search fallback pollution
                 if code.startswith("Based on my web search") or "I couldn't find a clear enough summary" in code:
                     code = self.brain.ask(f"Write standard valid code for {name} ({desc}):\n", system_override="Provide only raw source code.", use_rag=False)
@@ -389,15 +397,21 @@ class DeveloperEngine:
                         code = m.group(1)
                     else:
                         code = re.sub(r"```[a-zA-Z0-9_\-\+]*\n?", "", code).replace("```", "")
-                
+
                 fpath = os.path.join(folder, name)
                 os.makedirs(os.path.dirname(fpath), exist_ok=True)
-                
+
+                # Never overwrite a good file with empty LLM output; keep any
+                # existing content instead of creating an empty file.
+                if not code or not code.strip():
+                    self.flexie.logger.warning("Autonomous Developer: empty code for %s; skipping write", name)
+                    continue
+
                 with open(fpath, "w", encoding="utf-8") as f:
                     f.write(code.strip())
-                
+
                 self.flexie.logger.info(f"Autonomous Developer: Created {name}")
-            
+
             self.flexie.speak(f"Finished writing {len(files)} files. Verifying code stability...")
 
             # Phase 4: Verification & Self-Correction
@@ -423,8 +437,10 @@ class DeveloperEngine:
                             fix = self.brain.ask(f"Fix this python error and return ONLY corrected code:\n{run_out[:1000]}\n\nCode:\n{open(test_path, encoding='utf-8').read()[:2000]}", use_rag=False)
                             if "```" in fix:
                                 m = re.search(r"```(?:python)?\s*(.*?)\s*```", fix, re.DOTALL)
-                                if m: fix = m.group(1)
-                            with open(test_path, "w", encoding="utf-8") as f: f.write(fix.strip())
+                                if m:
+                                    fix = m.group(1)
+                            with open(test_path, "w", encoding="utf-8") as f:
+                                f.write(fix.strip())
                             self.flexie.logger.info("Autonomous build: self-corrected main file")
             except Exception as ve:
                 self.flexie.logger.warning(f"Autonomous verify loop: {ve}")
@@ -440,7 +456,7 @@ class DeveloperEngine:
                     logging.debug("[engines/developer.py] open_item vscode failed: %s", _e)
                 if not opened:
                     try:
-                        code_cmd = shutil.which("code") or r"C:\Users\Dhanush\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd"
+                        code_cmd = shutil.which("code") or os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Microsoft VS Code", "bin", "code.cmd")
                         if os.path.exists(code_cmd):
                             if code_cmd.lower().endswith(".cmd") or code_cmd.lower().endswith(".bat"):
                                 subprocess.Popen(["cmd.exe", "/c", code_cmd, target_dir], shell=False)
@@ -460,7 +476,7 @@ class DeveloperEngine:
             # Phase 6: Auto-launch Web or Python Application
             main_f = plan.get("main_file")
             has_html = any(f.get("name", "").endswith(".html") for f in files) or os.path.exists(os.path.join(folder, "index.html"))
-            
+
             if has_html:
                 index_path = os.path.join(folder, "index.html")
                 if not os.path.exists(index_path):
@@ -490,7 +506,7 @@ class DeveloperEngine:
                 return self.run_python_script(script_path)
 
             return f"Autonomous project build complete at {folder} - {len(files)} files verified and opened in VS Code."
-            
+
         except Exception as e:
             logging.debug("[engines/developer.py:332] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"The autonomous build failed: {e}"

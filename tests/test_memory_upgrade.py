@@ -1,11 +1,11 @@
 """Tests for Step 2: Natural-Language Explicit Memory & Markdown Wiki Integration."""
 import os
-import tempfile
-import pytest
 from unittest.mock import MagicMock
 
-from core.memory_manager import MemoryManager, MemoryCategory, MemoryEntry
+import pytest
+
 from core.handlers.memory_system import handle_memory_system
+from core.memory_manager import MemoryCategory, MemoryManager
 
 
 class TestMemoryUpgrade:
@@ -32,11 +32,11 @@ class TestMemoryUpgrade:
 
         mm.remember("temporary_fact", "Temporary Value", category=MemoryCategory.FACTS)
         mm.export_to_markdown(filepath=wiki_file)
-        assert "temporary_fact" in open(wiki_file, "r", encoding="utf-8").read()
+        assert "temporary_fact" in open(wiki_file, encoding="utf-8").read()
 
         mm.forget("temporary_fact")
         mm.export_to_markdown(filepath=wiki_file)
-        assert "temporary_fact" not in open(wiki_file, "r", encoding="utf-8").read()
+        assert "temporary_fact" not in open(wiki_file, encoding="utf-8").read()
 
     def test_handle_memory_system_explicit_remember_preference(self):
         orch = MagicMock()

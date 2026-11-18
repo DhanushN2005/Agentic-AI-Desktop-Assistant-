@@ -5,7 +5,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class JobStatus(str, Enum):
@@ -23,16 +23,16 @@ class JobPhase:
     name: str
     status: str = "pending"  # pending, running, done, failed, skipped
     output: str = ""
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
-    git_commit: Optional[str] = None
-    error: Optional[str] = None
+    started_at: float | None = None
+    completed_at: float | None = None
+    git_commit: str | None = None
+    error: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> JobPhase:
+    def from_dict(cls, data: dict[str, Any]) -> JobPhase:
         return cls(
             name=data.get("name", "unnamed_phase"),
             status=data.get("status", "pending"),
@@ -49,7 +49,7 @@ class BuildJob:
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     title: str = ""
     request_text: str = ""
-    phase_list: List[JobPhase] = field(default_factory=list)
+    phase_list: list[JobPhase] = field(default_factory=list)
     status: JobStatus = JobStatus.QUEUED
     current_phase: int = 0
     attempts: int = 0
@@ -59,11 +59,11 @@ class BuildJob:
     elapsed_seconds: float = 0.0
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    completed_at: Optional[float] = None
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    completed_at: float | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "title": self.title,
@@ -84,7 +84,7 @@ class BuildJob:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> BuildJob:
+    def from_dict(cls, data: dict[str, Any]) -> BuildJob:
         raw_status = data.get("status", JobStatus.QUEUED.value)
         try:
             status_enum = JobStatus(raw_status)

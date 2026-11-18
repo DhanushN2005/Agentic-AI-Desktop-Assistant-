@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 from fastapi.testclient import TestClient
+
 from interface.api_server import create_app
 
 
@@ -22,6 +24,24 @@ def test_health_endpoint(test_client):
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+    # No Origin header (curl / untrusted caller) must NOT receive the token.
+    assert "token" not in resp.json()
+
+
+def test_health_token_only_for_trusted_origin(test_client, monkeypatch):
+    client, _ = test_client
+    ok = client.get("/health", headers={"Origin": "http://localhost:8766"})
+    assert ok.json()["token"] == "valid-test-token"
+    evil = client.get("/health", headers={"Origin": "chrome-extension://evilextension"})
+    assert "token" not in evil.json()
+    other = client.get("/health", headers={"Origin": "http://localhost:9999"})
+    assert "token" not in other.json()
+
+
+def test_health_token_for_configured_extension(monkeypatch):
+    monkeypatch.setenv("FLEXIE_EXTENSION_IDS", "abcdef")
+    from interface.api_server import _allowed_origins
+    assert "chrome-extension://abcdef" in _allowed_origins()
 
 
 def test_command_requires_auth(test_client):

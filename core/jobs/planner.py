@@ -11,7 +11,7 @@ import logging
 import os
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from utils.config import Config
 
@@ -37,7 +37,7 @@ class ProjectFileSpec:
     name: str
     purpose: str
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> dict[str, str]:
         return asdict(self)
 
 
@@ -48,14 +48,14 @@ class ProjectSpec:
     summary: str
     run_command: str
     test_command: str
-    files: List[ProjectFileSpec] = field(default_factory=list)
-    dependencies: List[str] = field(default_factory=list)
-    acceptance_criteria: List[str] = field(default_factory=list)
-    phases: List[str] = field(default_factory=lambda: list(STANDARD_PHASES))
-    template_used: Optional[str] = None
-    assumptions_made: List[str] = field(default_factory=list)
+    files: list[ProjectFileSpec] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    acceptance_criteria: list[str] = field(default_factory=list)
+    phases: list[str] = field(default_factory=lambda: list(STANDARD_PHASES))
+    template_used: str | None = None
+    assumptions_made: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "title": self.title,
             "stack": self.stack,
@@ -71,7 +71,7 @@ class ProjectSpec:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> ProjectSpec:
+    def from_dict(cls, data: dict[str, Any]) -> ProjectSpec:
         raw_files = data.get("files", [])
         files = [
             f if isinstance(f, ProjectFileSpec) else ProjectFileSpec(f.get("name", "app.py"), f.get("purpose", ""))
@@ -123,8 +123,8 @@ def is_vague_request(request: str) -> bool:
         "clack", "clok", "wallclock", "analog", "digital", "rotating", "spinning",
         "pins", "hands", "dial", "face", "display", "alarm", "reminder",
         # General creative / utility
-        "snake", "tetris", "puzzle", "quiz", "chatbot", "landing", "signup",
-        "login", "register", "profile", "settings", "admin", "panel",
+        "snake", "tetris", "puzzle", "chatbot", "signup",
+        "register", "profile", "settings", "admin", "panel",
         "gallery", "slider", "carousel", "modal", "popup", "drawer",
     }
 
@@ -157,13 +157,13 @@ def is_vague_request(request: str) -> bool:
 def clarify_request(
     request: str,
     voice: Any = None,
-    preferences: Optional[Dict[str, str]] = None,
-) -> Tuple[str, List[str]]:
+    preferences: dict[str, str] | None = None,
+) -> tuple[str, list[str]]:
     """Clarify vague requests with up to 3 short questions or fallback to safe defaults.
 
     Returns (refined_request, list_of_assumptions).
     """
-    assumptions: List[str] = []
+    assumptions: list[str] = []
     if not is_vague_request(request):
         return request, assumptions
 
@@ -175,7 +175,7 @@ def clarify_request(
     # If voice is available and active, ask up to 3 short questions with configurable timeout
     _voice_timeout = getattr(Config, "JOB_VOICE_CLARIFY_TIMEOUT", 20)
     answered = False
-    answers: List[str] = []
+    answers: list[str] = []
     if voice and hasattr(voice, "listen") and hasattr(voice, "speak"):
         questions = [
             "What is the main goal or feature of this project?",
@@ -214,7 +214,7 @@ def clarify_request(
     return refined, assumptions
 
 
-def match_template(request: str) -> Optional[ProjectSpec]:
+def match_template(request: str) -> ProjectSpec | None:
     """Find a pre-built template matching request keywords."""
     c = request.lower()
     if not os.path.exists(_TEMPLATES_DIR):
@@ -233,7 +233,7 @@ def match_template(request: str) -> Optional[ProjectSpec]:
             manifest_path = os.path.join(_TEMPLATES_DIR, t_name, "manifest.json")
             if os.path.exists(manifest_path):
                 try:
-                    with open(manifest_path, "r", encoding="utf-8") as f:
+                    with open(manifest_path, encoding="utf-8") as f:
                         data = json.load(f)
                     files = [ProjectFileSpec(name=f["name"], purpose=f.get("purpose", "")) for f in data.get("files", [])]
                     return ProjectSpec(
@@ -253,7 +253,7 @@ def match_template(request: str) -> Optional[ProjectSpec]:
     return None
 
 
-def get_builtin_fallback_spec(request: str, assumptions: Optional[List[str]] = None) -> ProjectSpec:
+def get_builtin_fallback_spec(request: str, assumptions: list[str] | None = None) -> ProjectSpec:
     """Bulletproof fallback specification when LLM is offline or invalid."""
     _default_stack = getattr(Config, "JOB_DEFAULT_STACK", "python-flask")
     return ProjectSpec(
@@ -300,7 +300,7 @@ def generate_project_spec(
     user_request: str,
     brain: Any = None,
     voice: Any = None,
-    preferences: Optional[Dict[str, str]] = None,
+    preferences: dict[str, str] | None = None,
 ) -> ProjectSpec:
     # 1. Template match step on explicit user request
     matched = match_template(user_request)

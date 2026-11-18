@@ -75,6 +75,26 @@ def handle_alarm(orch, c):
         orch.speak(response)
         return True
 
+    if any(w in cmd for w in ["cancel all alarms", "cancel all timers", "cancel all"]):
+        if "alarm" in cmd:
+            response = orch.alarm.cancel_all_alarms()
+        elif "timer" in cmd:
+            response = orch.alarm.cancel_all_timers()
+        else:
+            response = orch.alarm.cancel_all_alarms() + " " + orch.alarm.cancel_all_timers()
+        orch.ctx.update(last_response=response, query=c)
+        orch.speak(response)
+        return True
+
+    if any(w in cmd for w in ["cancel", "stop", "clear", "end", "kill"]) and any(w in cmd for w in ["timer", "alarm", "countdown"]):
+        if "alarm" in cmd:
+            response = orch.alarm.cancel_last_alarm()
+        else:
+            response = orch.alarm.cancel_last_timer()
+        orch.ctx.update(last_response=response, query=c)
+        orch.speak(response)
+        return True
+
     response = "Say 'set alarm for 7 AM' or 'timer for 10 minutes'."
     orch.ctx.update(last_response=response, query=c)
     orch.speak(response)

@@ -1,6 +1,5 @@
 """Batch 4 audit fixes: installer mapping, requirements caps, docs drift."""
 import pathlib
-import re
 from unittest.mock import patch
 
 import utils.installer as inst
@@ -10,7 +9,7 @@ import utils.installer as inst
 def test_import_names_separate_pip_from_import():
     assert inst._import_name("google-genai") == "google.genai"
     assert inst._import_name("edge-tts") == "edge_tts"
-    assert inst._import_name("pymupdf") == "fitz"
+    assert inst._import_name("pypdf") == "pypdf"
     assert inst._import_name("webrtcvad-wheels") == "webrtcvad"
     assert inst._import_name("python-dotenv") == "dotenv"
     assert inst._import_name("SpeechRecognition") == "speech_recognition"
@@ -18,7 +17,7 @@ def test_import_names_separate_pip_from_import():
 
 def test_required_packages_complete():
     for pkg in ("vosk", "openai", "anthropic", "langgraph", "chromadb",
-                "onnxruntime", "docker", "pymupdf", "pytesseract",
+                "onnxruntime", "docker", "pypdf", "pytesseract",
                 "webrtcvad-wheels"):
         assert pkg in inst.REQUIRED_PACKAGES, pkg
 
@@ -51,9 +50,11 @@ def test_upper_bound_pins():
 
 
 def test_webrtcvad_replaced():
-    lines = [l for l in _req_lines() if not l.strip().startswith("#")]
-    assert not any(l.startswith("webrtcvad>=") or l.startswith("webrtcvad==") for l in lines)
-    assert any(l.startswith("webrtcvad-wheels>=") for l in lines)
+    lines = [entry for entry in _req_lines() if not entry.strip().startswith("#")]
+    assert not any(
+        entry.startswith("webrtcvad>=") or entry.startswith("webrtcvad==") for entry in lines
+    )
+    assert any(entry.startswith("webrtcvad-wheels>=") for entry in lines)
 
 
 def test_major_upgrade_notes_present():

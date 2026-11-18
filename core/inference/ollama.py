@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from core.inference.base import EngineResponse, InferenceEngine
+from core.telemetry.usage import extract_usage, get_tracker
 from utils.config import Config
 
 _HEALTH: dict[str, tuple[float, bool]] = {}
@@ -82,11 +83,20 @@ class OllamaEngine(InferenceEngine):
             data = json.loads(response.read().decode("utf-8"))
         text = (data.get("message") or {}).get("content", "") or ""
         prompt_text = "\n".join(str(message.get("content", "")) for message in messages)
+        # Ollama reports exact counts; fall back to an estimate only if they are missing.
+        exact = extract_usage(data)
+        prompt_tokens, completion_tokens = exact if exact else (_estimate_tokens(prompt_text), _estimate_tokens(text))
+        latency = time.perf_counter() - started
+        try:
+            get_tracker().record(self.engine_id, chosen_model, prompt_tokens, completion_tokens,
+                                 latency, estimated=exact is None)
+        except Exception:  # telemetry must never break inference
+            pass
         return EngineResponse(
             text=text.strip(),
             model=chosen_model,
             engine=self.engine_id,
-            prompt_tokens=_estimate_tokens(prompt_text),
-            completion_tokens=_estimate_tokens(text),
-            latency_seconds=time.perf_counter() - started,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_seconds=latency,
         )

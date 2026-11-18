@@ -24,7 +24,7 @@ from core.permission_system import PermissionSystem
 class DesktopControl:
     """
     Safe, centralized desktop interaction controller.
-    
+
     All desktop actions (mouse, keyboard, screen) go through this module.
     Each action checks permissions before execution.
     """

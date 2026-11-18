@@ -182,3 +182,35 @@ def test_safety_blocked_command_returns_blocked(tmp_path, monkeypatch):
     assert status == "blocked"
     assert calls == []
     assert controller.pending_confirmation is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ok but first delete everything",
+        "sure, what does that do",
+        "yes and also format the disk",
+        "okay then email my boss the file",
+        "please",
+        "do it",
+        "",
+    ],
+)
+def test_confirmation_is_not_fuzzy(text):
+    assert DangerGate().is_confirmation(text) is False
+
+
+@pytest.mark.parametrize("text", ["ok", "okay", "yep", "Yes, please!", "go ahead."])
+def test_short_pure_approvals_still_work(text):
+    assert DangerGate().is_confirmation(text) is True
+
+
+def test_controller_forwards_handler_kwargs(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr("core.controller.GlobalMemory", FakeGlobalMemory)
+    orch = FakeOrchestrator()
+    orch.speak = lambda text, silent=False: None
+    controller = FlexieController(orch, lambda cmd, *a, **k: seen.append((cmd, a, k)))
+    controller.telemetry.log_path = str(tmp_path / "t.log")
+    controller.execute("what time is it", is_subcommand=True, silent=True, depth=2)
+    assert seen and seen[0][2] == {"is_subcommand": True, "silent": True, "depth": 2}

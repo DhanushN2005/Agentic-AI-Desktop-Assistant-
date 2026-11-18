@@ -1,6 +1,6 @@
 import json
-import urllib.request
 import logging
+import urllib.request
 
 
 class ColorInfoEngine:

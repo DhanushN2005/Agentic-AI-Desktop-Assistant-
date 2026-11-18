@@ -17,14 +17,14 @@ Usage:  python interface/web_ui_bridge.py
 """
 
 import asyncio
-import socket
-import threading
+import logging
 import os
 import secrets
-import webbrowser
+import socket
 import sys
+import threading
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import logging
 
 # ── Project root on sys.path ────────────────────────────────────────────────
 # This file is launched AS A SCRIPT (``python interface/web_ui_bridge.py``), so
@@ -63,7 +63,7 @@ AUTH_TOKEN: str = secrets.token_urlsafe(24)
 def _render_html() -> bytes:
     """Read web_ui.html and inject the per-run auth token."""
     try:
-        with open(HTML_FILE, "r", encoding="utf-8") as f:
+        with open(HTML_FILE, encoding="utf-8") as f:
             html = f.read()
     except OSError as e:
         logging.debug("[interface/web_ui_bridge.py:55] Swallowed exception: %s: %s", type(e).__name__, e)

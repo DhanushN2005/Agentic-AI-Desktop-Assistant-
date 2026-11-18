@@ -4,19 +4,19 @@ import types
 
 from core.brain import Brain
 from core.handlers import dispatch_intent, handle_context_command
-from core.handlers.code_gen import (
-    _explicit_artifact_filename,
-    _extract_change_request,
-    _next_artifact_filename,
-    _parse_code_query,
-    handle_artifact_command,
-)
 from core.handlers.agents import handle_capability_delegation
 from core.handlers.browser import (
     handle_browser_control,
     handle_browser_extract,
     handle_browser_tabs,
     handle_gmail,
+)
+from core.handlers.code_gen import (
+    _explicit_artifact_filename,
+    _extract_change_request,
+    _next_artifact_filename,
+    _parse_code_query,
+    handle_artifact_command,
 )
 from core.handlers.dev import handle_briefing, handle_clipboard, handle_dev_build, handle_dev_explain, handle_intel
 from core.handlers.files import (
@@ -662,6 +662,22 @@ def test_dispatch_volume(monkeypatch):
     handled = dispatch_intent(orch, "media", "set volume 40", False)
     assert handled is True
     assert any("40 percent" in s for s in orch.spoken)
+
+
+def test_dispatch_volume_relative(monkeypatch):
+    curr = {"v": 50}
+    monkeypatch.setattr("engines.system.SystemCtrl.get_volume", lambda: curr["v"])
+    monkeypatch.setattr("engines.system.SystemCtrl.set_volume", lambda v: curr.update({"v": v}))
+    orch = make_orch()
+    handled = dispatch_intent(orch, "media", "down volume by 20", False)
+    assert handled is True
+    assert curr["v"] == 30
+    assert any("30 percent" in s for s in orch.spoken)
+
+    handled2 = dispatch_intent(orch, "media", "volume up by 15", False)
+    assert handled2 is True
+    assert curr["v"] == 45
+    assert any("45 percent" in s for s in orch.spoken)
 
 
 def test_dispatch_app_op_redirects_to_search(monkeypatch):

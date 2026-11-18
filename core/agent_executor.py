@@ -14,20 +14,22 @@ Simple commands still go through the existing handler system.
 This module handles only agent-planned complex tasks.
 """
 import logging
-import time
 import threading
-from typing import Optional, Callable
-from core.goal_planner import TaskGraph, TaskStep, StepStatus, VerificationStrategy
-from core.tool_registry import ToolRegistry
-from core.permission_system import PermissionSystem
+import time
+from collections.abc import Callable
+
 from core.action_result import ActionResult
 from core.execution_graph import ExecutionGraph, ExecutionNode
+from core.goal_planner import StepStatus, TaskGraph, TaskStep, VerificationStrategy
+from core.permission_system import PermissionSystem
+from core.run_budget import RunBudget
+from core.tool_registry import ToolRegistry
 
 
 class AgentExecutor:
     """
     Executes a TaskGraph using the Observe → Act → Verify loop.
-    
+
     Each step goes through:
       1. Pre-check: permissions, dependencies
       2. Observe: snapshot current state
@@ -41,9 +43,9 @@ class AgentExecutor:
         self,
         tool_registry: ToolRegistry,
         permission_system: PermissionSystem,
-        execution_graph: Optional[ExecutionGraph] = None,
-        speak_fn: Optional[Callable] = None,
-        orch: Optional[object] = None,
+        execution_graph: ExecutionGraph | None = None,
+        speak_fn: Callable | None = None,
+        orch: object | None = None,
     ):
         self.tools = tool_registry
         self.permissions = permission_system
@@ -52,6 +54,7 @@ class AgentExecutor:
         self.orch = orch
         self.logger = logging.getLogger("Flexie.AgentExecutor")
         self._cancel_event = threading.Event()
+        self.budget = RunBudget()
 
     def cancel(self):
         """Cancel the current execution."""
@@ -64,11 +67,12 @@ class AgentExecutor:
     def execute(self, graph: TaskGraph, speak: bool = True) -> ActionResult:
         """
         Execute all steps in a TaskGraph.
-        
+
         Steps are executed in dependency order.
         Independent steps can run in parallel (future enhancement).
         """
         self._cancel_event.clear()
+        self.budget = RunBudget()  # fresh limits for every plan
         total = len(graph.steps)
         completed = 0
         failed = 0
@@ -77,7 +81,7 @@ class AgentExecutor:
         if speak:
             self.speak(f"I'll break this into {total} steps and execute them for you.")
 
-        while not graph.all_completed() and not self.is_cancelled():
+        while not graph.all_completed() and not self.is_cancelled() and not self.budget.tripped:
             ready = graph.get_ready_steps()
             if not ready:
                 # Deadlock or all remaining steps have failed dependencies
@@ -90,7 +94,7 @@ class AgentExecutor:
                 break
 
             for step in ready:
-                if self.is_cancelled():
+                if self.is_cancelled() or self.budget.tripped:
                     step.mark_cancelled()
                     continue
 
@@ -99,6 +103,17 @@ class AgentExecutor:
                     completed += 1
                 elif step.status == StepStatus.FAILED:
                     failed += 1
+
+        if self.budget.tripped:
+            for st in graph.steps:
+                if st.status == StepStatus.PENDING:
+                    st.mark_cancelled()
+            self.logger.warning(f"[AGENT_EXECUTOR] Run stopped: {self.budget.tripped}")
+            self.speak(f"I stopped this task: {self.budget.tripped}.")
+            return ActionResult.fail(
+                message=f"Stopped: {self.budget.tripped}", intent="agent_executor",
+                data={**graph.to_dict(), "budget_tripped": self.budget.tripped},
+            )
 
         # Final summary
         if self.is_cancelled():
@@ -120,20 +135,48 @@ class AgentExecutor:
                 data=graph.to_dict(),
             )
 
+    APPROVAL_WAIT_SECONDS = 20.0
+
+    def _needs_approval(self, step: TaskStep) -> bool:
+        tool = self.tools.get(step.tool) if step.tool else None
+        subject = tool if tool is not None else (step.tool or step.description)
+        return not self.permissions.check_permission(subject, step.description)[0]
+
+    def _ensure_permission(self, step: TaskStep) -> bool:
+        """Return True only if the step is allowed (possibly after user approval)."""
+        tool = self.tools.get(step.tool) if step.tool else None
+        subject = tool if tool is not None else (step.tool or step.description)
+        allowed, reason, required = self.permissions.check_permission(subject, step.description)
+        if allowed:
+            return True
+
+        step.permission_level = required.name if required else None
+        self.logger.warning(f"[AGENT_EXECUTOR] Permission required: {reason}")
+        voice = getattr(self.orch, "voice", None)
+        approved = self.permissions.await_approval(
+            step.tool or step.description, step.description, required,
+            voice_confirm=getattr(voice, "confirm", None),
+            wait_seconds=self.APPROVAL_WAIT_SECONDS,
+            is_cancelled=self.is_cancelled,
+        )
+        if approved:
+            self.logger.info(f"[AGENT_EXECUTOR] Step {step.task_id} approved by user.")
+            return True
+        self.logger.warning(f"[AGENT_EXECUTOR] Step {step.task_id} denied (no approval): {reason}")
+        step.mark_failed(f"Permission denied: {reason}")
+        return False
+
     def _execute_step(self, step: TaskStep, graph: TaskGraph):
         """Execute a single step through the Observe → Act → Verify loop."""
         self.logger.info(f"[AGENT_EXECUTOR] Step {step.task_id}: {step.description}")
         step.mark_running()
 
-        # 1. PERMISSION CHECK
-        allowed, reason, required = self.permissions.check_permission(
-            step.tool or step.description,
-            step.description,
-        )
-        if not allowed:
-            self.logger.warning(f"[AGENT_EXECUTOR] Permission denied: {reason}")
-            # For now, log and continue (user can override)
-            step.permission_level = required.name
+        # 1. PERMISSION CHECK — fail CLOSED. A denied step never runs unless the
+        # user approves it (UI/API approval) within the approval window.
+        needed_approval = self._needs_approval(step)
+        if not self._ensure_permission(step):
+            self._record(step)
+            return
 
         # 2. OBSERVE — pre-execution snapshot
         pre_state = self._observe()
@@ -154,6 +197,10 @@ class AgentExecutor:
             # Action failed — attempt retry
             self._handle_action_failure(step, result)
 
+        # An approval authorizes this one step only.
+        if needed_approval:
+            self.permissions.consume_approval()
+
         # 5. RECORD — log to execution graph
         self._record(step)
 
@@ -170,27 +217,52 @@ class AgentExecutor:
             pass
         return state
 
-    def _act(self, step: TaskStep) -> ActionResult:
-        """Execute the tool for a step."""
+    _HANDLER_FAIL_STATUSES = frozenset({"blocked", "awaiting_confirmation", "failed", "delegated", "cancelled"})
+
+    def _typed_tool(self, step: TaskStep):
+        """The registered tool for this step if it can be called with the step's arguments."""
         if not step.tool:
-            # No tool specified — try to use the orchestrator's handler
-            if self.orch:
-                try:
-                    self.orch.handle_command(step.description, is_subcommand=True, silent=True)
-                    return ActionResult.ok(message="Executed via handler", intent=step.description)
-                except Exception as e:
-                    logging.debug("[core/agent_executor.py:180] Swallowed exception: %s: %s", type(e).__name__, e)
-                    return ActionResult.fail(message=str(e), intent=step.description)
+            return None
+        tool = self.tools.get(step.tool)
+        if tool is None or not tool.enabled:
+            return None
+        ok, _err = tool.validate_args(step.arguments or {})
+        return tool if ok else None
 
-            return ActionResult.fail(message="No tool and no orchestrator", intent=step.description)
+    def _act(self, step: TaskStep) -> ActionResult:
+        """Execute a step: typed tool call when possible, else the handler pipeline."""
+        reason = self.budget.charge(step.tool, step.arguments, step.description)
+        if reason:
+            return ActionResult.fail(message=f"Budget: {reason}", intent=step.description,
+                                     data={"budget_tripped": reason})
+        if self._typed_tool(step) is not None:
+            return self.tools.execute(step.tool, step.arguments, timeout=step.timeout)
 
-        # Execute via tool registry
-        return self.tools.execute(step.tool, step.arguments, timeout=step.timeout)
+        # No usable typed call (unknown tool, or planner gave no arguments): route the
+        # step's description through the normal handler pipeline, which has its own
+        # safety/danger checks.
+        if not self.orch:
+            return ActionResult.fail(message="No typed tool and no orchestrator", intent=step.description)
+        try:
+            status = self.orch.handle_command(step.description, is_subcommand=True, silent=True)
+        except Exception as e:
+            logging.debug("[core/agent_executor.py] handler step failed: %s: %s", type(e).__name__, e)
+            return ActionResult.fail(message=str(e), intent=step.description)
+        # The controller reports deferred/blocked commands as status strings; those
+        # did NOT run and must not be counted as success.
+        if status is False or (isinstance(status, str) and status in self._HANDLER_FAIL_STATUSES):
+            return ActionResult.fail(message=str(status), intent=step.description)
+        return ActionResult.ok(message="Executed via handler", intent=step.description)
 
     def _verify(self, step: TaskStep, pre_state: dict) -> bool:
         """Verify that the step's action actually succeeded."""
         if step.verification == VerificationStrategy.NONE:
             return True  # No verification requested
+        if self._typed_tool(step) is None:
+            # Handler-routed step: the handler owns its own verification. Re-running a
+            # side-effecting handler just because a generic check was inconclusive
+            # would repeat the action (e.g. write the file twice).
+            return True
 
         try:
             if step.verification == VerificationStrategy.FILE_EXISTS:
@@ -243,7 +315,8 @@ class AgentExecutor:
                 logging.debug("[core/agent_executor.py:240] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 pass
             return self.orch.validator.is_app_running(app_name, curr_window)
-        return True  # Can't verify without orchestrator
+        self.logger.warning("[VERIFY] Cannot verify app launch without orchestrator validator.")
+        return False  # Unverifiable is NOT verified (fail closed)
 
     def _verify_page_loaded(self, step: TaskStep) -> bool:
         """Verify browser navigation succeeded."""
@@ -251,10 +324,11 @@ class AgentExecutor:
             page = self.orch.browser.page
             if page and not page.is_closed():
                 url = page.url
-                if url and "google.com" not in url:
+                if url and url not in ("about:blank", "") and not url.startswith("chrome-error://"):
                     self.logger.info(f"[VERIFY] Page loaded: {url}")
                     return True
-        return True  # Can't verify without browser
+        self.logger.warning("[VERIFY] Page load could not be verified.")
+        return False  # Unverifiable is NOT verified (fail closed)
 
     def _verify_clipboard_changed(self, step: TaskStep, pre_state: dict) -> bool:
         """Verify clipboard was updated."""

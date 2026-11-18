@@ -1,6 +1,6 @@
-import urllib.request
 import json
 import logging
+import urllib.request
 
 
 class JokesEngine:
@@ -22,7 +22,7 @@ class JokesEngine:
 
         # Try JokeAPI
         try:
-            url = f"https://v2.jokeapi.dev/joke/Any?safe-mode"
+            url = "https://v2.jokeapi.dev/joke/Any?safe-mode"
             req = urllib.request.Request(url, headers={"User-Agent": "Flexie/2.0"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())

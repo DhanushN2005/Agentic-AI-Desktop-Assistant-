@@ -1,18 +1,14 @@
 """Unit and integration tests for Phase 3: Code Generation & Auto-Install."""
-import json
-import os
 from unittest.mock import MagicMock
-import pytest
 
 from core.jobs.generator import (
-    CodeGenerator,
     MAX_FILES_PER_PROJECT,
-    MAX_FILE_SIZE_BYTES,
+    CodeGenerator,
     neutralize_secrets,
     strip_fences_and_prose,
     validate_syntax,
 )
-from core.jobs.models import BuildJob, JobPhase, JobStatus
+from core.jobs.models import BuildJob, JobPhase
 from core.jobs.planner import ProjectFileSpec, ProjectSpec
 
 

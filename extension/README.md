@@ -20,5 +20,9 @@ A Manifest V3 browser extension integrating Flexie directly into Google Chrome, 
    ```text
    e:\HACKATHON\flexiee\flexie_v2\extension
    ```
-5. Pin the **Flexie** icon in your browser toolbar.
-6. Click the icon and select **Open Flexie Sidebar**.
+5. Copy the extension ID shown on `chrome://extensions/` and set it before starting Flexie, so the backend trusts it (the API token is only issued to trusted origins):
+   ```text
+   set FLEXIE_EXTENSION_IDS=<your-extension-id>
+   ```
+6. Pin the **Flexie** icon in your browser toolbar.
+7. Click the icon and select **Open Flexie Sidebar**.

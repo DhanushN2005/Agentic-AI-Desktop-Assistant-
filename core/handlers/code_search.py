@@ -8,7 +8,7 @@ import re
 def handle_local_code_search(orch, c, silent=False):
     """
     Handle local code search commands.
-    
+
     Examples:
         "search my code for binary search"
         "find function binary_search"

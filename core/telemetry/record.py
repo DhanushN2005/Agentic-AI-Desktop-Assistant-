@@ -11,6 +11,7 @@ class TelemetryRecord:
     model_id: str = ""
     engine: str = ""
     agent: str = ""
+    command_id: str = ""
     prompt_tokens: int = 0
     completion_tokens: int = 0
     latency_seconds: float = 0.0

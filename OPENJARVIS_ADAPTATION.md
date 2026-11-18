@@ -308,7 +308,7 @@ OpenJarvis is **Apache-2.0**. If you copy source files:
 
 If you reimplement the ideas, schemas, and interfaces (recommended), no license obligation applies, but attribution in the README is good practice.
 
-Flexie currently has **no LICENSE**. Pick one before publishing. If you keep PyMuPDF (`AGPL`) in the distributed binary, AGPL obligations apply to the combined work — the README already flags this.
+Flexie is licensed **MIT** (see `LICENSE`). The AGPL `PyMuPDF` dependency has been replaced with `pypdf` (BSD-3-Clause), so the bundled binary no longer pulls copyleft obligations into the combined work.
 
 ---
 
@@ -347,10 +347,10 @@ Until it can answer that, further feature work is guesswork.
 |---|---|---|
 | P0 — eval harness, tests, license | **Done** | 45/45 routing tasks pass; full suite reports 650 passed; MIT `LICENSE` added; eval gate wired into CI |
 | P1 — telemetry + traces | **Done** | `core/telemetry/` (record, SQLite store), `core/traces/` (trace, store, EventBus collector, analyzer) |
-| P2 — agent primitives | **Partial** | `core/agents/` (BaseAgent, ToolUsingAgent, AgentRegistry); `agent_loop` registry mismatch fixed; specialists accept an optional tool loop. Replacing the keyword router entirely is still open. |
+| P2 — agent primitives | **Done (Nov 18)** | Specialists are scoped `ToolUsingAgent`s over a `ScopedToolRegistry` (hard tool boundary), with step budget + loop guard, approval path, `delegate` tool for the lead, and word-boundary routing. See §11. |
 | P3 — persona + skills | **Done** | `core/persona.py`, `data/persona/*.md`, `core/skills/`, two starter `SKILL.md` files, injected into the Brain prompt |
 | P4 — inference engine registry / local-first default | **Done** | `core/inference/` (`InferenceEngine`, `EngineRegistry`, `OllamaEngine` via `/api/chat`, `CallableEngine`, hardware detection). `Brain` tries Ollama before cloud when `FLEXIE_LOCAL_FIRST=1`; `FLEXIE_ENGINE` selects an engine. |
-| P5 — capability gating / trust tiers | **Partial** | `core/capabilities.py` vocabulary + `CapabilityPolicy`, enforced in `ToolRegistry.execute`; shell/write/network capabilities inferred from tags and permission. Trust tiers and per-skill sandbox pipelines are still open. |
+| P5 — capability gating / trust tiers | **Partial** | Capability gating + permission enforcement in `ToolRegistry.execute`; untrusted-content taint (web/email/MCP) gates effectful tools (§11). Trust tiers and per-skill capability sets are still open. |
 
 Fixed during P0: `engines/system.py` undefined `logging`, `agent_loop` `get_tool`/`execute` mismatch, duplicate `TYPO_MAP` keys, order-dependent handler tests, stale docs-drift assertions, and the `gmail` routing mismatch.
 
@@ -365,3 +365,24 @@ Honest re-rating after these changes: **~7.7/10** (product usefulness ~7.5, engi
 3. **Benchmark breadth.** 45 routing tasks is a start, not a benchmark. Add tool-use and end-to-end task evals (target 150+), with per-category accuracy and latency thresholds in CI.
 4. **CI evidence.** The eval gate is now in `ci.yml`, but it has not yet run on GitHub. A green Actions run is the evidence a 9/10 claim needs.
 5. **Packaging and recovery.** Signed installer, pinned dependencies, upgrade/rollback path, and a reproducible offline install are still missing.
+
+---
+
+## 11. Update — Nov 18, 2026
+
+Done since §10 (all covered by tests and by the CI-gated agent evals, `python -m evals.agent_run`):
+
+| Area | Change |
+|---|---|
+| Permissions | `ToolRegistry.execute` fails closed through a `PermissionSystem` gate; approvals are single-use (consumed after the approved action); `AgentExecutor` no longer "logs and continues" on denial; voice approval is asked directly instead of deadlocking the action thread |
+| API | `/health` no longer leaks the bearer token (issued only to allowlisted origins / `FLEXIE_EXTENSION_IDS`); CORS is an explicit allowlist |
+| Sandbox | `use_sandbox` removed from `python.exec`; unsandboxed execution is operator policy (`FLEXIE_ALLOW_UNSANDBOXED_EXEC`) |
+| Execution path | GoalPlanner output now reaches `AgentExecutor` as a typed `TaskGraph` (it was silently discarded by a `s.command` AttributeError). Model plans are treated as untrusted: unknown tools dropped, types coerced, steps/timeouts capped, risk level never taken from the model |
+| Harness | `RunBudget` (step / time / repeat caps) on plan execution and specialist loops; agent-level evals (39 tasks) gate CI; `python -m evals.bench` benchmarks the deterministic stack |
+| Specialists (P2) | Scoped registries, real tool loop over `Brain`, approvals, delegation, whole-word routing |
+| Prompt injection | Tool output is fed back as untrusted data; after untrusted content (web/email/MCP) enters a turn, effectful tools (click/fill/open) need approval until the next user turn |
+| Memory | `MemoryFacade` = single remember/forget path across all stores (forget previously left copies behind); wiki rewrite debounced; DB paths anchored to the project; shared WAL connections cut memory writes from ~14–20 ms to ~0.1 ms |
+| Routing | One `_resolve_route`; deterministic router beats learned routes; router runs once per command; authoritative overrides skip the planner |
+| Portability | `engines/system.py` imports without `pycaw`/`comtypes`/`pyautogui` (audio/desktop controls degrade) |
+
+Still open: orchestrator break-up (<600 LOC; currently ~1,400), one `MemoryBackend` (the stores still exist side by side), skill/MCP trust tiers and per-skill capability sets, native-vs-MCP shared execution path, per-command token/cost telemetry, signed installer and rollback, and a green GitHub Actions run as evidence. Measured results: see `BENCHMARK_REPORT.md`.

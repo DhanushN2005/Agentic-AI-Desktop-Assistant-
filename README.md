@@ -49,7 +49,7 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 
 **Not a cloud SaaS** — data stays on your machine. External calls only to free LLM APIs (Groq, Gemini) and free public APIs (weather, news, Wikipedia).
 
-**650 test cases across 44 test files** — CI runs pytest (blocking) + ruff on every push via `.github/workflows/ci.yml`.
+**650 test cases across 44 test files** — CI runs pytest and ruff (both blocking) on every push via `.github/workflows/ci.yml`, with a coverage floor enforced at the measured baseline.
 
 ---
 
@@ -571,7 +571,7 @@ venv\Scripts\activate
 # 2. Install deps (auto on first run via utils/installer.py:29)
 pip install -r requirements.txt
 # Optional: pip install chromadb webrtcvad docker
-# For REST API: pip install fastapi uvicorn
+# REST API deps (fastapi, uvicorn, httpx) are already in requirements.txt
 
 # 3. Playwright
 python -m playwright install chromium
@@ -697,7 +697,16 @@ flexie_v2/
 python -m pytest tests/ -v
 # 650 passed (44 test files)
 
-# Feature routing check (75 commands)
+# Coverage (enforced floor: 36%, measured baseline ~37%)
+python -m pytest tests/ -q --cov --cov-report=term-missing
+
+# Lint (must be clean — CI blocks on it)
+python -m ruff check .
+
+# Feature routing eval (45 commands)
+python -m evals.run --min-accuracy 0.95
+
+# Feature routing spot check
 python -c "from core.router import IntentRouter; r=IntentRouter(); print(r.route('tell me binary search code and save to downloads'))"
 # → ('code_gen', 0.95)
 
@@ -780,7 +789,7 @@ python -m pytest tests/test_ide_integration.py -v
 - `flexie_activity.log` rotated (5MB×3) but can be verbose under heavy workloads.
 - MCP servers must be installed separately (e.g. `npm i -g @modelcontextprotocol/server-filesystem`).
 - Browser extension requires Developer Mode in Chrome/Edge — not published to web store.
-- REST API (`api_server.py`) requires `fastapi` and `uvicorn` — not in base `requirements.txt`, install with `pip install fastapi uvicorn`.
+- REST API (`api_server.py`) requires `fastapi` and `uvicorn`, which are listed under "REST API" in `requirements.txt`.
 - Dev jobs workspace (`workspace/`) can grow large; no automatic cleanup.
 - Captcha detection pauses browser automation — manual intervention required.
 
@@ -788,10 +797,12 @@ python -m pytest tests/test_ide_integration.py -v
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Note that `pymupdf` (PyMuPDF) is
-**AGPL-licensed**: distributing binaries that link it requires AGPL compliance
-or a commercial PyMuPDF license.
+MIT — see [LICENSE](LICENSE).
+
+All listed dependencies are permissively licensed and MIT-compatible. PDF
+reading uses `pypdf` (BSD-3-Clause); the previous AGPL `pymupdf` dependency was
+removed so that distributing binaries carries no copyleft obligation.
 
 ---
 
-*Flexie 2.0 — Built for Dhanush. 600+ tests. Voice → Router → Hybrid → ModelHub → Planner → DAG → Specialist → Jobs → MCP → Verify → Memory → Stream → API → Extension.*
+*Flexie 2.0 — Built for Dhanush. 650+ tests. Voice → Router → Hybrid → ModelHub → Planner → DAG → Specialist → Jobs → MCP → Verify → Memory → Stream → API → Extension.*

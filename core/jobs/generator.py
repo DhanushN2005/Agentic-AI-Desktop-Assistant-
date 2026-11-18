@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.jobs.models import BuildJob, JobPhase
 from core.jobs.planner import ProjectFileSpec, ProjectSpec
@@ -38,7 +38,7 @@ _SECRET_PATTERNS = [
 ]
 
 
-def validate_syntax(filename: str, content: str) -> Tuple[bool, Optional[str]]:
+def validate_syntax(filename: str, content: str) -> tuple[bool, str | None]:
     """Validate source code syntax before writing to disk."""
     if not content or not content.strip():
         return False, "Generated file content is completely empty."
@@ -110,13 +110,13 @@ def strip_fences_and_prose(filename: str, raw: str) -> str:
     return code
 
 
-def neutralize_secrets(content: str, workspace_path: str, filename: str) -> Tuple[str, List[str]]:
+def neutralize_secrets(content: str, workspace_path: str, filename: str) -> tuple[str, list[str]]:
     """Scan and replace hardcoded secrets with environment variable references.
 
     Also ensures .env.example exists in the workspace.
     """
     modified = content
-    detected_keys: List[str] = []
+    detected_keys: list[str] = []
     is_python = filename.endswith(".py")
     is_js = filename.endswith((".js", ".jsx", ".ts", ".tsx"))
 
@@ -147,10 +147,10 @@ def neutralize_secrets(content: str, workspace_path: str, filename: str) -> Tupl
         existing_lines = []
         if os.path.exists(env_example_path):
             try:
-                with open(env_example_path, "r", encoding="utf-8") as f:
-                    existing_lines = [l.strip() for l in f.readlines() if l.strip()]
-            except Exception:
-                pass
+                with open(env_example_path, encoding="utf-8") as f:
+                    existing_lines = [line.strip() for line in f.readlines() if line.strip()]
+            except OSError as e:
+                logger.debug("Could not read %s: %s", env_example_path, e)
 
         for k in detected_keys:
             line = f"{k}=your_{k.lower()}_here"
@@ -172,15 +172,15 @@ class CodeGenerator:
 
     def __init__(
         self,
-        token_budget: Optional[int] = None,
-        max_tokens_per_call: Optional[int] = None,
+        token_budget: int | None = None,
+        max_tokens_per_call: int | None = None,
     ):
         self.token_budget = token_budget or getattr(Config, "JOB_TOKEN_BUDGET", 200000)
         # 8192 keeps a full 300-line file without truncation; Config.CODE_MAX_TOKENS overrides
         self.max_tokens_per_call = max_tokens_per_call or getattr(Config, "CODE_MAX_TOKENS", 8192)
         # Re-read live config caps so .env changes take effect without restart
-        MAX_FILES_PER_PROJECT = getattr(Config, "JOB_MAX_FILES", 60)
-        MAX_FILE_SIZE_BYTES = getattr(Config, "JOB_MAX_FILE_SIZE_KB", 300) * 1024
+        getattr(Config, "JOB_MAX_FILES", 60)
+        getattr(Config, "JOB_MAX_FILE_SIZE_KB", 300) * 1024
 
     def _enhance_intent(self, brain: Any, file_spec: ProjectFileSpec, spec: ProjectSpec, job: BuildJob) -> str:
         """Expand the short file purpose into a detailed implementation plan before coding."""
@@ -194,9 +194,9 @@ Summary: {spec.summary}
 File: {file_spec.name}
 Base Purpose: {file_spec.purpose}
 
-Write a detailed, step-by-step implementation plan for THIS specific file. 
-What features must be coded? What edge cases handled? 
-If this is a frontend file, how should the UI/UX look and feel? 
+Write a detailed, step-by-step implementation plan for THIS specific file.
+What features must be coded? What edge cases handled?
+If this is a frontend file, how should the UI/UX look and feel?
 If this is a backend file, what is the exact data flow and schema?
 DO NOT write code. Output only the plain text plan (max 200 words)."""
         try:
@@ -218,7 +218,7 @@ DO NOT write code. Output only the plain text plan (max 200 words)."""
         file_spec: ProjectFileSpec,
         brain: Any,
         spec: ProjectSpec,
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """Generate, validate, and write a single source file safely.
 
         Returns (success: bool, error_message: str).
@@ -231,7 +231,7 @@ DO NOT write code. Output only the plain text plan (max 200 words)."""
 
         # 2. Check total file count cap
         current_files = []
-        for root, _, files in os.walk(job.workspace_path):
+        for _root, _, files in os.walk(job.workspace_path):
             current_files.extend(files)
         if len(current_files) >= MAX_FILES_PER_PROJECT:
             msg = f"File count limit reached ({len(current_files)}/{MAX_FILES_PER_PROJECT})."
@@ -249,16 +249,20 @@ DO NOT write code. Output only the plain text plan (max 200 words)."""
         # Skip regenerating files that already exist from a real template (not stubs)
         if os.path.exists(dest_path) and file_spec.name != "README.md":
             try:
-                with open(dest_path, "r", encoding="utf-8") as _ef:
+                with open(dest_path, encoding="utf-8") as _ef:
                     _existing = _ef.read()
                 # Keep only if it has substantial content (> 2 non-comment lines)
-                _real_lines = [l for l in _existing.splitlines() if l.strip() and not l.strip().startswith("#")]
+                _real_lines = [
+                    line
+                    for line in _existing.splitlines()
+                    if line.strip() and not line.strip().startswith("#")
+                ]
                 if len(_real_lines) >= 2:
                     logger.info("File %s already has real content; keeping it.", file_spec.name)
                     return True, ""
-            except Exception:
-                pass
-            
+            except OSError as e:
+                logger.debug("Could not read %s: %s", dest_path, e)
+
         # Enhance the intent before generating code
         enhanced_purpose = self._enhance_intent(brain, file_spec, spec, job)
 
@@ -273,13 +277,13 @@ DO NOT write code. Output only the plain text plan (max 200 words)."""
             s_path = os.path.join(job.workspace_path, s_file)
             if os.path.exists(s_path):
                 try:
-                    with open(s_path, "r", encoding="utf-8") as f:
+                    with open(s_path, encoding="utf-8") as f:
                         content = f.read()
                         if content.strip():
                             existing_files_content += f"\n--- {s_file} ---\n{content}\n"
-                except Exception:
-                    pass
-        
+                except Exception as _e:
+                    logging.debug("[core/jobs/generator.py:284] Swallowed exception: %s: %s", type(_e).__name__, _e)
+
         existing_files_block = ""
         if existing_files_content:
             existing_files_block = f"\nEXISTING FILE CONTENTS (Use these to ensure IDs, classes, and function names match exactly):\n{existing_files_content}\n"
@@ -289,12 +293,12 @@ DO NOT write code. Output only the plain text plan (max 200 words)."""
         try:
             lessons_file = os.path.join(getattr(Config, "DATA_DIR", "."), "lessons.txt")
             if os.path.exists(lessons_file):
-                with open(lessons_file, "r", encoding="utf-8") as lf:
+                with open(lessons_file, encoding="utf-8") as lf:
                     lessons_text = lf.read().strip()
                     if lessons_text:
                         lessons_block = f"\nCRITICAL LESSONS LEARNED FROM PAST MISTAKES (You MUST follow these rules):\n{lessons_text}\n"
-        except Exception:
-            pass
+        except Exception as _e:
+            logging.debug("[core/jobs/generator.py:300] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
 
         # File-type specific coding instructions
@@ -468,7 +472,7 @@ Return ONLY the complete, corrected source code inside a single code fence. Fix 
         self,
         job: BuildJob,
         brain: Any,
-        phase: Optional[JobPhase] = None,
+        phase: JobPhase | None = None,
     ) -> bool:
         """Iterate over all files declared in the ProjectSpec and write them."""
         spec_data = job.metadata.get("spec")
@@ -481,6 +485,8 @@ Return ONLY the complete, corrected source code inside a single code fence. Fix 
 
         spec = ProjectSpec.from_dict(spec_data)
         generated_count = 0
+        failed_files: list[str] = []
+        last_error: str = ""
 
         for file_spec in spec.files:
             # Skip manifest/documentation files already created by scaffolder
@@ -488,13 +494,27 @@ Return ONLY the complete, corrected source code inside a single code fence. Fix 
                 continue
 
             success, err_msg = self.generate_single_file(job, file_spec, brain, spec)
-            if not success:
-                if phase:
-                    phase.error = err_msg
-                job.error = err_msg
-                return False
-            generated_count += 1
+            if success:
+                generated_count += 1
+            else:
+                failed_files.append(file_spec.name)
+                last_error = err_msg or last_error
+                logger.warning("Job %s: failed to generate %s — %s", job.id, file_spec.name, err_msg)
+                # Do not abort the whole project; attempt the remaining files so
+                # the workspace is not left with a single file and empty stubs.
 
         if phase:
-            phase.output = f"Generated {generated_count} source files successfully."
+            if failed_files:
+                phase.error = f"Failed to generate: {', '.join(failed_files)}"
+            phase.output = (
+                f"Generated {generated_count} source files successfully"
+                + (f"; {len(failed_files)} failed." if failed_files else ".")
+            )
+        if failed_files:
+            job.error = last_error
+        # Consider the phase successful if at least one file was generated; a
+        # total failure (zero files) propagates as a hard failure.
+        total_targets = len([f for f in spec.files if f.name not in ("PLAN.md", "ACCEPTANCE.md", "AGENTS.md")])
+        if total_targets > 0 and generated_count == 0:
+            return False
         return True

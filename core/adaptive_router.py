@@ -25,7 +25,9 @@ class AdaptiveRouter:
                 self.logger.error(f"[ROUTER] Failed to load adaptive routes: {e}")
 
     def _save(self):
-        os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+        dir_name = os.path.dirname(self.history_file)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         try:
             with open(self.history_file, "w") as f:
                 json.dump(self.routes, f, indent=2)

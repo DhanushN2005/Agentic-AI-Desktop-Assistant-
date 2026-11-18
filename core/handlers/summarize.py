@@ -8,6 +8,10 @@ def handle_summarize(orch, c):
     cmd = c.lower().strip()
     cmd = re.sub(r"^(flexi|flexie|hey flexie|ok flexie)\b", "", cmd).strip()
 
+    if any(w in cmd for w in ("email", "mail", "inbox")):
+        from core.handlers.mail import handle_mail_summarize
+        return handle_mail_summarize(orch, c)
+
     if "summarize file" in cmd or "summarize document" in cmd:
         path_match = re.search(r"(?:summarize|summary)\s+(?:file|document)\s+(.+)", cmd)
         if path_match:

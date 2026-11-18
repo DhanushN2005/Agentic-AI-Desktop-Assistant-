@@ -1,6 +1,6 @@
-import requests
-from typing import Optional
 import logging
+
+import requests
 
 
 class WeatherEngine:
@@ -25,7 +25,7 @@ class WeatherEngine:
     def __init__(self):
         self._cache = {}
 
-    def _geocode(self, city: str) -> Optional[dict]:
+    def _geocode(self, city: str) -> dict | None:
         if city in self._cache:
             return self._cache[city]
         try:

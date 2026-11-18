@@ -1,5 +1,7 @@
 import re
 
+from utils.config import Config
+
 
 def handle_browser_navigate(orch, c):
     url = re.sub(r"\b(open website|go to|navigate to|open url|visit|open it again)\b", "", c).strip()
@@ -28,7 +30,7 @@ def handle_browser_control(orch, c):
         # SAFETY CHECK
         if orch.browser.is_risky(target):
             orch.browser.highlight_element(target)
-            if not orch.voice.confirm(f"Dhanush, clicking '{target}' might be a sensitive action. Are you sure you want me to proceed?"):
+            if not orch.voice.confirm(f"{Config.USER_NAME}, clicking '{target}' might be a sensitive action. Are you sure you want me to proceed?"):
                 orch.speak("Action cancelled for security.")
                 return True
 

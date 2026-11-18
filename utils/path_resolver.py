@@ -6,7 +6,7 @@ Supports:
   "desktop" → C:\\Users\\<user>\\Desktop
   "documents" → C:\\Users\\<user>\\Documents
   "my project" → workspace root
-  
+
 Never hard-codes user-specific paths. Uses pathlib and os.path.expanduser.
 """
 import os
@@ -44,7 +44,7 @@ FOLDER_SUBPATHS = {
 class PathResolver:
     """
     Resolves natural language paths to actual filesystem paths.
-    
+
     Usage:
         resolver = PathResolver()  # defaults to os.getcwd()
         resolver = PathResolver(workspace="/path/to/project")
@@ -64,11 +64,11 @@ class PathResolver:
     def resolve(self, path_str: str, default_extension: str | None = None) -> str:
         """
         Resolve a natural language or relative path to an absolute path.
-        
+
         Args:
             path_str: Natural language path or relative/absolute path
             default_extension: Extension to add if none specified (e.g., ".py")
-        
+
         Returns:
             Resolved absolute path string
         """
@@ -122,11 +122,11 @@ class PathResolver:
     def resolve_filename(self, filename: str, content_hint: str = "") -> str:
         """
         Resolve a filename, adding appropriate extension if missing.
-        
+
         Args:
             filename: Filename (may or may not have extension)
             content_hint: Hint about content type (e.g., "python", "text", "json")
-        
+
         Returns:
             Filename with appropriate extension
         """

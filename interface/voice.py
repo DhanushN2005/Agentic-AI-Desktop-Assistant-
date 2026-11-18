@@ -1,8 +1,8 @@
 import logging
 import os
 import queue
-import tempfile
 import re
+import tempfile
 import threading
 import time
 
@@ -83,10 +83,10 @@ class VoiceInterface:
     def __init__(self):
         self.recognizer = sr.Recognizer()
         self.recognizer.energy_threshold = 150 # Lowered from 300 - fixes quiet voice not detected
-        self.recognizer.pause_threshold = 0.8 # Faster endpoint detection
-        self.recognizer.non_speaking_duration = 0.4
+        self.recognizer.pause_threshold = 0.45 # Ultra-fast endpoint detection
+        self.recognizer.non_speaking_duration = 0.25
         self.recognizer.dynamic_energy_threshold = False  # we manage noise_floor ourselves via _noise_floor_persist
-        
+
         self.speech_queue = queue.Queue()
         self.stop_speech = False
         self.is_speaking = False
@@ -96,7 +96,7 @@ class VoiceInterface:
         # Serializes Google ASR calls so the live partial recognizer and the
         # final recognizer never hit the API at once (that caused dropped words).
         self._asr_lock = threading.Lock()
-        
+
         # TTS dynamic parameters (modulatable by orchestrator commands)
         self.speech_rate = 1
         self.speech_volume = 100
@@ -139,11 +139,11 @@ class VoiceInterface:
             print(" - TTS: Windows SAPI (offline fallback)")
         for i, v in enumerate(sapi_voices):
             print(f" - SAPI Voice {i}: {v}")
-        
+
         # Start speech thread
         self.speech_thread = threading.Thread(target=self._speech_worker, daemon=True)
         self.speech_thread.start()
-        
+
         # 1. Establish persistent open microphone stream context to avoid device locking failures
         self._mic = None
         self._mic_context = None
@@ -227,13 +227,13 @@ class VoiceInterface:
             self._active_music_channel = False
             try:
                 pygame.mixer.music.stop()
-            except Exception:
-                pass
+            except Exception as _e:
+                logging.debug("[interface/voice.py:230] Swallowed exception: %s: %s", type(_e).__name__, _e)
         finally:
             try:
                 os.remove(tmp_path)
-            except OSError:
-                pass
+            except OSError as _e:
+                logging.debug("[interface/voice.py:235] Swallowed exception: %s: %s", type(_e).__name__, _e)
         return False
 
     def _speak_sapi(self, text: str) -> bool:
@@ -294,8 +294,9 @@ class VoiceInterface:
                     self.interrupt_speech = False
 
                 text = self.speech_queue.get(timeout=0.2)
-                if not text: continue
-                
+                if not text:
+                    continue
+
                 # Check for interruption right after dequeueing
                 if self.interrupt_speech:
                     self.interrupt_speech = False
@@ -334,7 +335,7 @@ class VoiceInterface:
 
                 self.is_speaking = False
                 self._speak_end_time = time.time()
-                
+
                 self.speech_queue.task_done()
                 logging.info("TTS End.")
             except queue.Empty as _e:
@@ -349,7 +350,7 @@ class VoiceInterface:
         """Clears the speech queue and interrupts active playback instantly."""
         logging.info("Voice: Interrupt requested. Clearing speech queue.")
         self.interrupt_speech = True
-        
+
         # Kill active subprocess immediately to stop audio playback in real-time
         proc = getattr(self, "_active_speech_proc", None)
         if proc:
@@ -358,7 +359,7 @@ class VoiceInterface:
                 logging.info("Voice: Successfully terminated active subprocess.")
             except Exception as e:
                 logging.error(f"Failed to terminate active subprocess: {e}")
-        
+
         while not self.speech_queue.empty():
             try:
                 self.speech_queue.get_nowait()
@@ -500,7 +501,7 @@ class VoiceInterface:
     def listen_adaptive(self, mode="normal", timeout=None) -> str:
         """Adaptive real-time listening featuring persistent mic streaming, RMS VAD, and echo-safe endpoints."""
         start_time = time.time()
-        
+
         # Ensure lazy instantiation of persistent stream context if needed
         if not hasattr(self, '_mic') or self._mic is None:
             try:
@@ -528,26 +529,26 @@ class VoiceInterface:
             f"VAD [Listening]: Mode={mode.upper()}, SilenceTimeout={silence_timeout}s, "
             f"EnergyFloor={VAD_MIN_ENERGY:.0f} (raw RMS)"
         )
-        
-        import struct
+
         import math
-        
+        import struct
+
         try:
             source = self._mic
             stream = source.stream
             sample_rate = source.SAMPLE_RATE
             sample_width = source.SAMPLE_WIDTH
-            
+
             # 30 ms frames: valid for webrtcvad (it rejects anything else) and
             # short enough to keep barge-in latency low.
             chunk_size = max(1, int(sample_rate * (VAD_FRAME_MS / 1000.0)))
             chunk_seconds = chunk_size / float(sample_rate)
-            
+
             # Setup recognizer parameters
             self.recognizer.pause_threshold = silence_timeout
             self.recognizer.phrase_threshold = 0.3
             self.recognizer.non_speaking_duration = 0.5
-            
+
             # Ambient floor in RAW 16-bit RMS units — the same scale as
             # recognizer.energy_threshold, so the two are always comparable.
             # Persist across calls: seeding from energy_threshold every call resets
@@ -558,7 +559,7 @@ class VoiceInterface:
                 noise_floor = _saved
             else:
                 noise_floor = max(float(self.recognizer.energy_threshold), VAD_MIN_ENERGY)
-            
+
             # webrtcvad only understands 8/16/32/48 kHz streams. It is used as an
             # additional (OR) onset signal: measured on this hardware it stays
             # silent on real room ambience but still catches quiet speech that
@@ -573,7 +574,7 @@ class VoiceInterface:
                     logging.debug(f"VAD: webrtcvad unavailable ({e}); energy gate only")
             elif webrtc_vad is None:
                 logging.info(f"VAD: stream is {sample_rate} Hz — webrtcvad needs 8/16/32/48 kHz, using energy gate only")
-            
+
             audio_buffer = bytearray()
             speech_started = False
             silence_start_time = None
@@ -584,22 +585,22 @@ class VoiceInterface:
             max_peak_seen = 0
             pre_roll_bytes = int(sample_rate * sample_width * VAD_PRE_ROLL_SECONDS)
             max_buffer_bytes = int(sample_rate * sample_width * 20.0)
-            
+
             # Timeout for starting to speak (7.0 seconds total wait window)
             max_wait_time = max(0.1, float(timeout)) if timeout is not None else Config.VOICE_LISTEN_TIMEOUT
             wait_elapsed = 0.0
             err_count = 0
-            
+
             logging.info("VAD: Reading persistent hardware audio stream...")
             self.send_to_ui("STATE", "LISTENING")
-            
+
             while True:
                 # Add tiny CPU sleep balance (stream.read is already blocking)
                 time.sleep(0.01)
-                
+
                 try:
                     raw_chunk = stream.read(chunk_size)
-                    
+
                     # Mute VAD while speaking OR for 0.4s after speech ends (mic echo tail)
                     _post_speak_mute = (
                         time.time() - getattr(self, '_speak_end_time', 0) < 0.4
@@ -624,13 +625,13 @@ class VoiceInterface:
                             onset_run = 0
                             wait_elapsed = 0.0
                             continue
-                        
+
                     audio_buffer.extend(raw_chunk)
-                    
+
                     count = len(raw_chunk) // 2
                     if count == 0:
                         continue
-                    
+
                     shorts = struct.unpack(f"{count}h", raw_chunk)
                     # RAW int16 RMS (audioop.rms equivalent) — identical units to
                     # recognizer.energy_threshold. Do NOT rescale: comparing a
@@ -643,7 +644,7 @@ class VoiceInterface:
                         max_rms_seen = rms
                     if peak > max_peak_seen:
                         max_peak_seen = peak
-                    
+
                     # Optional webrtcvad: needs valid 10/20/30 ms frames at 8/16/32/48 kHz
                     is_webrtc_speech = False
                     if webrtc_vad is not None:
@@ -653,28 +654,28 @@ class VoiceInterface:
                             logging.debug("[interface/voice.py] webrtcvad frame rejected: %s: %s", type(_e).__name__, _e)
                             webrtc_vad = None
                             self._webrtc_vad = None
-                    
+
                     # Adapt ambient noise floor during silent gaps (and only when AI is NOT speaking)
                     if not speech_started and not self.is_speaking:
                         noise_floor = (noise_floor * 0.95) + (rms * 0.05)
                         noise_floor = max(noise_floor, VAD_MIN_ENERGY * 0.25)
                         self._noise_floor_persist = noise_floor  # carry adapted value into next call
-                        
+
                     # 3. Echo-Proof Barge-In & Self-Trigger Prevention
                     # Threshold is "a bit above the measured room ambience", but never
                     # below VAD_MIN_ENERGY (~ -47 dBFS) so a silent room still needs
                     # real speech to trigger.
                     vad_threshold = max(noise_floor * VAD_ENERGY_RATIO, VAD_MIN_ENERGY)
-                        
+
                     is_active_speech = rms > vad_threshold
                     # Boost with webrtcvad if available (catches quiet/soft speech)
                     if is_webrtc_speech:
                         is_active_speech = True
-                    
+
                     if is_active_speech:
                         active_speech_duration += chunk_seconds
                         silence_start_time = None
-                        
+
                         if not speech_started:
                             # Require a short run of level so a single click,
                             # key tap or mic pop never opens an utterance.
@@ -685,22 +686,21 @@ class VoiceInterface:
                             if len(audio_buffer) > pre_roll_bytes:
                                 del audio_buffer[:-pre_roll_bytes]
                             logging.info(f"VAD [Speech Started]: Energy={rms:.1f} (peak {peak}) vs Threshold={vad_threshold:.1f}. Buffering active.")
-                        
+
                         # Dynamic partial recognition in background thread to achieve streaming feel
                         buf_len = len(audio_buffer)
                         if buf_len > (sample_rate * sample_width * 1.8) and (time.time() - last_partial_time > 1.5):
                             last_partial_time = time.time()
-                            def run_partial_asr(buf_slice):
+                            def run_partial_asr(buf_slice, rate=sample_rate, width=sample_width):
                                 try:
-                                    partial_audio = sr.AudioData(buf_slice, sample_rate, sample_width)
+                                    partial_audio = sr.AudioData(buf_slice, rate, width)
                                     with self._asr_lock:
                                         partial_text = self.recognizer.recognize_google(partial_audio, language=self.lang).lower().strip()
                                     if partial_text:
                                         logging.info(f"VAD [Partial ASR]: \"{partial_text}...\"")
                                         self.send_to_ui("PARTIAL", partial_text + "...")
                                 except Exception as _e:
-                                    logging.debug("[interface/voice.py:352] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                                    pass
+                                    logging.debug("[interface/voice.py] partial ASR failed: %s: %s", type(_e).__name__, _e)
                             threading.Thread(target=run_partial_asr, args=(bytes(audio_buffer),), daemon=True).start()
                         else:
                             self.send_to_ui("PARTIAL", "Listening...")
@@ -738,7 +738,7 @@ class VoiceInterface:
                         if len(audio_buffer) >= max_buffer_bytes:
                             logging.info("VAD [Safety Cap]: Utterance cap reached.")
                             break
-                        
+
                 except Exception as stream_err:
                     err_count += 1
                     logging.warning(f"VAD persistent stream read error ({err_count}): {stream_err}")
@@ -746,7 +746,8 @@ class VoiceInterface:
                         logging.error("VAD: Serial stream read failures detected. Re-instantiating mic stream context...")
                         try:
                             if hasattr(self, '_mic_context') and self._mic_context:
-                                try: self._mic.__exit__(None, None, None)
+                                try:
+                                    self._mic.__exit__(None, None, None)
                                 except Exception as _e:
                                     logging.debug("[interface/voice.py] Swallowed exception: %s: %s", type(_e).__name__, _e)
                             self._mic, self._mic_sample_rate = self._open_mic_stream()
@@ -760,10 +761,10 @@ class VoiceInterface:
                             logging.error(f"VAD: Re-instantiation of mic context failed: {re_err}")
                         err_count = 0
                     time.sleep(0.2)
-                    
+
             if len(audio_buffer) == 0:
                 return ""
-            
+
             # Reject click-like blips: nothing that short can be a command, and
             # shipping it to ASR only yields junk transcripts.
             if active_speech_duration < VAD_MIN_UTTERANCE_SECONDS:
@@ -772,7 +773,7 @@ class VoiceInterface:
                     f"(< {VAD_MIN_UTTERANCE_SECONDS:.2f}s) — ignoring blip."
                 )
                 return ""
-                
+
             elapsed_latency = time.time() - start_time
 
             # External audio playing (e.g. YouTube) — VAD triggered on media, not voice
@@ -788,10 +789,10 @@ class VoiceInterface:
 
             logging.info(f"VAD [Timing]: Total buffer capture time: {elapsed_latency:.2f}s. Invoking Google ASR.")
             self.send_to_ui("STATE", "THINKING")
-            
+
             # ASR recognition call
             audio_data = sr.AudioData(bytes(audio_buffer), sample_rate, sample_width)
-            
+
             recognized_text = ""
             # Rate-limit guard: don't hammer Google more than once per second
             now = time.time()
@@ -824,10 +825,10 @@ class VoiceInterface:
                     self._asr_fail_count = 0
             else:
                 self._asr_fail_count = 0
-                
+
             self.send_to_ui("PARTIAL", recognized_text)
             return recognized_text
-            
+
         except Exception as mic_error:
             logging.error(f"VAD persistent mic loop failed: {mic_error}")
             return ""
@@ -838,17 +839,18 @@ class VoiceInterface:
             return
         self._vosk_init_done = True
         try:
-            import vosk
             import os
-            
+
+            import vosk
+
             user_home = os.path.expanduser("~")
             model_dir = os.path.join(user_home, ".cache", "vosk")
             model_path = os.path.join(model_dir, "vosk-model-small-en-us-0.15")
-            
+
             if not os.path.exists(model_path):
                 logging.info("Vosk offline model not found locally.")
                 return
-                
+
             self.vosk_model = vosk.Model(model_path)
             logging.info("Vosk offline model successfully initialized.")
         except Exception as e:
@@ -859,8 +861,11 @@ class VoiceInterface:
         # Fallback Tier 0: Whisper (best offline quality, fast-fails if ffmpeg unavailable)
         if getattr(self, "_whisper_available", True):
             try:
+                import os as _os
+                import tempfile
+                import wave
+
                 import whisper as _whisper
-                import tempfile, wave, os as _os
                 if not getattr(self, "_whisper_model", None):
                     self._whisper_model = _whisper.load_model("tiny.en")  # ~40MB, loads once
                 # Write raw_bytes to a temp wav file for Whisper
@@ -881,8 +886,8 @@ class VoiceInterface:
                     if _os.path.exists(wav_path):
                         try:
                             _os.unlink(wav_path)
-                        except OSError:
-                            pass
+                        except OSError as _e:
+                            logging.debug("[interface/voice.py:889] Swallowed exception: %s: %s", type(_e).__name__, _e)
             except ImportError:
                 self._whisper_available = False
                 logging.debug("Whisper not installed; disabling tier 0 offline ASR")
@@ -897,6 +902,7 @@ class VoiceInterface:
             self._init_vosk()
             if getattr(self, "vosk_model", None):
                 import json
+
                 from vosk import KaldiRecognizer
                 rec = KaldiRecognizer(self.vosk_model, sample_rate)
                 rec.AcceptWaveform(raw_bytes)
@@ -926,7 +932,7 @@ class VoiceInterface:
         mode = self._get_adaptive_mode(timeout, phrase_time_limit)
         try:
             recognized_text = self.listen_adaptive(mode=mode, timeout=timeout)
-            
+
             # 7. Transcript Sanitization & Noise Token Filtering
             # NOTE: "yes"/"no"/"okay" are deliberately NOT in this list — they are
             # meaningful confirmation replies, and voice.confirm() depends on
@@ -935,7 +941,7 @@ class VoiceInterface:
             if cleaned_text in ["user", "null", "dhanush"]:
                 logging.info(f"VAD [Sanitizer]: Discarded static/noise token: '{recognized_text}'")
                 return ""
-                
+
             self._last_transcript_len = len(cleaned_text.split())
             return recognized_text
         except sr.UnknownValueError as _e:
@@ -964,7 +970,7 @@ class VoiceInterface:
                 return False
             if gate.is_confirmation(clean):
                 return True
-        except Exception:
-            pass
-        tokens = set(clean.split())
-        return bool(tokens & {"yes", "yeah", "yep", "sure", "confirm", "ok", "okay"})
+        except Exception as _e:
+            logging.debug("[interface/voice.py:973] Swallowed exception: %s: %s", type(_e).__name__, _e)
+        # Fail closed: no fuzzy keyword match once the strict gate has declined.
+        return False

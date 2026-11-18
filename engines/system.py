@@ -1,17 +1,32 @@
 import logging
 import os
 import subprocess
+from ctypes import POINTER, cast
+
 import psutil
-import pyautogui
-from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+# Platform-specific desktop libraries are optional: on non-Windows hosts (or headless CI)
+# they fail to import, and the matching controls simply degrade instead of breaking import
+# of the whole module (and with it the orchestrator).
+try:
+    import pyautogui
+except Exception as _e:
+    logging.debug("[engines/system.py] pyautogui unavailable: %s", _e)
+    pyautogui = None
+try:
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+except Exception as _e:
+    logging.debug("[engines/system.py] pycaw/comtypes unavailable (Windows audio control disabled): %s", _e)
+    CLSCTX_ALL = AudioUtilities = IAudioEndpointVolume = None
+
 try:
     import screen_brightness_control as sbc
 except Exception as _e:
     logging.debug("[engines/system.py:6] screen_brightness_control unavailable: %s", _e)
     sbc = None
 from utils.helpers import is_online
+
 try:
     import pygetwindow as gw
 except ImportError as _e:
@@ -37,13 +52,19 @@ class SystemCtrl:
     def set_clipboard(text: str):
         """Sets the clipboard text."""
         try:
-            if pyperclip: pyperclip.copy(text)
+            if pyperclip:
+                pyperclip.copy(text)
         except Exception as _e:
             logging.debug("[engines/system.py:33] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
 
     @staticmethod
     def set_volume(level: int):
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
         try:
             db_volume = max(0, min(100, level)) / 100.0
             devices = AudioUtilities.GetSpeakers()
@@ -53,9 +74,20 @@ class SystemCtrl:
         except Exception as _e:
             logging.debug("[engines/system.py:44] Swallowed exception: %s: %s", type(_e).__name__, _e)
             pass
+        finally:
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
     @staticmethod
     def get_volume() -> int:
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
         try:
             devices = AudioUtilities.GetSpeakers()
             interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
@@ -64,6 +96,12 @@ class SystemCtrl:
         except Exception as _e:
             logging.debug("[engines/system.py:54] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return 50
+        finally:
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
     @staticmethod
     def set_brightness(v):
@@ -98,6 +136,9 @@ class SystemCtrl:
             "previous": "prevtrack",
             "mute": "volumemute"
         }
+        if pyautogui is None:
+            logging.warning("Media keys need a desktop session (pyautogui unavailable).")
+            return
         for k, v in km.items():
             if k in action.lower():
                 pyautogui.press(v)
@@ -121,7 +162,8 @@ class SystemCtrl:
     @staticmethod
     def battery_status():
         b = psutil.sensors_battery()
-        if not b: return "--"
+        if not b:
+            return "--"
         return f"{b.percent}%"
 
     @staticmethod
@@ -149,40 +191,40 @@ class SystemCtrl:
     @staticmethod
     def run_cmd(command: str) -> str:
         """Execute a CMD command with safety restrictions.
-        
+
         Blocks destructive commands for security.
         Returns the output or error message."""
         import subprocess
-        
+
         # Security: Block destructive commands
         destructive = [
             "rm -rf", "del /s", "format", "fdisk",
             "shutdown", "restart", "poweroff",
             ">null", ">>null", ">/dev", "2>/dev"
         ]
-        
+
         cmd_lower = command.lower().strip()
         for d in destructive:
             if d in cmd_lower:
                 return f"Security blocked: '{d}' command prevented."
-        
+
         # Only allow specific safe commands
         safe_prefixes = ["dir ", "cd ", "type ", "echo ", "cls ", "ver "]
         if not any(cmd_lower.startswith(p) for p in safe_prefixes):
             return "Command not allowed. Use: dir, cd, type, echo, cls, or ver commands only."
-        
+
         try:
             exec_args = ["cmd.exe", "/c", command] if os.name == "nt" else command
             result = subprocess.run(
-                exec_args, 
-                capture_output=True, 
-                text=True, 
+                exec_args,
+                capture_output=True,
+                text=True,
                 timeout=10,
                 shell=False
             )
             output = result.stdout.strip()
             error = result.stderr.strip()
-            
+
             if output:
                 return output[:500]  # Limit output length
             elif error:
@@ -199,7 +241,7 @@ class SystemCtrl:
         target = app_name.lower().replace(".exe", "").strip()
         if not target:
             return False
-        
+
         killed = False
         app_map = {
             "chrome": ["chrome.exe"],
@@ -210,9 +252,9 @@ class SystemCtrl:
             "calculator": ["calc.exe"],
             "edge": ["msedge.exe"]
         }
-        
+
         process_names = app_map.get(target, [target if target.endswith(".exe") else target + ".exe", target])
-        
+
         for proc in psutil.process_iter(['name', 'pid']):
             try:
                 pname = proc.info['name'].lower()
@@ -229,7 +271,7 @@ class SystemCtrl:
         """Positions and snaps a window to a grid coordinate on the screen with focus verification."""
         if not gw:
             return "Window snapping is unavailable because pygetwindow is not installed."
-        
+
         try:
             win = None
             if app_name:
@@ -242,18 +284,20 @@ class SystemCtrl:
                         break
             if not win:
                 win = gw.getActiveWindow()
-                
+
             if not win:
                 return "I couldn't locate any active window to snap."
-                
+
+            if pyautogui is None:
+                return "Window snapping needs a desktop session."
             # Get screen resolution
             screen_w, screen_h = pyautogui.size()
             direction = direction.lower().strip()
-            
+
             # Maximize/Restore if minimized
             if win.isMinimized:
                 win.restore()
-                
+
             # Focus/Activation verification loop (Priority 1 & 6)
             import time
             focused = False
@@ -268,7 +312,7 @@ class SystemCtrl:
                 except Exception as _e:
                     logging.debug("[engines/system.py:202] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass
-                
+
                 # Tap ALT key as a self-healing fallback to release Windows foreground lock
                 try:
                     pyautogui.press('alt')

@@ -1,6 +1,7 @@
-import pytest
 from unittest.mock import MagicMock
+
 from fastapi.testclient import TestClient
+
 from interface.api_server import create_app
 
 

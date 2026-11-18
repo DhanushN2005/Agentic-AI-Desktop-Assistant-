@@ -185,7 +185,7 @@ def ensure_logging_import(src):
 
 def process_file(path):
     relpath = os.path.relpath(path, ROOT)
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+    with open(path, encoding="utf-8", errors="ignore") as f:
         original = f.read()
 
     try:

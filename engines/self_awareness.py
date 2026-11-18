@@ -1,10 +1,11 @@
-import time
-import sqlite3
-import threading
-from datetime import datetime
-from typing import Dict, List, Optional
 import logging
+import threading
+import time
+from datetime import datetime
 
+from utils.paths import data_file
+from utils.sql_like import like_contains
+from utils.sqlite_util import fast_connect
 
 # ---------------------------------------------------------------------------
 # Static self-knowledge: Flexie's single source of truth for "what can I do",
@@ -127,18 +128,18 @@ _SYSTEM_SPEECH = (
 class SelfAwareness:
     """Self-awareness system: tracks own state, capabilities, history, and personality."""
 
-    def __init__(self, db_path: str = "flexie_awareness.db"):
-        self._db_path = db_path
+    def __init__(self, db_path: str | None = None):
+        self._db_path = db_path or data_file("flexie_awareness.db")
         self._lock = threading.Lock()
         self._start_time = datetime.now()
         self._commands_processed = 0
         self._errors_encountered = 0
-        self._features_used: Dict[str, int] = {}
+        self._features_used: dict[str, int] = {}
         self._init_db()
 
     def _init_db(self):
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS session_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,7 +175,7 @@ class SelfAwareness:
         self._commands_processed += 1
         self._features_used[intent] = self._features_used.get(intent, 0) + 1
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             conn.execute(
                 "INSERT INTO session_log (timestamp, command, intent, response, success, duration_ms) VALUES (?,?,?,?,?,?)",
                 (time.time(), command, intent, response[:500], 1 if success else 0, duration_ms)
@@ -185,7 +186,7 @@ class SelfAwareness:
     def learn_fact(self, fact: str, category: str = "general", confidence: float = 1.0):
         """Learn a new fact about the user or world."""
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             try:
                 conn.execute(
                     "INSERT OR REPLACE INTO user_facts (fact, category, confidence, learned_at) VALUES (?,?,?,?)",
@@ -197,10 +198,23 @@ class SelfAwareness:
                 pass
             conn.close()
 
-    def recall_facts(self, category: Optional[str] = None, limit: int = 10) -> List[str]:
+    def forget_fact(self, text: str) -> int:
+        """Delete learned facts containing ``text``. Returns rows removed."""
+        with self._lock:
+            conn = fast_connect(self._db_path)
+            try:
+                cur = conn.execute(
+                    "DELETE FROM user_facts WHERE fact LIKE ? ESCAPE '!'", (like_contains(text),)
+                )
+                conn.commit()
+                return cur.rowcount
+            finally:
+                conn.close()
+
+    def recall_facts(self, category: str | None = None, limit: int = 10) -> list[str]:
         """Recall learned facts."""
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             if category:
                 rows = conn.execute(
                     "SELECT fact FROM user_facts WHERE category=? ORDER BY learned_at DESC LIMIT ?",
@@ -238,7 +252,7 @@ class SelfAwareness:
         """Return detailed statistics."""
         uptime = datetime.now() - self._start_time
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             total = conn.execute("SELECT COUNT(*) FROM session_log").fetchone()[0]
             success = conn.execute("SELECT COUNT(*) FROM session_log WHERE success=1").fetchone()[0]
             avg_duration = conn.execute("SELECT AVG(duration_ms) FROM session_log").fetchone()[0] or 0

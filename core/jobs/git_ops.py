@@ -5,7 +5,6 @@ import logging
 import os
 import shutil
 import subprocess
-from typing import Optional, Tuple
 
 from utils.config import Config
 from utils.path_jail import resolve_in_root
@@ -24,7 +23,7 @@ def is_git_available() -> bool:
     return has_git
 
 
-def init_job_repo(workspace: str, workspace_root: Optional[str] = None) -> bool:
+def init_job_repo(workspace: str, workspace_root: str | None = None) -> bool:
     """Initialize a git repository in the job workspace if git is available."""
     if not is_git_available():
         return False
@@ -75,7 +74,7 @@ def init_job_repo(workspace: str, workspace_root: Optional[str] = None) -> bool:
         return False
 
 
-def commit_job_phase(workspace: str, phase_name: str, message: str) -> Optional[str]:
+def commit_job_phase(workspace: str, phase_name: str, message: str) -> str | None:
     """Stage all files and commit with a clear phase message. Returns commit SHA if made."""
     if not is_git_available():
         return None
@@ -97,7 +96,7 @@ def commit_job_phase(workspace: str, phase_name: str, message: str) -> Optional[
 
         # Commit
         commit_msg = f"phase({phase_name}): {message}"
-        res = subprocess.run(
+        subprocess.run(
             ["git", "commit", "-m", commit_msg],
             cwd=real_ws,
             capture_output=True,
@@ -122,7 +121,7 @@ def commit_job_phase(workspace: str, phase_name: str, message: str) -> Optional[
     return None
 
 
-def undo_last_phase(workspace: str, workspace_root: Optional[str] = None) -> Tuple[bool, str]:
+def undo_last_phase(workspace: str, workspace_root: str | None = None) -> tuple[bool, str]:
     """Hard reset to the previous phase commit inside the job workspace."""
     if not is_git_available():
         return False, "Git is not available on this system. Undo is disabled."

@@ -12,10 +12,7 @@ Tests full lifecycle:
 """
 from __future__ import annotations
 
-import json
 import os
-import shutil
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,8 +20,8 @@ import pytest
 from core.jobs.git_ops import get_job_git_history
 from core.jobs.launcher import launch_job_workspace
 from core.jobs.manager import JobManager
-from core.jobs.models import BuildJob, JobPhase, JobStatus
-from core.jobs.planner import ProjectSpec, clarify_request, generate_project_spec
+from core.jobs.models import JobStatus
+from core.jobs.planner import generate_project_spec
 from core.jobs.scaffold import scaffold_project
 from core.jobs.verifier import detect_stack, verify_and_update_acceptance
 from core.model_hub import ModelHub
@@ -118,7 +115,7 @@ class TestEndToEndDevAssistant:
         updated = verify_and_update_acceptance(job.workspace_path, ["tests pass", "app starts"])
         assert updated is True
 
-        with open(os.path.join(job.workspace_path, "ACCEPTANCE.md"), "r", encoding="utf-8") as f:
+        with open(os.path.join(job.workspace_path, "ACCEPTANCE.md"), encoding="utf-8") as f:
             acc_content = f.read()
         assert "[x]" in acc_content
 

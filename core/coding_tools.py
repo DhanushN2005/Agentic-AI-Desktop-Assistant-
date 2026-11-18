@@ -4,17 +4,17 @@ Coding Tools Registry — registers autonomous coding tools into ToolRegistry.
 Wired by FlexieOrchestrator after ToolRegistry creation.
 All tools return ActionResult and go through PermissionSystem + Verification.
 """
+import logging
 import os
 import re
 import shlex
 import subprocess
 import webbrowser
-import logging
-from typing import Optional
 
-from core.tool_registry import ToolRegistry, ToolSpec, ToolSchema, PermissionLevel
 from core.action_result import ActionResult
 from core.safety import SafetyGuard
+from core.tool_registry import PermissionLevel, ToolRegistry, ToolSchema, ToolSpec
+from utils.config import Config
 from utils.path_jail import project_root, resolve_in_root
 
 
@@ -29,12 +29,12 @@ def register_coding_tools(registry: ToolRegistry, orch) -> int:
     count = 0
 
     # --- Helper fns closing over orch ---
-    def _file_read(path: str, start_line: int = 1, end_line: Optional[int] = None) -> ActionResult:
+    def _file_read(path: str, start_line: int = 1, end_line: int | None = None) -> ActionResult:
         try:
             abs_path = _jailed(path)
             if not os.path.exists(abs_path):
                 return ActionResult.fail(message=f"File not found: {path}", intent="file.read")
-            with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(abs_path, encoding="utf-8", errors="ignore") as f:
                 lines = f.readlines()
             if end_line is None:
                 end_line = len(lines)
@@ -68,7 +68,7 @@ def register_coding_tools(registry: ToolRegistry, orch) -> int:
             abs_path = _jailed(path)
             if not os.path.exists(abs_path):
                 return ActionResult.fail(message=f"File not found: {path}", intent="file.patch")
-            with open(abs_path, "r", encoding="utf-8") as f:
+            with open(abs_path, encoding="utf-8") as f:
                 content = f.read()
             count = content.count(original)
             if count == 0:
@@ -200,7 +200,7 @@ def register_coding_tools(registry: ToolRegistry, orch) -> int:
         last_code = 0
         # operators[i] chains segments[i] -> segments[i+1]:
         # '&&' run next only if ok, '||' only if failed, ';' always.
-        pending_op: Optional[str] = None
+        pending_op: str | None = None
         try:
             for idx, segment in enumerate(segments):
                 if not segment.strip():
@@ -268,7 +268,11 @@ def register_coding_tools(registry: ToolRegistry, orch) -> int:
             logging.debug("[core/coding_tools.py:175] Swallowed exception: %s: %s", type(e).__name__, e)
             return ActionResult.fail(message=str(e), intent="test.run")
 
-    def _python_exec(code: str, timeout: int = 15, use_sandbox: bool = True) -> ActionResult:
+    def _python_exec(code: str, timeout: int = 15) -> ActionResult:
+        # Isolation is an operator POLICY, never a model-supplied argument: the LLM
+        # cannot opt out of the sandbox. Host execution requires the explicit
+        # FLEXIE_ALLOW_UNSANDBOXED_EXEC=1 environment setting.
+        use_sandbox = os.getenv("FLEXIE_ALLOW_UNSANDBOXED_EXEC", "0") != "1"
         try:
             if use_sandbox:
                 from sandbox.executor import SandboxExecutor
@@ -310,7 +314,7 @@ def register_coding_tools(registry: ToolRegistry, orch) -> int:
         ToolSpec(name="git.commit", description="git add -A + commit", params=[ToolSchema("message", "str", True, description="Commit message"), ToolSchema("add_all", "bool", False, True)], permission=PermissionLevel.SENSITIVE, execute_fn=_git_commit, timeout=15, tags=["git","code"], error_strategy="abort"),
         ToolSpec(name="terminal.run", description="Run a shell command (allowlist-guarded: dev tools only, max 120s)", params=[ToolSchema("command", "str", True), ToolSchema("timeout", "int", False, 15)], permission=PermissionLevel.USER_CONFIRMATION, execute_fn=_terminal_run, timeout=130, tags=["terminal","code"], error_strategy="retry"),
         ToolSpec(name="test.run", description="Run pytest suite and return results", params=[ToolSchema("path", "str", False, "tests/"), ToolSchema("verbose", "bool", False, False)], permission=PermissionLevel.READ_ONLY, execute_fn=_test_run, timeout=65, tags=["test","code"], error_strategy="abort"),
-        ToolSpec(name="python.exec", description="Execute python code (Docker sandbox if available, else host subprocess)", params=[ToolSchema("code", "str", True), ToolSchema("timeout", "int", False, 15), ToolSchema("use_sandbox", "bool", False, True)], permission=PermissionLevel.USER_CONFIRMATION, execute_fn=_python_exec, timeout=20, tags=["python","code"], error_strategy="retry"),
+        ToolSpec(name="python.exec", description="Execute python code in the isolated sandbox", params=[ToolSchema("code", "str", True), ToolSchema("timeout", "int", False, 15)], permission=PermissionLevel.USER_CONFIRMATION, execute_fn=_python_exec, timeout=20, tags=["python","code"], error_strategy="retry"),
         ToolSpec(name="project.explain", description="Generate multi-level project explanation (Beginner/Intermediate/Architect)", params=[], permission=PermissionLevel.READ_ONLY, execute_fn=lambda: _project_explain(), timeout=30, tags=["code","intelligence"]),
     ]
 

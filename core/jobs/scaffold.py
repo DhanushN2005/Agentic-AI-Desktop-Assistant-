@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import shutil
-from typing import Optional
 
 from core.jobs.planner import ProjectSpec, write_project_spec_files
 from utils.config import Config
@@ -34,7 +33,7 @@ def scaffold_project(spec: ProjectSpec, workspace_dir: str) -> bool:
         if spec.template_used and spec.template_used != "builtin_fallback":
             tmpl_path = os.path.join(_TEMPLATES_DIR, spec.template_used)
             if os.path.exists(tmpl_path):
-                for root, dirs, files in os.walk(tmpl_path):
+                for root, _dirs, files in os.walk(tmpl_path):
                     rel_dir = os.path.relpath(root, tmpl_path)
                     target_sub = workspace_dir if rel_dir == "." else os.path.join(workspace_dir, rel_dir)
                     os.makedirs(target_sub, exist_ok=True)

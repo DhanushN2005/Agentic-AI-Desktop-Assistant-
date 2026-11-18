@@ -39,11 +39,11 @@ class IntelligenceEngine:
         - Active Window: {active_window}
         - System Stats: {system_stats}
         - Recent Command: {current_cmd}
-        
+
         Available Flexie Features:
         {self.features_map}
-        
-        Based on this, should I suggest a feature to the user? 
+
+        Based on this, should I suggest a feature to the user?
         If yes, respond ONLY with the feature_key and a 1-sentence helpful suggestion.
         If no, respond with 'NONE'.
         Example: auto_save | I noticed you're working in Word, would you like me to enable auto-save for you?

@@ -1,10 +1,10 @@
 import json
+import logging
 import os
 import re
 import time
 
 from engines.system import SystemCtrl
-import logging
 
 
 class ContextMemory:

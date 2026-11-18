@@ -1,6 +1,7 @@
 import pytest
 
 from core.safety import SafetyGuard
+from interface.voice import prepare_speech_text
 
 
 @pytest.fixture(scope="module")
@@ -151,13 +152,6 @@ def test_sanitize_handles_empty_and_none_like_input(guard):
 
 def test_empty_command_validates_true(guard):
     assert guard.validate("") is True
-
-
-# ---------------------------------------------------------------------------
-# Speech text preparation (natural voice output)
-# ---------------------------------------------------------------------------
-
-from interface.voice import prepare_speech_text
 
 
 @pytest.mark.parametrize(

@@ -10,14 +10,14 @@ import os
 import shutil
 import subprocess
 import webbrowser
-from typing import Any, Dict, Optional
+from typing import Any
 
 from core.jobs.models import BuildJob
 
 logger = logging.getLogger("flexie.jobs.launcher")
 
 
-def find_vscode_executable() -> Optional[str]:
+def find_vscode_executable() -> str | None:
     """Find the VS Code executable on Windows safely."""
     # Check standard PATH first
     which_code = shutil.which("code")
@@ -98,7 +98,7 @@ def open_in_browser(target: str) -> bool:
         return False
 
 
-def find_browser_target(workspace_dir: str, metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
+def find_browser_target(workspace_dir: str, metadata: dict[str, Any] | None = None) -> str | None:
     """Determine best browser launch target (dev server URL or static index.html)."""
     meta = metadata or {}
     dev_url = meta.get("dev_server_url")
@@ -119,7 +119,7 @@ def find_browser_target(workspace_dir: str, metadata: Optional[Dict[str, Any]] =
     return None
 
 
-def launch_job_workspace(job: BuildJob, auto_browser: bool = True) -> Dict[str, Any]:
+def launch_job_workspace(job: BuildJob, auto_browser: bool = True) -> dict[str, Any]:
     """Convenience launcher for a BuildJob: opens IDE and optionally browser."""
     vscode_opened = launch_in_vscode(job.workspace_path)
 

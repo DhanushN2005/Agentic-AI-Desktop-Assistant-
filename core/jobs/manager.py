@@ -6,13 +6,14 @@ import os
 import queue
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from core.event_bus.bus import Event, EventBus
 from core.jobs.git_ops import commit_job_phase, init_job_repo, undo_last_phase
 from core.jobs.models import BuildJob, JobPhase, JobStatus
-from core.jobs.planner import ProjectSpec, STANDARD_PHASES, generate_project_spec
-from core.jobs.process import ProcessTracker, kill_process_tree
+from core.jobs.planner import STANDARD_PHASES, ProjectSpec, generate_project_spec
+from core.jobs.process import ProcessTracker
 from core.jobs.scaffold import scaffold_project
 from core.jobs.slugify import create_job_workspace
 from core.jobs.store import JobStore
@@ -24,11 +25,11 @@ logger = logging.getLogger("flexie.jobs.manager")
 class JobManager:
     """Manages autonomous build jobs on a dedicated background worker thread."""
 
-    _instance: Optional[JobManager] = None
+    _instance: JobManager | None = None
     _lock = threading.Lock()
 
     @classmethod
-    def get_instance(cls, storage_dir: Optional[str] = None) -> JobManager:
+    def get_instance(cls, storage_dir: str | None = None) -> JobManager:
         with cls._lock:
             if cls._instance is None:
                 s_dir = storage_dir or getattr(
@@ -49,12 +50,12 @@ class JobManager:
         self.max_concurrent = max_concurrent
         self.bus = EventBus()
         self._queue: queue.Queue[BuildJob] = queue.Queue()
-        self._cancel_flags: Dict[str, threading.Event] = {}
-        self._pause_flags: Dict[str, threading.Event] = {}
-        self._active_job: Optional[BuildJob] = None
+        self._cancel_flags: dict[str, threading.Event] = {}
+        self._pause_flags: dict[str, threading.Event] = {}
+        self._active_job: BuildJob | None = None
         self._running = True
-        self._phase_executors: Dict[str, Callable[[BuildJob, JobPhase], bool]] = {}
-        self._notify_callbacks: List[Callable[[str, Dict[str, Any]], None]] = []
+        self._phase_executors: dict[str, Callable[[BuildJob, JobPhase], bool]] = {}
+        self._notify_callbacks: list[Callable[[str, dict[str, Any]], None]] = []
         self._brain = None
         self._voice = None
 
@@ -74,7 +75,32 @@ class JobManager:
         if voice:
             self._voice = voice
 
-    def register_notifier(self, callback: Callable[[str, Dict[str, Any]], None]) -> None:
+        # Auto-resume jobs that were interrupted by a previous restart, now that
+        # the AI brain is available, so they continue in their existing folders
+        # instead of requiring a manual rebuild.
+        if brain and getattr(Config, "JOB_AUTO_RESUME_ON_STARTUP", False):
+            try:
+                for job in self.store.list_all():
+                    if (
+                        job.status == JobStatus.PAUSED
+                        and "Interrupted" in (job.error or "")
+                    ):
+                        # Reset the interrupted phase so it re-runs cleanly
+                        if 0 <= job.current_phase < len(job.phase_list):
+                            job.phase_list[job.current_phase].status = "pending"
+                            job.phase_list[job.current_phase].error = None
+                        job.error = None
+                        job.status = JobStatus.QUEUED
+                        job.updated_at = time.time()
+                        self.store.save(job)
+                        self._cancel_flags.pop(job.id, None)
+                        self._pause_flags.pop(job.id, None)
+                        self.submit_job(job)
+                        logger.info("Auto-resumed interrupted job %s (%s)", job.id, job.title)
+            except Exception as _e:
+                logger.debug("Auto-resume failed: %s", _e)
+
+    def register_notifier(self, callback: Callable[[str, dict[str, Any]], None]) -> None:
         """Register a callback for external notifications (speak/UDP/WS)."""
         self._notify_callbacks.append(callback)
 
@@ -82,7 +108,7 @@ class JobManager:
         """Register custom phase execution handlers."""
         self._phase_executors[phase_name] = fn
 
-    def _emit(self, event_name: str, payload: Dict[str, Any]) -> None:
+    def _emit(self, event_name: str, payload: dict[str, Any]) -> None:
         """Publish to EventBus and notify registered callbacks without throwing."""
         try:
             self.bus.publish(Event(f"job.{event_name}", payload))
@@ -113,8 +139,8 @@ class JobManager:
         self,
         title: str,
         request_text: str,
-        phases: Optional[List[str]] = None,
-        workspace_root: Optional[str] = None,
+        phases: list[str] | None = None,
+        workspace_root: str | None = None,
     ) -> BuildJob:
         """Create and persist a new build job with dedicated workspace and git repo."""
         ws_root = workspace_root or getattr(
@@ -126,8 +152,26 @@ class JobManager:
         job = BuildJob(title=resolved_title, request_text=request_text)
         job.metadata["spec"] = spec.to_dict()
 
-        # 1. Per-job workspace
-        ws_path = create_job_workspace(ws_root, resolved_title, job.id)
+        # 1. Per-job workspace — reuse an existing workspace for the same project
+        #    title when one is already on disk so updates/restarts do not spawn
+        #    a brand-new folder for every run.
+        _reused_ws = None
+        try:
+            for _prev in self.store.list_all():
+                if (
+                    _prev.title == resolved_title
+                    and _prev.workspace_path
+                    and os.path.isdir(_prev.workspace_path)
+                ):
+                    _reused_ws = _prev.workspace_path
+                    break
+        except Exception as _e:
+            logger.debug("Workspace reuse lookup failed: %s", _e)
+        if _reused_ws:
+            ws_path = _reused_ws
+            logger.info("Reusing existing workspace for '%s': %s", resolved_title, ws_path)
+        else:
+            ws_path = create_job_workspace(ws_root, resolved_title, job.id)
         job.workspace_path = ws_path
         job.log_path = os.path.join(ws_path, ".flexie_build.log")
 
@@ -154,7 +198,7 @@ class JobManager:
         self._emit("queued", {"job_id": job.id, "title": job.title})
         return True
 
-    def pause_job(self, job_id: Optional[str] = None) -> bool:
+    def pause_job(self, job_id: str | None = None) -> bool:
         target_id = job_id or (self._active_job.id if self._active_job else None)
         if not target_id:
             return False
@@ -172,7 +216,7 @@ class JobManager:
             return True
         return False
 
-    def resume_job(self, job_id: Optional[str] = None) -> bool:
+    def resume_job(self, job_id: str | None = None) -> bool:
         target = self.get_latest_job(job_id)
         if not target or target.status not in (JobStatus.PAUSED, JobStatus.FAILED):
             return False
@@ -184,34 +228,34 @@ class JobManager:
         self._cancel_flags.pop(target.id, None)
         return self.submit_job(target)
 
-    def debug_job(self, feedback: str, job_id: Optional[str] = None) -> bool:
+    def debug_job(self, feedback: str, job_id: str | None = None) -> bool:
         """Trigger an autonomous bug-fixing pass on the job based on user feedback."""
         target = self.get_latest_job(job_id)
         if not target:
             return False
-            
+
         # Store the bug report and create a repair phase
         target.metadata["bug_report"] = feedback
-        
+
         # If we already finished all phases or failed somewhere, we insert a repair phase
         # at the current execution point to force the runner to enter repair mode.
         from core.jobs.models import JobPhase
         repair_phase = JobPhase(name="repair", status="pending")
         verify_phase = JobPhase(name="verify_and_launch", status="pending")
-        
+
         if target.current_phase >= len(target.phase_list):
             target.phase_list.append(repair_phase)
             target.phase_list.append(verify_phase)
         else:
             target.phase_list.insert(target.current_phase, verify_phase)
             target.phase_list.insert(target.current_phase, repair_phase)
-            
+
         target.error = None
         self._pause_flags.pop(target.id, None)
         self._cancel_flags.pop(target.id, None)
         return self.submit_job(target)
 
-    def cancel_job(self, job_id: Optional[str] = None) -> bool:
+    def cancel_job(self, job_id: str | None = None) -> bool:
         target_id = job_id or (self._active_job.id if self._active_job else None)
         if not target_id:
             return False
@@ -230,7 +274,7 @@ class JobManager:
             return True
         return False
 
-    def undo_last_phase(self, job_id: Optional[str] = None) -> Tuple[bool, str]:
+    def undo_last_phase(self, job_id: str | None = None) -> tuple[bool, str]:
         target = self.get_latest_job(job_id)
         if not target:
             return False, "No active or recorded build job found."
@@ -244,7 +288,7 @@ class JobManager:
             self._emit("undone", {"job_id": target.id, "current_phase": target.current_phase})
         return ok, msg
 
-    def get_latest_job(self, job_id: Optional[str] = None) -> Optional[BuildJob]:
+    def get_latest_job(self, job_id: str | None = None) -> BuildJob | None:
         if job_id:
             return self.store.load(job_id)
         if self._active_job:
@@ -252,7 +296,7 @@ class JobManager:
         all_jobs = self.store.list_all()
         return all_jobs[0] if all_jobs else None
 
-    def get_status_summary(self, job_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_status_summary(self, job_id: str | None = None) -> dict[str, Any]:
         job = self.get_latest_job(job_id)
         if not job:
             return {"active": False, "message": "No build jobs registered."}
@@ -297,10 +341,20 @@ class JobManager:
             elif spec and spec.files:
                 for fspec in spec.files:
                     target_path = os.path.join(job.workspace_path, fspec.name)
-                    if not os.path.exists(target_path):
-                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                        with open(target_path, "w", encoding="utf-8") as f:
-                            f.write(f"# {fspec.name} - {fspec.purpose}\n")
+                    # Template-first: keep any file already written by the
+                    # scaffolder (real content) instead of overwriting it with a stub.
+                    if os.path.exists(target_path):
+                        try:
+                            with open(target_path, encoding="utf-8") as _ef:
+                                _existing = _ef.read()
+                            _real_lines = [ln for ln in _existing.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+                            if len(_real_lines) >= 2:
+                                continue
+                        except OSError as _e:
+                            logger.debug("Could not read %s: %s", target_path, _e)
+                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                    with open(target_path, "w", encoding="utf-8") as f:
+                        f.write(f"# {fspec.name} - {fspec.purpose}\n")
             phase.output = "Core logic implementation complete."
             return True
 
@@ -336,16 +390,23 @@ class JobManager:
             return True
 
         elif phase.name in ("tests_and_lint", "tests"):
-            from core.jobs.verifier import detect_stack, install_dependencies, run_tests, SelfHealer, extract_failing_file
+            from core.jobs.verifier import (
+                SelfHealer,
+                detect_stack,
+                extract_failing_file,
+                install_dependencies,
+                run_tests,
+            )
             stack = detect_stack(job.workspace_path)
-            
+
             # Install dependencies into project venv
             install_ok, install_msg = install_dependencies(job.workspace_path, stack)
-            
+
             # If install fails, attempt self-heal on dependencies
             if not install_ok and self._brain:
                 healer = SelfHealer(max_attempts=3)
                 for attempt_idx in range(3):
+                    logger.info("Dependency self-heal attempt %d/3", attempt_idx + 1)
                     broken_file = "requirements.txt" if stack == "python" else "package.json"
                     heal_ok, heal_exp = healer.attempt_heal(
                         job.workspace_path, install_msg, broken_file, self._brain, plan_summary=job.title
@@ -355,7 +416,7 @@ class JobManager:
                         if install_ok:
                             phase.output = f"Self-healed dependency issue: {heal_exp}"
                             break
-            
+
             if not install_ok:
                 phase.error = f"Dependency installation failed: {install_msg}"
                 return False
@@ -388,7 +449,7 @@ class JobManager:
         elif phase.name == "repair":
             bug_report = job.metadata.get("bug_report", "The app is not working correctly.")
             logger.info("Starting repair phase for job %s. Bug report: %s", job.id, bug_report)
-            
+
             # Gather workspace context
             workspace_files = ""
             for root, _, files in os.walk(job.workspace_path):
@@ -399,18 +460,18 @@ class JobManager:
                         continue
                     filepath = os.path.join(root, f)
                     try:
-                        with open(filepath, "r", encoding="utf-8") as file:
+                        with open(filepath, encoding="utf-8") as file:
                             workspace_files += f"\n### FILE: {f}\n{file.read()[:5000]}\n"
-                    except:
-                        pass
-                        
+                    except (OSError, UnicodeDecodeError) as e:
+                        logger.debug("Skipping unreadable workspace file %s: %s", filepath, e)
+
             prompt = f"""The user reported the following bug in the application:
 "{bug_report}"
 
 Here is the current source code of the application:
 {workspace_files}
 
-Identify the bug and fix it. You can modify one or more files. 
+Identify the bug and fix it. You can modify one or more files.
 For EACH file you modify, output the complete, corrected source code in this EXACT format:
 
 ### FILE: filename.ext
@@ -421,10 +482,10 @@ For EACH file you modify, output the complete, corrected source code in this EXA
 DO NOT output partial files or placeholders. Output the FULL corrected file.
 
 Finally, at the very end of your response, write a single sentence starting with "### LESSON:" that explains what the mistake was and what rule you should follow to NEVER make this mistake again in the future."""
-            
+
             if self._brain:
                 response = self._brain.ask(prompt, system_message="You are an expert debugger and bug fixer.")
-                
+
                 # Parse the response and write the files
                 import re
                 fixes_applied = 0
@@ -445,7 +506,7 @@ Finally, at the very end of your response, write a single sentence starting with
                             except Exception as e:
                                 logger.error("Repair phase failed to write %s: %s", fname, e)
                             break
-                
+
                 # Extract lesson learned for self-improvement
                 lesson_match = re.search(r"### LESSON:\s*(.+)", response)
                 if lesson_match:
@@ -470,8 +531,8 @@ Finally, at the very end of your response, write a single sentence starting with
             from core.jobs.verifier import (
                 detect_stack,
                 find_free_port,
-                start_and_smoke_test,
                 run_build_check,
+                start_and_smoke_test,
                 verify_and_update_acceptance,
             )
             stack = detect_stack(job.workspace_path)

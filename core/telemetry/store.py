@@ -22,6 +22,11 @@ class TelemetryStore:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        try:  # one persistent connection: WAL + NORMAL makes per-call writes cheap
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.DatabaseError:
+            pass
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
@@ -46,6 +51,11 @@ class TelemetryStore:
                 )
                 """
             )
+            # Migration: databases created before per-command attribution lack this column.
+            columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(telemetry)")}
+            if "command_id" not in columns:
+                self._conn.execute("ALTER TABLE telemetry ADD COLUMN command_id TEXT")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_command ON telemetry(command_id)")
 
     def record(self, record: TelemetryRecord) -> int:
         with self._lock, self._conn:
@@ -54,8 +64,8 @@ class TelemetryStore:
                 INSERT INTO telemetry (
                     timestamp, model_id, engine, agent, prompt_tokens,
                     completion_tokens, total_tokens, latency_seconds, ttft,
-                    cost_usd, energy_joules, power_watts, metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cost_usd, energy_joules, power_watts, metadata, command_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.timestamp,
@@ -71,6 +81,7 @@ class TelemetryStore:
                     record.energy_joules,
                     record.power_watts,
                     json.dumps(record.metadata),
+                    record.command_id or None,
                 ),
             )
             return int(cursor.lastrowid)
@@ -133,3 +144,27 @@ class TelemetryStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    def command_summary(self, command_id: str) -> dict[str, Any]:
+        """Totals for every recorded LLM call made while serving one command."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM telemetry WHERE command_id = ?", (command_id,)).fetchall()
+        return {
+            "command_id": command_id,
+            "calls": len(rows),
+            "tokens": sum((r["total_tokens"] or 0) for r in rows),
+            "cost_usd": sum((r["cost_usd"] or 0.0) for r in rows),
+            "latency_seconds": sum((r["latency_seconds"] or 0.0) for r in rows),
+        }
+
+    def top_commands(self, limit: int = 10, by: str = "cost_usd") -> list[dict[str, Any]]:
+        """The most expensive (or token-heavy) commands."""
+        order = "tokens" if by == "tokens" else "cost_usd"
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT command_id, COUNT(*) AS calls, SUM(total_tokens) AS tokens, "
+                "SUM(cost_usd) AS cost_usd, SUM(latency_seconds) AS latency_seconds "
+                "FROM telemetry WHERE command_id IS NOT NULL AND command_id != '' "
+                f"GROUP BY command_id ORDER BY {order} DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]

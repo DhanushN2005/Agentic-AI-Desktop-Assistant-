@@ -1,19 +1,22 @@
-import sqlite3
 import threading
 import time
+
+from utils.paths import data_file
+from utils.sql_like import like_contains
+from utils.sqlite_util import fast_connect
 
 
 class MemorySystem:
     """Long-term memory system: remembers conversations, preferences, and context."""
 
-    def __init__(self, db_path: str = "flexie_memory.db"):
-        self._db_path = db_path
+    def __init__(self, db_path: str | None = None):
+        self._db_path = db_path or data_file("flexie_memory.db")
         self._lock = threading.Lock()
         self._init_db()
 
     def _init_db(self):
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS conversations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,7 +59,7 @@ class MemorySystem:
         """Store a conversation turn."""
         topic = self._extract_topic(user_msg)
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             conn.execute(
                 "INSERT INTO conversations (timestamp, user_message, assistant_response, intent, topic) VALUES (?,?,?,?,?)",
                 (time.time(), user_msg, assistant_msg[:1000], intent, topic)
@@ -86,7 +89,7 @@ class MemorySystem:
     def set_preference(self, key: str, value: str):
         """Store a user preference."""
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             conn.execute(
                 "INSERT OR REPLACE INTO preferences (key, value, updated_at) VALUES (?,?,?)",
                 (key, value, time.time())
@@ -94,10 +97,25 @@ class MemorySystem:
             conn.commit()
             conn.close()
 
+    def forget_matching(self, text: str) -> int:
+        """Delete preferences whose key or value contains ``text``. Returns rows removed."""
+        pat = like_contains(text)
+        with self._lock:
+            conn = fast_connect(self._db_path)
+            try:
+                cur = conn.execute(
+                    "DELETE FROM preferences WHERE key LIKE ? ESCAPE '!' OR value LIKE ? ESCAPE '!'",
+                    (pat, pat),
+                )
+                conn.commit()
+                return cur.rowcount
+            finally:
+                conn.close()
+
     def get_preference(self, key: str, default: str = "") -> str:
         """Get a user preference."""
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             row = conn.execute("SELECT value FROM preferences WHERE key=?", (key,)).fetchone()
             conn.close()
         return row[0] if row else default
@@ -105,7 +123,7 @@ class MemorySystem:
     def get_recent_conversations(self, limit: int = 5) -> list[dict]:
         """Get recent conversation history."""
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             rows = conn.execute(
                 "SELECT user_message, assistant_response, intent, timestamp FROM conversations ORDER BY timestamp DESC LIMIT ?",
                 (limit,)
@@ -116,7 +134,7 @@ class MemorySystem:
     def get_popular_topics(self, limit: int = 5) -> list[dict]:
         """Get most discussed topics."""
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             rows = conn.execute(
                 "SELECT topic, frequency, last_discussed FROM topics ORDER BY frequency DESC LIMIT ?",
                 (limit,)
@@ -136,7 +154,7 @@ class MemorySystem:
     def search_memory(self, query: str) -> list[str]:
         """Search memory for relevant information."""
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             rows = conn.execute(
                 "SELECT user_message, assistant_response FROM conversations WHERE user_message LIKE ? OR assistant_response LIKE ? ORDER BY timestamp DESC LIMIT 5",
                 (f"%{query}%", f"%{query}%")
@@ -145,12 +163,12 @@ class MemorySystem:
         results = []
         for user, assistant in rows:
             results.append(f"Q: {user[:80]}... A: {assistant[:80]}...")
-        return results if results else [f"No memory found about '{query}'."]
+        return results  # empty list when nothing matches; callers phrase the "not found" reply
 
     def get_memory_stats(self) -> str:
         """Get memory statistics."""
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
+            conn = fast_connect(self._db_path)
             conv_count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
             pref_count = conn.execute("SELECT COUNT(*) FROM preferences").fetchone()[0]
             topic_count = conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0]

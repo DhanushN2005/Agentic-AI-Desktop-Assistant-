@@ -6,7 +6,6 @@ import os
 import subprocess
 import sys
 import threading
-from typing import Dict, List, Optional
 
 logger = logging.getLogger("flexie.jobs.process")
 
@@ -41,8 +40,8 @@ def kill_process_tree(pid: int) -> bool:
         for child in children:
             try:
                 child.kill()
-            except Exception:
-                pass
+            except Exception as _e:
+                logging.debug("[core/jobs/process.py:43] Swallowed exception: %s: %s", type(_e).__name__, _e)
         parent.kill()
         logger.info("Process tree for PID %s killed via psutil", pid)
         return True
@@ -54,8 +53,8 @@ def kill_process_tree(pid: int) -> bool:
         import signal
         os.kill(pid, signal.SIGTERM)
         success = True
-    except Exception:
-        pass
+    except Exception as _e:
+        logging.debug("[core/jobs/process.py:56] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     return success
 
@@ -65,7 +64,7 @@ class ProcessTracker:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._procs: Dict[str, List[subprocess.Popen]] = {}
+        self._procs: dict[str, list[subprocess.Popen]] = {}
 
     def register(self, job_id: str, proc: subprocess.Popen) -> None:
         with self._lock:

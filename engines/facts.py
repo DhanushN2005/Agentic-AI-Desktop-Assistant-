@@ -1,6 +1,6 @@
-import urllib.request
 import json
 import logging
+import urllib.request
 
 
 class FactsEngine:
@@ -41,7 +41,7 @@ class FactsEngine:
 
     def get_by_category(self, category: str) -> str:
         try:
-            url = f"https://uselessfacts.jsph.pl/api/v2/facts/random?language=en"
+            url = "https://uselessfacts.jsph.pl/api/v2/facts/random?language=en"
             req = urllib.request.Request(url, headers={"User-Agent": "Flexie/2.0"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())

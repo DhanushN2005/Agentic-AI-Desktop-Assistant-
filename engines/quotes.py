@@ -1,6 +1,6 @@
-import urllib.request
 import json
 import logging
+import urllib.request
 
 
 class QuotesEngine:

@@ -24,6 +24,10 @@ from typing import Any
 from core.action_result import ActionResult
 from core.capabilities import CapabilityPolicy
 
+# Tools carrying these tags return content authored by third parties (web pages, email,
+# MCP servers). That content is untrusted DATA: it may contain injected instructions.
+UNTRUSTED_SOURCE_TAGS = frozenset({"web", "extract", "email", "mcp"})
+
 
 class PermissionLevel(Enum):
     """Permission levels for tool execution, ordered from least to most restrictive."""
@@ -124,7 +128,7 @@ class ToolSpec:
 class ToolRegistry:
     """
     Central registry for all tools. Singleton-like (use the module-level instance).
-    
+
     Tools are registered at startup. The LLM or agent planner queries the registry
     to find available tools, and calls execute() to run them.
     """
@@ -133,6 +137,9 @@ class ToolRegistry:
         self._tools: dict[str, ToolSpec] = {}
         self.logger = logging.getLogger("Flexie.ToolRegistry")
         self.policy = policy or CapabilityPolicy()
+        # Optional PermissionSystem. When set, execute() fails CLOSED for any tool
+        # whose required level exceeds the current level — callers cannot skip it.
+        self.permission_gate = None
 
     def register(self, tool: ToolSpec):
         """Register a tool. Overwrites if name already exists."""
@@ -202,7 +209,7 @@ class ToolRegistry:
     def execute(self, tool_name: str, args: dict, timeout: float | None = None) -> ActionResult:
         """
         Execute a tool with validated arguments.
-        
+
         This is the ONLY way tools should be invoked by the agent.
         Returns ActionResult with success/failure details.
         """
@@ -211,6 +218,16 @@ class ToolRegistry:
             return ActionResult.fail(message=f"Unknown tool: {tool_name}", intent=tool_name)
         if not tool.enabled:
             return ActionResult.fail(message=f"Tool disabled: {tool_name}", intent=tool_name)
+
+        if self.permission_gate is not None:
+            allowed, reason, required = self.permission_gate.check_permission(tool)
+            if not allowed:
+                return ActionResult.fail(
+                    message=f"Permission denied: {reason}",
+                    intent=tool_name,
+                    data={"error": reason, "required_level": required.name if required else None,
+                          "permission_denied": True},
+                )
 
         cap_ok, cap_err = self.policy.validate(tool.effective_capabilities())
         if not cap_ok:
@@ -233,6 +250,12 @@ class ToolRegistry:
             if not isinstance(result, ActionResult):
                 result = ActionResult.ok(message=str(result), intent=tool_name, data={"raw": result})
             result.intent = tool_name
+            if (
+                self.permission_gate is not None
+                and getattr(result, "success", False)
+                and set(tool.tags) & UNTRUSTED_SOURCE_TAGS
+            ):
+                self.permission_gate.mark_untrusted(tool_name)
             return result
         except TimeoutError as _e:
             logging.debug("[core/tool_registry.py:207] Swallowed exception: %s: %s", type(_e).__name__, _e)

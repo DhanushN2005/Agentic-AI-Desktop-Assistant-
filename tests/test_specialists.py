@@ -1,8 +1,8 @@
-import pytest
 from unittest.mock import MagicMock
-from core.specialists import AgentTeam, SpecialistAgent, SpecialistRole
-from core.tool_registry import ToolRegistry, ToolSpec, ToolSchema, PermissionLevel
+
 from core.action_result import ActionResult
+from core.specialists import AgentTeam, SpecialistAgent, SpecialistRole
+from core.tool_registry import PermissionLevel, ToolRegistry, ToolSchema, ToolSpec
 
 
 def test_specialist_tool_scoping():

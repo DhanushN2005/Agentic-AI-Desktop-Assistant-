@@ -1,10 +1,10 @@
+import logging
 import os
 import re
 import webbrowser
 from urllib.parse import quote_plus
 
 import requests
-import logging
 
 
 class ImageGenEngine:

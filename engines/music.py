@@ -1,8 +1,8 @@
 import glob
+import logging
 import os
 
 from utils.config import Config
-import logging
 
 try:
     import pygame

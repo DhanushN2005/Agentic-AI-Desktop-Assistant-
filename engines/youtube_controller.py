@@ -2,7 +2,6 @@ import logging
 import queue
 import threading
 import time
-import urllib.parse
 
 from engines.browser import BrowserEngine
 
@@ -91,7 +90,9 @@ class YouTubeController(BrowserEngine):
         self.last_query = query
 
         try:
-            import urllib.request, re
+            import re
+            import urllib.parse
+            import urllib.request
             url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}"
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             try:
@@ -187,32 +188,44 @@ class YouTubeController(BrowserEngine):
         try:
             self.page.focus("body")
             if action in ("pause", "resume", "play", "stop"):
-                self.page.keyboard.press("k"); return f"Video {action}ed."
+                self.page.keyboard.press("k")
+                return f"Video {action}ed."
             elif action == "next":
-                self.page.keyboard.press("Shift+N"); return "Playing next."
+                self.page.keyboard.press("Shift+N")
+                return "Playing next."
             elif action == "mute":
-                self.page.keyboard.press("m"); return "Muted."
+                self.page.keyboard.press("m")
+                return "Muted."
             elif action == "fullscreen":
-                self.page.keyboard.press("f"); return "Toggled fullscreen."
+                self.page.keyboard.press("f")
+                return "Toggled fullscreen."
             elif action == "theatre":
-                self.page.keyboard.press("t"); return "Toggled theatre mode."
+                self.page.keyboard.press("t")
+                return "Toggled theatre mode."
             elif action == "captions":
-                self.page.keyboard.press("c"); return "Toggled captions."
+                self.page.keyboard.press("c")
+                return "Toggled captions."
             elif action == "speed up":
-                self.page.keyboard.press("Shift+."); return "Increased speed."
+                self.page.keyboard.press("Shift+.")
+                return "Increased speed."
             elif action == "slow down":
-                self.page.keyboard.press("Shift+,"); return "Decreased speed."
+                self.page.keyboard.press("Shift+,")
+                return "Decreased speed."
             elif action == "reset speed":
                 self.page.evaluate("document.querySelector('video').playbackRate = 1.0")
                 return "Speed reset."
             elif action == "forward":
-                self.page.keyboard.press("l"); return "Skipped 10 seconds forward."
+                self.page.keyboard.press("l")
+                return "Skipped 10 seconds forward."
             elif action == "backward":
-                self.page.keyboard.press("j"); return "Skipped 10 seconds backward."
+                self.page.keyboard.press("j")
+                return "Skipped 10 seconds backward."
             elif action == "volume up":
-                self.page.keyboard.press("ArrowUp"); return "Increased player volume."
+                self.page.keyboard.press("ArrowUp")
+                return "Increased player volume."
             elif action == "volume down":
-                self.page.keyboard.press("ArrowDown"); return "Decreased player volume."
+                self.page.keyboard.press("ArrowDown")
+                return "Decreased player volume."
             return "Unknown control."
         except Exception as e:
             logging.debug("[youtube_controller] control error: %s", e)
@@ -246,5 +259,5 @@ class YouTubeController(BrowserEngine):
             logging.debug("[youtube_controller] cleanup via worker failed (%s); forcing direct cleanup", e)
             try:
                 super().cleanup()
-            except Exception:
-                pass
+            except Exception as _e:
+                logging.debug("[engines/youtube_controller.py:261] Swallowed exception: %s: %s", type(_e).__name__, _e)

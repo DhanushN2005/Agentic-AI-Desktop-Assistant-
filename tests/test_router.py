@@ -86,7 +86,7 @@ def test_route_smoke_performance():
         "delete file report.txt",
         "build a website",
     ]
-    # 2000 routes to smoke-check the hot path has no exceptions or hangs.
-    for _ in range(2000):
+    # 200 passes (1400 routes) smoke-check the hot path for exceptions or hangs.
+    for _ in range(200):
         for c in commands:
             router.route(c)

@@ -37,7 +37,7 @@ def handle_job_intent(orch: Any, intent: str, command: str) -> bool:
         mgr.register_notifier(_job_notify)
         mgr._orch_bridge_attached = True
 
-    c_clean = command.strip().lower()
+    command.strip().lower()
 
     if intent in ("dev_build", "build_project"):
         # Route edit/update/improve requests for an existing job to debug_job (repair pass)

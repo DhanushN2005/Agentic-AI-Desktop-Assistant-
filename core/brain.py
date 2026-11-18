@@ -1,11 +1,12 @@
 import warnings
+
 # Suppress FutureWarning from google.generativeai before any google imports
 warnings.filterwarnings("ignore", category=FutureWarning)
-import logging
 import json
+import logging
 import time
 from collections import OrderedDict
-from urllib.request import urlopen, Request
+from urllib.request import Request, urlopen
 
 # google-genai (new SDK) is the only supported Gemini path.
 # Legacy google-generativeai was removed from requirements; kept as
@@ -32,17 +33,20 @@ except ImportError as e:
     Groq = None
 import requests
 from PIL import Image
+
 try:
     from ddgs import DDGS
 except ImportError as _e:
     logging.debug("[core/brain.py:29] Swallowed exception: %s: %s", type(_e).__name__, _e)
     DDGS = None
 import re
-from typing import Optional
-from utils.config import Config
-from utils.helpers import is_online
+
 from core.persona import compose_system_prompt
 from core.skills import build_catalog, discover_skills
+from core.telemetry.usage import messages_text, track_llm
+from utils.config import Config
+from utils.helpers import is_online
+
 
 class Brain:
     def __init__(self):
@@ -70,11 +74,11 @@ class Brain:
         except Exception as e:
             logging.debug("[core/brain.py:51] Swallowed exception: %s: %s", type(e).__name__, e)
             print(f"[ProviderManager Init Error]: {e}")
-        
+
         self._init_all_providers()
-        
+
         # --- PHASE 2: Context Intelligence ---
-                
+
         # --- PHASE 2: Context Intelligence ---
         self.context_compiler = None
         self.vector_store = None
@@ -129,23 +133,29 @@ class Brain:
         try:
             from openai import OpenAI
             if Config.OPENAI_API_KEY:
-                try: self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
+                try:
+                    self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
                 except Exception as _e:
                     logging.debug("[core/brain.py:103] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.openai_client = None
-            else: self.openai_client = None
+            else:
+                self.openai_client = None
             if Config.DEEPSEEK_API_KEY:
-                try: self.deepseek_client = OpenAI(api_key=Config.DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+                try:
+                    self.deepseek_client = OpenAI(api_key=Config.DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
                 except Exception as _e:
                     logging.debug("[core/brain.py:107] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.deepseek_client = None
-            else: self.deepseek_client = None
+            else:
+                self.deepseek_client = None
             if Config.MISTRAL_API_KEY:
-                try: self.mistral_client = OpenAI(api_key=Config.MISTRAL_API_KEY, base_url="https://api.mistral.ai/v1")
+                try:
+                    self.mistral_client = OpenAI(api_key=Config.MISTRAL_API_KEY, base_url="https://api.mistral.ai/v1")
                 except Exception as _e:
                     logging.debug("[core/brain.py:111] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.mistral_client = None
-            else: self.mistral_client = None
+            else:
+                self.mistral_client = None
         except ImportError as _e:
             logging.debug("[core/brain.py:113] Swallowed exception: %s: %s", type(_e).__name__, _e)
             self.openai_client = self.deepseek_client = self.mistral_client = None
@@ -255,41 +265,54 @@ class Brain:
             if item.get("content")
         )
 
-    def _ask_openai_compatible(self, client, model: str, prompt: str, sys_p: str, max_tokens: Optional[int] = None, history=None) -> Optional[str]:
+    def _provider_for_client(self, client) -> str:
+        if client is not None and client is getattr(self, "deepseek_client", None):
+            return "deepseek"
+        if client is not None and client is getattr(self, "mistral_client", None):
+            return "mistral"
+        return "openai"
+
+    def _ask_openai_compatible(self, client, model: str, prompt: str, sys_p: str, max_tokens: int | None = None, history=None) -> str | None:
         if not client:
             return None
         try:
             kwargs = dict(model=model, messages=self._build_messages(sys_p, prompt, history), timeout=Config.LLM_REQUEST_TIMEOUT)
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
-            resp = client.chat.completions.create(**kwargs)
-            return resp.choices[0].message.content
+            with track_llm(self._provider_for_client(client), model, messages=kwargs["messages"]) as call:
+                resp = client.chat.completions.create(**kwargs)
+                text = resp.choices[0].message.content
+                call.done(text, getattr(resp, "usage", None))
+            return text
         except Exception as e:
             logging.debug("[core/brain.py:154] Swallowed exception: %s: %s", type(e).__name__, e)
             print(f"[OpenAI-Compatible Error ({model})]: {e}")
             return None
 
-    def _ask_anthropic(self, prompt: str, sys_p: str, history=None) -> Optional[str]:
+    def _ask_anthropic(self, prompt: str, sys_p: str, history=None) -> str | None:
         if not self.anthropic_client:
             return None
         try:
             anthropic_model = getattr(Config, 'ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022')
-            resp = self.anthropic_client.messages.create(
-                model=anthropic_model, max_tokens=2048, system=sys_p,
-                messages=self._build_messages("", prompt, history)
-            )
-            return "".join([b.text for b in resp.content if hasattr(b, 'text')])
+            a_messages = self._build_messages("", prompt, history)
+            with track_llm("anthropic", anthropic_model, prompt_text=sys_p + "\n" + messages_text(a_messages)) as call:
+                resp = self.anthropic_client.messages.create(
+                    model=anthropic_model, max_tokens=2048, system=sys_p, messages=a_messages
+                )
+                text = "".join([b.text for b in resp.content if hasattr(b, 'text')])
+                call.done(text, getattr(resp, "usage", None))
+            return text
         except Exception as e:
             logging.debug("[core/brain.py:168] Swallowed exception: %s: %s", type(e).__name__, e)
             print(f"[Anthropic Error]: {e}")
             return None
 
-    def ask(self, prompt: str, img_path: Optional[str] = None, system_override: Optional[str] = None, use_chat: bool = False, use_rag: bool = True, max_tokens: Optional[int] = None, history=None) -> str:
+    def ask(self, prompt: str, img_path: str | None = None, system_override: str | None = None, use_chat: bool = False, use_rag: bool = True, max_tokens: int | None = None, history=None) -> str:
         """Query the AI brain, with LRU caching and optional RAG. Includes rate-limit retry logic."""
         key = (prompt, system_override or self.system_prompt, use_rag, max_tokens, self._history_key(history))
         if key in self._cache:
             return self._cache[key]
-            
+
         import time
         max_attempts = 4
         result = ""
@@ -315,7 +338,7 @@ class Brain:
             self._cache.popitem(last=False)
         return result
 
-    def _ask_impl(self, prompt: str, img_path: Optional[str], system_override: Optional[str], use_chat: bool, use_rag: bool, max_tokens: Optional[int] = None, history=None) -> str:
+    def _ask_impl(self, prompt: str, img_path: str | None, system_override: str | None, use_chat: bool, use_rag: bool, max_tokens: int | None = None, history=None) -> str:
         """Core ask logic (caching is handled by ask())."""
         sys_p = system_override or self.system_prompt
 
@@ -367,8 +390,11 @@ class Brain:
                         kwargs = dict(messages=self._build_messages(sys_p, prompt, history), model=model, timeout=Config.LLM_REQUEST_TIMEOUT)
                         if max_tokens is not None:
                             kwargs["max_tokens"] = max_tokens
-                        chat_completion = self.groq_client.chat.completions.create(**kwargs)
-                        return chat_completion.choices[0].message.content
+                        with track_llm("groq", model, messages=kwargs["messages"]) as call:
+                            chat_completion = self.groq_client.chat.completions.create(**kwargs)
+                            text = chat_completion.choices[0].message.content
+                            call.done(text, getattr(chat_completion, "usage", None))
+                        return text
                     except Exception as e:
                         err_str = str(e).lower()
                         is_retryable = "429" in err_str or "rate limit" in err_str or "too many requests" in err_str or "broken pipe" in err_str or "connection" in err_str or "timeout" in err_str
@@ -380,19 +406,24 @@ class Brain:
                             is_tool_err = "tool choice" in err_str or "tool_use_failed" in err_str or "tool_use" in err_str
                             if is_tool_err:
                                 r = self._ask_openai_compatible(self.openai_client, getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini'), prompt, sys_p, max_tokens, history)
-                                if r: return r
+                                if r:
+                                    return r
                                 r = self._ask_openai_compatible(self.deepseek_client, getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat'), prompt, sys_p, max_tokens, history)
-                                if r: return r
+                                if r:
+                                    return r
                             return self._ddg_search(prompt) if online else ""
             if active in ('auto','openai'):
                 r = self._ask_openai_compatible(self.openai_client, getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini'), prompt, sys_p, max_tokens, history)
-                if r: return r
+                if r:
+                    return r
             if active in ('auto','deepseek'):
                 r = self._ask_openai_compatible(self.deepseek_client, getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat'), prompt, sys_p, max_tokens, history)
-                if r: return r
+                if r:
+                    return r
             if active in ('auto','mistral'):
                 r = self._ask_openai_compatible(self.mistral_client, getattr(Config, 'MISTRAL_MODEL', 'mistral-small-latest'), prompt, sys_p, max_tokens, history)
-                if r: return r
+                if r:
+                    return r
             if active in ('auto','gemini'):
                 gname = getattr(Config, 'GEMINI_MODEL', getattr(self, 'gemini_model_name', 'gemini-2.0-flash'))
                 if getattr(self, 'gemini_new_client', None) is not None:
@@ -403,10 +434,12 @@ class Brain:
                             full_prompt = f"{sys_p}\n\nUser: {prompt}"
                         if history_text:
                             full_prompt = f"Recent conversation:\n{history_text}\n\n{full_prompt}"
-                        if img_path:
-                            resp = self.gemini_new_client.models.generate_content(model=gname, contents=[full_prompt, Image.open(img_path)])
-                        else:
-                            resp = self.gemini_new_client.models.generate_content(model=gname, contents=full_prompt)
+                        with track_llm("gemini", gname, prompt_text=full_prompt) as call:
+                            if img_path:
+                                resp = self.gemini_new_client.models.generate_content(model=gname, contents=[full_prompt, Image.open(img_path)])
+                            else:
+                                resp = self.gemini_new_client.models.generate_content(model=gname, contents=full_prompt)
+                            call.done(getattr(resp, 'text', None) or "", getattr(resp, "usage_metadata", None))
                         if getattr(resp, 'text', None):
                             return resp.text
                     except Exception as e:
@@ -416,7 +449,8 @@ class Brain:
                             raise e
                         logging.debug("[core/brain.py:246] Swallowed exception: %s: %s", type(e).__name__, e)
                         print(f"[Gemini Error]: {e} - Falling back")
-                        if active == 'gemini': return self._ddg_search(prompt) if online else ""
+                        if active == 'gemini':
+                            return self._ddg_search(prompt) if online else ""
                 if getattr(self, 'gemini_model', None) is not None and genai_legacy is not None:
                     try:
                         model = self.gemini_model
@@ -426,17 +460,22 @@ class Brain:
                         model_prompt = prompt
                         if history_text:
                             model_prompt = f"Recent conversation:\n{history_text}\n\nUser: {prompt}"
-                        if img_path:
-                            return model.generate_content([model_prompt, Image.open(img_path)]).text
-                        if use_chat and self.gemini_chat:
-                            return self.gemini_chat.send_message(model_prompt).text
-                        return model.generate_content(model_prompt).text
+                        with track_llm("gemini", gname, prompt_text=model_prompt) as call:
+                            if img_path:
+                                gresp = model.generate_content([model_prompt, Image.open(img_path)])
+                            elif use_chat and self.gemini_chat:
+                                gresp = self.gemini_chat.send_message(model_prompt)
+                            else:
+                                gresp = model.generate_content(model_prompt)
+                            call.done(gresp.text, getattr(gresp, "usage_metadata", None))
+                        return gresp.text
                     except Exception as e:
                         logging.debug("[core/brain.py:256] Swallowed exception: %s: %s", type(e).__name__, e)
                         print(f"[Gemini Error]: {e} - Falling back")
             if active in ('auto','anthropic'):
                 r = self._ask_anthropic(prompt, sys_p, history)
-                if r: return r
+                if r:
+                    return r
             if self.provider_manager:
                 try:
                     resp, pname = self.provider_manager.query(prompt, system_override=sys_p, img_path=img_path, history=history)
@@ -462,7 +501,7 @@ class Brain:
             return self._ddg_search(prompt)
         return "All AI providers are unavailable right now — online LLMs and local Ollama both failed. Check your internet connection or start Ollama if you'd like local processing."
 
-    def ask_stream(self, prompt: str, system_override: Optional[str] = None, use_rag: bool = False, max_tokens: Optional[int] = None, history=None):
+    def ask_stream(self, prompt: str, system_override: str | None = None, use_rag: bool = False, max_tokens: int | None = None, history=None):
         """Streaming version - yields text chunks as they arrive (Groq/OpenAI streaming, else fallback)."""
         sys_p = system_override or self.system_prompt
         active = getattr(Config, 'ACTIVE_PROVIDER', 'auto').lower() if hasattr(Config, 'ACTIVE_PROVIDER') else 'auto'
@@ -474,10 +513,14 @@ class Brain:
                     if max_tokens is not None:
                         kwargs["max_tokens"] = max_tokens
                     stream = self.groq_client.chat.completions.create(**kwargs)
+                    streamed: list[str] = []
                     for chunk in stream:
                         delta = chunk.choices[0].delta.content
                         if delta:
+                            streamed.append(delta)
                             yield delta
+                    with track_llm("groq", model, messages=kwargs["messages"]) as call:
+                        call.done("".join(streamed))  # streaming returns no usage: estimated
                     return
                 except Exception as e:
                     logging.debug("[core/brain.py:299] Swallowed exception: %s: %s", type(e).__name__, e)
@@ -489,10 +532,14 @@ class Brain:
                     if max_tokens is not None:
                         kwargs["max_tokens"] = max_tokens
                     stream = self.openai_client.chat.completions.create(**kwargs)
+                    streamed: list[str] = []
                     for chunk in stream:
                         delta = chunk.choices[0].delta.content if chunk.choices[0].delta else None
                         if delta:
+                            streamed.append(delta)
                             yield delta
+                    with track_llm("openai", model, messages=kwargs["messages"]) as call:
+                        call.done("".join(streamed))  # streaming returns no usage: estimated
                     return
                 except Exception as e:
                     logging.debug("[core/brain.py:313] Swallowed exception: %s: %s", type(e).__name__, e)
@@ -519,7 +566,7 @@ class Brain:
             logging.debug("[core/brain.py:react] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Agent error: {e}. Falling back to direct response."
 
-    def _ask_local_engine(self, prompt: str, sys_p: str, max_tokens: Optional[int], history=None) -> Optional[str]:
+    def _ask_local_engine(self, prompt: str, sys_p: str, max_tokens: int | None, history=None) -> str | None:
         """Ask the local Ollama engine through the inference registry."""
         try:
             from core.inference import OllamaEngine
@@ -542,7 +589,7 @@ class Brain:
             logging.debug("[core/brain.py:local] Swallowed exception: %s: %s", type(e).__name__, e)
         return None
 
-    def _ask_ollama(self, prompt: str) -> Optional[str]:
+    def _ask_ollama(self, prompt: str) -> str | None:
         """Tries to get a response from a local Ollama instance."""
         if not self._ollama_available():
             return None
@@ -604,6 +651,7 @@ class Brain:
             payload = {"model": model, "messages": messages, "stream": True, "options": {"temperature": temperature}}
             req = Request(f"{self._ollama_base()}/api/chat", data=json.dumps(payload).encode(),
                           headers={"Content-Type": "application/json"})
+            streamed: list[str] = []
             with urlopen(req, timeout=10) as resp:
                 for line in resp:
                     line = line.decode().strip()
@@ -614,9 +662,12 @@ class Brain:
                     except json.JSONDecodeError:
                         continue
                     if obj.get("done"):
+                        with track_llm("ollama", model, messages=messages) as call:
+                            call.done("".join(streamed), obj)  # final chunk carries exact counts
                         return
                     content = obj.get("message", {}).get("content", "")
                     if content:
+                        streamed.append(content)
                         yield content
         except Exception as e:
             logging.debug("[core/brain.py:ollama_stream] Swallowed exception: %s: %s", type(e).__name__, e)
@@ -638,9 +689,12 @@ class Brain:
                        "options": {"temperature": 0.3, "num_predict": 1024}}
             req = Request(f"{self._ollama_base()}/api/chat", data=json.dumps(payload).encode(),
                           headers={"Content-Type": "application/json"})
-            with urlopen(req, timeout=60) as resp:
-                obj = json.loads(resp.read().decode())
-                return obj.get("message", {}).get("content", "")
+            with track_llm("ollama", model, messages=messages) as call:
+                with urlopen(req, timeout=60) as resp:
+                    obj = json.loads(resp.read().decode())
+                text = obj.get("message", {}).get("content", "")
+                call.done(text, obj)  # Ollama returns exact prompt_eval_count / eval_count
+            return text
         except Exception as e:
             logging.debug("[core/brain.py:ollama_reasoning] Swallowed exception: %s: %s", type(e).__name__, e)
             return None
@@ -648,7 +702,7 @@ class Brain:
     def _ddg_search(self, prompt: str) -> str:
         """Web-search fallback via ddgs, with timeout and friendly fallback."""
         if DDGS is None:
-            return "I've searched for you, Dhanush, but I couldn't find a clear enough summary to read back. I've opened the browser results for you."
+            return f"I've searched for you, {Config.USER_NAME}, but I couldn't find a clear enough summary to read back. I've opened the browser results for you."
         try:
             import warnings
             with warnings.catch_warnings():
@@ -664,7 +718,7 @@ class Brain:
         except Exception as e:
             logging.debug("[core/brain.py:349] Swallowed exception: %s: %s", type(e).__name__, e)
             print(f"[Brain Error]: {e}")
-        return "I've searched for you, Dhanush, but I couldn't find a clear enough summary to read back. I've opened the browser results for you."
+        return f"I've searched for you, {Config.USER_NAME}, but I couldn't find a clear enough summary to read back. I've opened the browser results for you."
 
     def _ask_ddg(self, prompt: str) -> str:
         """Back-compat alias for the DuckDuckGo fallback (see _ddg_search)."""

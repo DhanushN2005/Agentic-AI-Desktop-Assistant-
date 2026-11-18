@@ -1,26 +1,28 @@
-import os
-import threading
 import difflib
+import logging
+import os
 import re
-import webbrowser
 import shutil
 import subprocess
+import threading
 import time
-from typing import Dict, List
+import webbrowser
+
 from utils.config import Config
 from utils.helpers import find_executable
-import logging
+
 
 class FileManager:
     def __init__(self):
-        self._cache: Dict[str, str] = {}
-        self._all_names: List[str] = []
+        self._cache: dict[str, str] = {}
+        self._all_names: list[str] = []
         threading.Thread(target=self._index, daemon=True).start()
 
     def _index(self):
         names = list(Config.FOLDER_SHORTCUTS) + list(Config.APPS)
         for root in Config.SEARCH_ROOTS:
-            if not os.path.exists(root): continue
+            if not os.path.exists(root):
+                continue
             for r, dirs, _ in os.walk(root):
                 bad = ["Windows", "Program Files", "AppData", "node_modules", ".git", "$"]
                 if any(b in r for b in bad):
@@ -156,22 +158,22 @@ class FileManager:
         words = q.split()
         stop_words = {"my", "the", "a", "an", "on", "off", "of", "to", "in", "at", "for", "with", "app", "folder", "file", "device"}
         filtered_words = [w for w in words if w not in stop_words]
-        
+
         # If all words are stop words, or the query itself is a stop word, completely block fuzzy/deep search
         if not filtered_words or q in stop_words:
             return f"I couldn't find '{q}' on your system."
-            
+
         keyword = filtered_words[-1]
-        
+
         # Enforce length >= 4 and strict stop-word filters to block incorrect activations (such as opening CrossDevice for "of")
         if len(keyword) < 4 or keyword in stop_words:
             return f"I couldn't find '{q}' on your system. Please be more specific."
-            
+
         # Folder/File deep lookup (new robust method)
         path = self._find_item_path(q)
         if not path:
             path = self._find_item_path(keyword)
-            
+
         if path:
             try:
                 self._launch_path(path, is_run)
@@ -197,7 +199,7 @@ class FileManager:
             if f"in {n}" in cmd_lower or f"on {n}" in cmd_lower or f"at {n}" in cmd_lower or f"inside {n}" in cmd_lower or n in cmd_lower:
                 loc = p
                 break
-        
+
         # Dynamic Drive Detection (e.g., 'e drive', 'drive e', or 'e:\')
         import re
         drive_match = re.search(r"\b(?:([a-zA-Z])\s+drive|drive\s+([a-zA-Z]))\b", cmd, re.IGNORECASE)
@@ -208,7 +210,7 @@ class FileManager:
             drive_match2 = re.search(r"\b([a-zA-Z]):\\", cmd, re.IGNORECASE)
             if drive_match2:
                 loc = f"{drive_match2.group(1).upper()}:\\"
-        
+
         # Absolute path provided directly
         absolute_match = re.search(r"([a-zA-Z]:\\[^\s]+)", cmd)
         if absolute_match:
@@ -223,14 +225,14 @@ class FileManager:
             rem = re.sub(r"\b(create|make|new|a|the|folder|directory|in|on|at|inside|desktop|downloads|documents)\b", "", cmd, flags=re.IGNORECASE).strip()
             if rem:
                 name = rem.split()[0].strip()
-            
+
         # Clean up name: stop at prepositions (e.g., "dhanush on desktop" -> "dhanush")
         for stop in [" on ", " at ", " in ", " inside "]:
             if stop in f" {name} ":
                 name = name.split(stop.strip())[0].strip()
         name = re.sub(r'[\\/*?:"<>|]', "", name).strip() or "Flexie_Folder"
         path = os.path.join(loc, name)
-        
+
         # Priority 1 & 6: Execute with focus and verification loop
         retries = 2
         for attempt in range(retries):
@@ -248,6 +250,7 @@ class FileManager:
 
     def _create_absolute(self, path: str) -> str:
         import time
+
         from utils.path_jail import is_system_location
         if is_system_location(path):
             raise ValueError(f"Refusing to create system location: {path}")
@@ -267,14 +270,14 @@ class FileManager:
     def create_document(self, cmd: str, content: str = "", target_dir: str = None) -> str:
         """Creates a document with intelligent naming, extension detection, and strict verification."""
         loc = target_dir or Config.FOLDER_SHORTCUTS.get("desktop", Config.USER_HOME)
-        
+
         # 3. Handle Location
         cmd_l_loc = cmd.lower()
         for n, p in Config.FOLDER_SHORTCUTS.items():
             if f"in {n}" in cmd_l_loc or f"on {n}" in cmd_l_loc or f"at {n}" in cmd_l_loc or f"inside {n}" in cmd_l_loc or n in cmd_l_loc:
                 loc = p
                 break
-                
+
         # Dynamic Drive Detection
         import re
         drive_match = re.search(r"\b(?:([a-zA-Z])\s+drive|drive\s+([a-zA-Z]))\b", cmd, re.IGNORECASE)
@@ -285,13 +288,13 @@ class FileManager:
             drive_match2 = re.search(r"\b([a-zA-Z]):\\", cmd, re.IGNORECASE)
             if drive_match2:
                 loc = f"{drive_match2.group(1).upper()}:\\"
-                
+
         # Absolute path provided directly
         absolute_match = re.search(r"([a-zA-Z]:\\[^\s\\]+)", cmd)
         if absolute_match:
             loc = absolute_match.group(1)
             os.makedirs(loc, exist_ok=True)
-            
+
         # 1. Determine Extension (aware of all common file types)
         ext = ".txt"  # default
         cmd_l = cmd.lower()
@@ -319,19 +322,19 @@ class FileManager:
             name = cmd.lower().split("for")[-1].strip()
         elif "about" in cmd.lower():
             name = cmd.lower().split("about")[-1].strip()
-            
+
         # Clean name
         import datetime
         import time
         timestamp = datetime.datetime.now().strftime("%H%M")
         name = re.sub(r"[^\w\s-]", "", name).replace(" ", "_")
         name = f"{name}_flexie({timestamp})"
-        
+
         if not name.endswith(ext):
             name += ext
-            
+
         path = os.path.join(loc, name)
-        
+
         # Priority 1: Execution verification and self-healing loop
         success = False
         err_msg = ""
@@ -339,7 +342,7 @@ class FileManager:
             try:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(content)
-                
+
                 # Verification Check: file exists on disk and is non-empty (if content was provided)
                 if os.path.exists(path):
                     if len(content) == 0 or os.path.getsize(path) > 0:
@@ -349,19 +352,19 @@ class FileManager:
                 logging.debug("[engines/files.py:258] Swallowed exception: %s: %s", type(write_err).__name__, write_err)
                 err_msg = str(write_err)
                 time.sleep(0.3)
-        
+
         if success:
             # Update cache/context
             self._cache[name.lower()] = path
             self.last_created_path = path
-            
+
             # Automatically open the newly created document!
             try:
                 os.startfile(path)
             except Exception as open_err:
                 logging.debug("[engines/files.py:270] Swallowed exception: %s: %s", type(open_err).__name__, open_err)
                 pass
-                
+
             return f"Created document '{name}' at {os.path.basename(loc)}."
         else:
             # Priority 6: Recovery self-healing clipboard fallback
@@ -374,11 +377,12 @@ class FileManager:
                 logging.debug("[engines/files.py:281] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 return f"Failed to create document: {err_msg}"
 
-    def find_files(self, name: str) -> List[str]:
+    def find_files(self, name: str) -> list[str]:
         name = name.lower()
         results = []
         for root in Config.SEARCH_ROOTS:
-            if not os.path.exists(root): continue
+            if not os.path.exists(root):
+                continue
             for r, dirs, files in os.walk(root):
                 bad = ["Windows", "Program Files", "AppData", ".git", "$"]
                 if any(b in r for b in bad):
@@ -405,7 +409,8 @@ class FileManager:
         moved = 0
         for item in os.listdir(desk):
             src = os.path.join(desk, item)
-            if os.path.isdir(src): continue
+            if os.path.isdir(src):
+                continue
             ext = os.path.splitext(item)[1].lower()
             for cat, exts in cats.items():
                 if ext in exts or cat == "Others":
@@ -421,8 +426,9 @@ class FileManager:
     def rename_item(self, cmd: str) -> str:
         """Renames a file or folder. Syntax: rename [old] to [new]"""
         parts = re.split(r"\s+to\s+|\s+as\s+", cmd.lower())
-        if len(parts) < 2: return "Please say 'rename [old name] to [new name]'."
-        
+        if len(parts) < 2:
+            return "Please say 'rename [old name] to [new name]'."
+
         old_name = re.sub(r"^(rename|folder|file|the)\s+", "", parts[0]).strip()
         new_name = parts[1].strip()
         from utils.path_jail import is_basename_safe, is_system_location
@@ -430,17 +436,18 @@ class FileManager:
             return f"Rename failed: '{new_name}' is not a plain file/folder name."
 
         path = self._find_item_path(old_name)
-        if not path: return f"I couldn't find '{old_name}' on your system."
+        if not path:
+            return f"I couldn't find '{old_name}' on your system."
         if is_system_location(path):
             return f"Rename failed: '{old_name}' is a protected system location."
-        
+
         parent = os.path.dirname(path)
         # If renaming a file, try to keep the extension if the user didn't provide one
         if os.path.isfile(path):
             old_ext = os.path.splitext(path)[1]
             if "." not in new_name and old_ext:
                 new_name += old_ext
-                
+
         new_path = os.path.join(parent, new_name)
         try:
             os.rename(path, new_path)
@@ -453,11 +460,12 @@ class FileManager:
         """Deletes a file or folder. (Safe check should be in orchestrator)"""
         name = re.sub(r"^(delete|remove|erase|the)\s+", "", query.lower()).strip()
         path = self._find_item_path(name)
-        if not path: return f"I couldn't find '{name}' to delete."
+        if not path:
+            return f"I couldn't find '{name}' to delete."
         from utils.path_jail import is_system_location
         if is_system_location(path):
             return f"Delete failed: '{name}' is a protected system location."
-        
+
         try:
             self._recycle_or_remove(path)
             return f"Successfully deleted '{name}'."
@@ -500,9 +508,9 @@ class FileManager:
         loc = Config.FOLDER_SHORTCUTS.get("documents", Config.USER_HOME)
         if not clean_name.endswith((".txt", ".md", ".py", ".js")):
             clean_name += ".txt"
-        
+
         path = os.path.join(loc, clean_name)
-        
+
         success = False
         err_msg = ""
         for _ in range(2):
@@ -517,7 +525,7 @@ class FileManager:
                 logging.debug("[engines/files.py:386] Swallowed exception: %s: %s", type(e).__name__, e)
                 err_msg = str(e)
                 time.sleep(0.2)
-                
+
         if success:
             return f"File '{filename}' saved successfully in your Documents."
         else:
@@ -533,12 +541,15 @@ class FileManager:
     def _find_item_path(self, name: str) -> str:
         """Helper to find the full path of an item by name with performance tiers."""
         name = name.lower()
-        if os.path.exists(name): return name
-        if name in self._cache: return self._cache[name]
-        
+        if os.path.exists(name):
+            return name
+        if name in self._cache:
+            return self._cache[name]
+
         # Tier 1: Shortcuts (Instant)
         for s_name, s_path in Config.FOLDER_SHORTCUTS.items():
-            if name == s_name: return s_path
+            if name == s_name:
+                return s_path
 
         # Tier 2: Common User Folders (Fast)
         search_dirs = [
@@ -558,7 +569,7 @@ class FileManager:
                 except Exception as _e:
                     logging.debug("[engines/files.py:426] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     continue
-                
+
         # Substring match second
         for d in search_dirs:
             if d and os.path.exists(d):
@@ -575,14 +586,17 @@ class FileManager:
         # Tier 3: Limited Deep Search (Moderate)
         # Exact match first
         for root in Config.SEARCH_ROOTS:
-            if not os.path.exists(root): continue
+            if not os.path.exists(root):
+                continue
             for r, dirs, files in os.walk(root):
                 bad = ["Windows", "Program Files", "AppData", ".git", "$", "node_modules"]
                 if any(b in r for b in bad):
-                    dirs.clear(); continue
+                    dirs.clear()
+                    continue
                 depth = r.count(os.sep) - root.count(os.sep)
                 if depth > 3:
-                    dirs.clear(); continue
+                    dirs.clear()
+                    continue
                 for item in dirs + files:
                     if item.lower() == name:
                         p = os.path.join(r, item)
@@ -591,14 +605,17 @@ class FileManager:
 
         # Substring match second
         for root in Config.SEARCH_ROOTS:
-            if not os.path.exists(root): continue
+            if not os.path.exists(root):
+                continue
             for r, dirs, files in os.walk(root):
                 bad = ["Windows", "Program Files", "AppData", ".git", "$", "node_modules"]
                 if any(b in r for b in bad):
-                    dirs.clear(); continue
+                    dirs.clear()
+                    continue
                 depth = r.count(os.sep) - root.count(os.sep)
                 if depth > 3:
-                    dirs.clear(); continue
+                    dirs.clear()
+                    continue
                 for item in dirs + files:
                     if len(name) > 3 and name in item.lower():
                         p = os.path.join(r, item)

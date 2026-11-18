@@ -1,6 +1,7 @@
 import re
 
 from engines.system import SystemCtrl
+from utils.config import Config
 
 
 def handle_dev_build(orch, c):
@@ -29,7 +30,7 @@ def handle_briefing(orch):
     if orch.current_mode in ("focus", "minimal"):
         orch.speak("Standby.")
         return True
-    orch.speak("Getting your daily briefing ready, Dhanush...")
+    orch.speak(f"Getting your daily briefing ready, {Config.USER_NAME}...")
     orch.speak(orch._get_briefing())
     return True
 

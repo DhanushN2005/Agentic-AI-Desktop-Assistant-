@@ -1,4 +1,5 @@
 import datetime
+import logging
 import os
 import subprocess
 import time
@@ -8,7 +9,6 @@ import pytesseract
 from PIL import Image
 
 from utils.config import Config
-import logging
 
 
 class VisionEngine:
@@ -59,7 +59,7 @@ class VisionEngine:
         try:
             if self.last_screenshot_path and os.path.exists(self.last_screenshot_path):
                 os.startfile(self.last_screenshot_path)
-                return "Opening your last screenshot, Dhanush."
+                return f"Opening your last screenshot, {Config.USER_NAME}."
             return "I don't have a record of any recent screenshots to show you."
         except Exception as e:
             logging.debug("[engines/vision.py:61] Swallowed exception: %s: %s", type(e).__name__, e)
@@ -72,7 +72,8 @@ class VisionEngine:
                 os.remove(self.last_screenshot_path)
                 old_path = self.last_screenshot_path
                 self.last_screenshot_path = self.history[-2] if len(self.history) > 1 else None
-                if old_path in self.history: self.history.remove(old_path)
+                if old_path in self.history:
+                    self.history.remove(old_path)
                 return "I've deleted the last screenshot for you."
             return "There are no recent screenshots available to delete."
         except Exception as e:

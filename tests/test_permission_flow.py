@@ -1,8 +1,8 @@
-import pytest
 from unittest.mock import MagicMock
+
+from core.controller import FlexieController
 from core.permission_system import PermissionSystem
 from core.tool_registry import PermissionLevel
-from core.controller import FlexieController
 
 
 def test_permission_system_approval_lifecycle():

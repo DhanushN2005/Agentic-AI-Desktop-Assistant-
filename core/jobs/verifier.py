@@ -10,9 +10,7 @@ Features:
 """
 from __future__ import annotations
 
-import ast
 import hashlib
-import json
 import logging
 import os
 import re
@@ -23,7 +21,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.jobs.generator import strip_fences_and_prose, validate_syntax
 from core.jobs.process import kill_process_tree
@@ -56,12 +54,12 @@ def detect_stack(workspace_path: str) -> str:
     plan_md = os.path.join(workspace_path, "PLAN.md")
     if os.path.exists(plan_md):
         try:
-            with open(plan_md, "r", encoding="utf-8") as _f:
+            with open(plan_md, encoding="utf-8") as _f:
                 _content = _f.read()
             if "static-web" in _content or "static_web" in _content:
                 return "static"
-        except Exception:
-            pass
+        except Exception as _e:
+            logging.debug("[core/jobs/verifier.py:61] Swallowed exception: %s: %s", type(_e).__name__, _e)
     return "unknown"
 
 
@@ -105,7 +103,7 @@ def extract_failing_file(error_output: str, workspace_path: str) -> str:
     # 4. Fallback: most recently modified .py or .js source file in workspace
     _py_exts = (".py", ".js", ".jsx", ".ts", ".tsx")
     _skip_dirs = {"__pycache__", "node_modules", ".venv", "venv", ".git"}
-    latest_file: Optional[str] = None
+    latest_file: str | None = None
     latest_mtime: float = 0.0
     for root, dirs, files in os.walk(workspace_path):
         dirs[:] = [d for d in dirs if d not in _skip_dirs]
@@ -117,8 +115,8 @@ def extract_failing_file(error_output: str, workspace_path: str) -> str:
                     if mtime > latest_mtime:
                         latest_mtime = mtime
                         latest_file = os.path.relpath(full, workspace_path)
-                except OSError:
-                    pass
+                except OSError as _e:
+                    logging.debug("[core/jobs/verifier.py:118] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     if latest_file:
         return latest_file
@@ -138,7 +136,7 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def get_project_venv(workspace_path: str) -> Tuple[str, str]:
+def get_project_venv(workspace_path: str) -> tuple[str, str]:
     """Get or create an isolated per-project virtualenv. NEVER pollutes global Python."""
     venv_dir = os.path.join(workspace_path, ".venv")
     if sys.platform == "win32":
@@ -169,7 +167,7 @@ def get_project_venv(workspace_path: str) -> Tuple[str, str]:
     return py_exe, pip_exe
 
 
-def install_dependencies(workspace_path: str, stack: str) -> Tuple[bool, str]:
+def install_dependencies(workspace_path: str, stack: str) -> tuple[bool, str]:
     """Install dependencies into isolated project environment."""
     # Static web projects need nothing installed
     if stack in ("static", "static-web", "unknown"):
@@ -244,7 +242,7 @@ def install_dependencies(workspace_path: str, stack: str) -> Tuple[bool, str]:
     return True, "No package installation required."
 
 
-def run_build_check(workspace_path: str, stack: str) -> Tuple[bool, str]:
+def run_build_check(workspace_path: str, stack: str) -> tuple[bool, str]:
     """Run a compile/build step instead of a live HTTP smoke test.
 
     Used for React/Vite and other build-step stacks where `npm run dev`
@@ -278,7 +276,7 @@ def run_build_check(workspace_path: str, stack: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Build check exception: {e}"
 
-def run_tests(workspace_path: str, stack: str) -> Tuple[bool, str]:
+def run_tests(workspace_path: str, stack: str) -> tuple[bool, str]:
     """Execute automated unit/integration tests in the isolated project environment."""
     # Static web projects have no test runner — verify index.html exists instead
     if stack in ("static", "static-web", "unknown"):
@@ -340,7 +338,7 @@ def start_and_smoke_test(
     run_command: str,
     port: int,
     max_wait_seconds: float = -1.0,
-) -> Tuple[bool, str]:
+) -> tuple[bool, str]:
     """Launch the application on a dynamic port, poll for readiness, smoke test, and tear down."""
     if max_wait_seconds < 0:
         max_wait_seconds = getattr(Config, "JOB_SMOKE_WAIT", 12.0)
@@ -402,8 +400,8 @@ def start_and_smoke_test(
                             ready = True
                             logger.info("Readiness poll verified at %s (HTTP %d)", url, resp.status)
                             break
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logging.debug("[core/jobs/verifier.py:403] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
             if ready:
                 break
@@ -429,7 +427,7 @@ class SelfHealer:
 
     def __init__(self, max_attempts: int = 3):
         self.max_attempts = max_attempts
-        self.error_signatures: List[str] = []
+        self.error_signatures: list[str] = []
 
     def compute_signature(self, error_text: str) -> str:
         """Hash the error text ignoring memory addresses and line numbers for duplicate detection."""
@@ -444,7 +442,7 @@ class SelfHealer:
         relevant_file: str,
         brain: Any,
         plan_summary: str = "",
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """Attempt to repair a broken file using LLM and syntax validation.
 
         Returns (success: bool, explanation: str).
@@ -467,7 +465,7 @@ class SelfHealer:
             target_path = resolve_in_root(relevant_file, workspace_path)
             if not os.path.exists(target_path):
                 return False, f"Target file for repair does not exist: {relevant_file}"
-            with open(target_path, "r", encoding="utf-8") as f:
+            with open(target_path, encoding="utf-8") as f:
                 current_code = f.read()
         except Exception as e:
             return False, f"Cannot access file for repair: {e}"
@@ -479,11 +477,11 @@ class SelfHealer:
             t_path = os.path.join(workspace_path, test_candidate)
             if os.path.isfile(t_path):
                 try:
-                    with open(t_path, "r", encoding="utf-8") as tf:
+                    with open(t_path, encoding="utf-8") as tf:
                         test_context = f"\n\nTest Suite Requirements ({test_candidate}):\n{tf.read()[:2500]}"
                         break
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logging.debug("[core/jobs/verifier.py:483] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
         prompt = f"""You are an automated code repair expert.
 Project Plan: {plan_summary}
@@ -518,14 +516,14 @@ Do not provide conversational prose.
             return False, f"Self-heal exception: {e}"
 
 
-def verify_and_update_acceptance(workspace_path: str, passed_criteria: List[str]) -> bool:
+def verify_and_update_acceptance(workspace_path: str, passed_criteria: list[str]) -> bool:
     """Update ACCEPTANCE.md with verified checkmarks [x]."""
     acc_path = os.path.join(workspace_path, "ACCEPTANCE.md")
     if not os.path.exists(acc_path):
         return True
 
     try:
-        with open(acc_path, "r", encoding="utf-8") as f:
+        with open(acc_path, encoding="utf-8") as f:
             lines = f.readlines()
 
         updated_lines = []

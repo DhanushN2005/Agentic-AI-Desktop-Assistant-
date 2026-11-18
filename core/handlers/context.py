@@ -1,9 +1,9 @@
+import logging
 import os
 import re
 import time
 
 from engines.system import SystemCtrl
-import logging
 
 
 def handle_paste_context_response(orch):

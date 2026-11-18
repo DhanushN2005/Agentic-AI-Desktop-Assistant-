@@ -1,8 +1,8 @@
+import logging
 import re
 import urllib.parse
 
 from utils.path_resolver import PathResolver
-import logging
 
 
 def handle_research(orch, c):

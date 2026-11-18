@@ -12,14 +12,14 @@ environment variables or direct configuration. The system gracefully handles:
 
 Providers are tried in priority order with automatic fallback.
 """
+import json
+import logging
 import os
 import time
-import logging
-import json
-from typing import Optional, List
 from dataclasses import dataclass
 from enum import Enum, auto
 
+from core.telemetry.usage import messages_text, track_llm
 from utils.config import Config
 
 
@@ -44,13 +44,13 @@ class LLMProvider:
     supports_streaming: bool = False
     enabled: bool = True
     status: ProviderStatus = ProviderStatus.UNKNOWN
-    last_error: Optional[str] = None
-    last_success: Optional[float] = None
+    last_error: str | None = None
+    last_success: float | None = None
     consecutive_failures: int = 0
     max_consecutive_failures: int = 3
 
     @property
-    def api_key(self) -> Optional[str]:
+    def api_key(self) -> str | None:
         """Get the API key from environment."""
         return os.environ.get(self.api_key_env)
 
@@ -84,7 +84,7 @@ class LLMProvider:
 class LLMProviderManager:
     """
     Manages LLM providers with fallback, cooldown, and automatic recovery.
-    
+
     Usage:
         manager = LLMProviderManager()
         result = manager.query("What is Python?")
@@ -115,7 +115,7 @@ class LLMProviderManager:
     COOLDOWN_SECONDS = 300  # 5 minutes
 
     def __init__(self):
-        self.providers: List[LLMProvider] = []
+        self.providers: list[LLMProvider] = []
         self.logger = logging.getLogger("Flexie.LLMProviders")
         self._init_providers()
         self._load_config()
@@ -165,7 +165,7 @@ class LLMProviderManager:
             except Exception as e:
                 self.logger.warning(f"[LLM] Failed to load config: {e}")
 
-    def get_available_providers(self, vision_required: bool = False) -> List[LLMProvider]:
+    def get_available_providers(self, vision_required: bool = False) -> list[LLMProvider]:
         """Get providers sorted by priority, filtered by availability + ACTIVE_PROVIDER."""
         active = os.getenv("ACTIVE_PROVIDER", "auto").lower()
         available = []
@@ -206,14 +206,14 @@ class LLMProviderManager:
     def query(
         self,
         prompt: str,
-        system_override: Optional[str] = None,
+        system_override: str | None = None,
         vision_required: bool = False,
-        img_path: Optional[str] = None,
+        img_path: str | None = None,
         **kwargs,
     ) -> tuple[str, str]:
         """
         Query LLM providers with automatic fallback.
-        
+
         Returns:
             (response_text, provider_name)
         """
@@ -239,8 +239,8 @@ class LLMProviderManager:
         self,
         provider: LLMProvider,
         prompt: str,
-        system_override: Optional[str] = None,
-        img_path: Optional[str] = None,
+        system_override: str | None = None,
+        img_path: str | None = None,
         **kwargs,
     ) -> str:
         """Call a specific LLM provider."""
@@ -263,7 +263,7 @@ class LLMProviderManager:
             return self._call_openai_compatible(provider, prompt, system_override, **kwargs)
 
     @staticmethod
-    def _messages(prompt: str, system_override: Optional[str], history=None):
+    def _messages(prompt: str, system_override: str | None, history=None):
         messages = []
         if system_override:
             messages.append({"role": "system", "content": system_override})
@@ -282,22 +282,25 @@ class LLMProviderManager:
         messages.append({"role": "user", "content": prompt})
         return messages
 
-    def _call_groq(self, provider: LLMProvider, prompt: str, system_override: Optional[str] = None, **kwargs) -> str:
+    def _call_groq(self, provider: LLMProvider, prompt: str, system_override: str | None = None, **kwargs) -> str:
         """Call Groq API."""
         from groq import Groq
         client = Groq(api_key=provider.api_key)
         messages = self._messages(prompt, system_override, kwargs.get("history"))
-        
-        response = client.chat.completions.create(
-            model=provider.model,
-            messages=messages,
-            max_tokens=kwargs.get("max_tokens", provider.max_tokens),
-            temperature=kwargs.get("temperature", provider.temperature),
-            timeout=provider.timeout,
-        )
-        return response.choices[0].message.content
 
-    def _call_openai_compatible(self, provider: LLMProvider, prompt: str, system_override: Optional[str] = None, base_url: Optional[str] = None, **kwargs) -> str:
+        with track_llm("groq", provider.model, messages=messages) as call:
+            response = client.chat.completions.create(
+                model=provider.model,
+                messages=messages,
+                max_tokens=kwargs.get("max_tokens", provider.max_tokens),
+                temperature=kwargs.get("temperature", provider.temperature),
+                timeout=provider.timeout,
+            )
+            text = response.choices[0].message.content
+            call.done(text, getattr(response, "usage", None))
+        return text
+
+    def _call_openai_compatible(self, provider: LLMProvider, prompt: str, system_override: str | None = None, base_url: str | None = None, **kwargs) -> str:
         """Call any OpenAI-compatible API (OpenAI, DeepSeek, Mistral, Together)."""
         try:
             from openai import OpenAI
@@ -308,39 +311,47 @@ class LLMProviderManager:
             client_kwargs["base_url"] = base_url
         client = OpenAI(**client_kwargs)
         messages = self._messages(prompt, system_override, kwargs.get("history"))
-        resp = client.chat.completions.create(
-            model=provider.model,
-            messages=messages,
-            max_tokens=kwargs.get("max_tokens", provider.max_tokens),
-            temperature=kwargs.get("temperature", provider.temperature),
-            timeout=provider.timeout,
-        )
-        return resp.choices[0].message.content
+        label = "deepseek" if "deepseek" in (base_url or "") else "mistral" if "mistral" in (base_url or "") else "openai"
+        with track_llm(label, provider.model, messages=messages) as call:
+            resp = client.chat.completions.create(
+                model=provider.model,
+                messages=messages,
+                max_tokens=kwargs.get("max_tokens", provider.max_tokens),
+                temperature=kwargs.get("temperature", provider.temperature),
+                timeout=provider.timeout,
+            )
+            text = resp.choices[0].message.content
+            call.done(text, getattr(resp, "usage", None))
+        return text
 
-    def _call_anthropic(self, provider: LLMProvider, prompt: str, system_override: Optional[str] = None, **kwargs) -> str:
+    def _call_anthropic(self, provider: LLMProvider, prompt: str, system_override: str | None = None, **kwargs) -> str:
         """Call Anthropic Claude API."""
         try:
             import anthropic
         except ImportError:
             raise ImportError("anthropic package not installed. Run: pip install anthropic") from None
         client = anthropic.Anthropic(api_key=provider.api_key)
-        resp = client.messages.create(
-            model=provider.model,
-            max_tokens=kwargs.get("max_tokens", provider.max_tokens),
-            temperature=kwargs.get("temperature", provider.temperature),
-            system=system_override or "",
-            messages=self._messages(prompt, None, kwargs.get("history")),
-        )
-        return "".join([b.text for b in resp.content if hasattr(b, 'text')])
+        a_messages = self._messages(prompt, None, kwargs.get("history"))
+        with track_llm("anthropic", provider.model, prompt_text=(system_override or "") + "\n" + messages_text(a_messages)) as call:
+            resp = client.messages.create(
+                model=provider.model,
+                max_tokens=kwargs.get("max_tokens", provider.max_tokens),
+                temperature=kwargs.get("temperature", provider.temperature),
+                system=system_override or "",
+                messages=a_messages,
+            )
+            text = "".join([b.text for b in resp.content if hasattr(b, 'text')])
+            call.done(text, getattr(resp, "usage", None))
+        return text
 
-    def _call_gemini(self, provider: LLMProvider, prompt: str, system_override: Optional[str] = None, img_path: Optional[str] = None, **kwargs) -> str:
+    def _call_gemini(self, provider: LLMProvider, prompt: str, system_override: str | None = None, img_path: str | None = None, **kwargs) -> str:
         """Call Gemini API."""
         import google.generativeai as genai
         genai.configure(api_key=provider.api_key)
-        
+
         model_config = {"system_instruction": system_override} if system_override else {}
         model = genai.GenerativeModel(provider.model, **model_config)
-        
+
         history = kwargs.get("history") or []
         history_text = "\n".join(
             f"{item.get('role', 'user').capitalize()}: {item.get('content', '')}"
@@ -355,7 +366,7 @@ class LLMProviderManager:
             from PIL import Image
             img = Image.open(img_path)
             content = [prompt, img]
-        
+
         response = model.generate_content(
             content,
             generation_config=genai.GenerationConfig(

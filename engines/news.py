@@ -1,7 +1,7 @@
+import logging
 import xml.etree.ElementTree as ET
 
 import requests
-import logging
 
 
 class NewsEngine:

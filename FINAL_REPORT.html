@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flexie Final Report</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --ink: #14181f; --muted: #5b6573; --line: #e3e7ec;
+    --accent: #2563eb; --good: #15803d; --good-bg: #e7f6ec; --warn: #b45309; --warn-bg: #fdf3e3;
+    --bad: #b91c1c; --bad-bg: #fdecec; --bar: #93b4f5; --code: #eef1f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --card: #171b21; --ink: #e8ebf0; --muted: #9aa5b4; --line: #272d36;
+      --accent: #6ea0ff; --good: #5fd08a; --good-bg: #12281b; --warn: #f0b35a; --warn-bg: #2b2112;
+      --bad: #ff8585; --bad-bg: #2d1717; --bar: #3b5fa8; --code: #1f252d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 19px; margin: 40px 0 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+  h3 { font-size: 15px; margin: 22px 0 8px; }
+  p, li { color: var(--ink); }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 20px 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .card .v { font-size: 26px; font-weight: 650; margin-top: 2px; }
+  .card .d { font-size: 13px; color: var(--muted); }
+  .ok { color: var(--good); }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line);
+          border-radius: 10px; overflow: hidden; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); background: var(--bg); }
+  tr:last-child td { border-bottom: 0; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .scroll { overflow-x: auto; }
+  .bar { height: 8px; background: var(--bar); border-radius: 4px; min-width: 3px; }
+  .barcell { width: 26%; min-width: 90px; }
+  code { background: var(--code); padding: 1px 6px; border-radius: 5px; font: 13px ui-monospace, Consolas, monospace; }
+  pre { background: var(--code); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font: 13px/1.5 ui-monospace, Consolas, monospace; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .pill.good { background: var(--good-bg); color: var(--good); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.bad  { background: var(--bad-bg);  color: var(--bad); }
+  .callout { background: var(--warn-bg); border: 1px solid var(--line); border-left: 4px solid var(--warn);
+             border-radius: 8px; padding: 12px 16px; margin: 14px 0; }
+  .callout.good { background: var(--good-bg); border-left-color: var(--good); }
+  ul { padding-left: 20px; } li { margin: 4px 0; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .two { grid-template-columns: 1fr; } h1 { font-size: 24px; } }
+  footer { margin-top: 48px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Flexie: final report</h1>
+<p class="sub">Security and architecture hardening, specialist agents, token and cost telemetry, and benchmark.
+2026-11-18 &middot; Windows 11 &middot; Python 3.10.9 &middot; 12 CPUs</p>
+
+<div class="cards">
+  <div class="card"><div class="k">Test suite</div><div class="v ok">736 passed</div><div class="d">0 failed, 0 errors (pytest exit 0)</div></div>
+  <div class="card"><div class="k">Agent evals</div><div class="v ok">43 / 43</div><div class="d">CI-gated, fake model, no network</div></div>
+  <div class="card"><div class="k">Routing eval</div><div class="v ok">45 / 45</div><div class="d">100%, p50 1.5 ms</div></div>
+  <div class="card"><div class="k">Lint</div><div class="v ok">clean</div><div class="d"><code>ruff check .</code></div></div>
+</div>
+
+<div class="callout">
+  <strong>Read this first.</strong> Every benchmark and eval here uses a fake model and stubbed tool bodies.
+  Nothing was run against a live LLM, voice session, browser extension or GitHub Actions, and there is no head-to-head
+  with OpenJarvis (it was not run, and no published numbers were found). See <a href="#limits">What is not done or not measured</a>.
+</div>
+
+<h2>1. Speed (deterministic stack, per call)</h2>
+<p class="sub">One run on one machine. Treat as order-of-magnitude, not guarantees. Bars use a log scale on p50.</p>
+<div class="scroll"><table>
+<tr><th>Component</th><th class="n">p50</th><th class="n">p95</th><th class="n">p99</th><th class="n">ops/sec</th><th class="barcell">p50 (log)</th></tr>
+<tr><td>Permission check</td><td class="n">1.2 &micro;s</td><td class="n">2.3 &micro;s</td><td class="n">2.8 &micro;s</td><td class="n">647,750</td><td class="barcell"><div class="bar" style="width:24%"></div></td></tr>
+<tr><td>Run-budget charge</td><td class="n">5.5 &micro;s</td><td class="n">11 &micro;s</td><td class="n">20 &micro;s</td><td class="n">135,525</td><td class="barcell"><div class="bar" style="width:40%"></div></td></tr>
+<tr><td>Usage tracking per LLM call (in memory)</td><td class="n">7.6 &micro;s</td><td class="n">16 &micro;s</td><td class="n">33 &micro;s</td><td class="n">105,317</td><td class="barcell"><div class="bar" style="width:43%"></div></td></tr>
+<tr><td>Registry execute (gated, stub tool)</td><td class="n">8.4 &micro;s</td><td class="n">16 &micro;s</td><td class="n">23 &micro;s</td><td class="n">104,627</td><td class="barcell"><div class="bar" style="width:44%"></div></td></tr>
+<tr><td>Scoped registry execute</td><td class="n">8.8 &micro;s</td><td class="n">20 &micro;s</td><td class="n">45 &micro;s</td><td class="n">85,942</td><td class="barcell"><div class="bar" style="width:44%"></div></td></tr>
+<tr><td>Usage tracking per LLM call (+ SQLite row)</td><td class="n">102 &micro;s</td><td class="n">230 &micro;s</td><td class="n">432 &micro;s</td><td class="n">5,599</td><td class="barcell"><div class="bar" style="width:68%"></div></td></tr>
+<tr><td>Tool loop: 3 tool calls + answer</td><td class="n">113 &micro;s</td><td class="n">244 &micro;s</td><td class="n">365 &micro;s</td><td class="n">7,211</td><td class="barcell"><div class="bar" style="width:69%"></div></td></tr>
+<tr><td>Plan decompose + sanitise (12 steps)</td><td class="n">167 &micro;s</td><td class="n">373 &micro;s</td><td class="n">553 &micro;s</td><td class="n">4,847</td><td class="barcell"><div class="bar" style="width:73%"></div></td></tr>
+<tr><td>Memory: forget (all stores)</td><td class="n">218 &micro;s</td><td class="n">384 &micro;s</td><td class="n">693 &micro;s</td><td class="n">4,003</td><td class="barcell"><div class="bar" style="width:76%"></div></td></tr>
+<tr><td>Memory: remember fact (4 stores)</td><td class="n">342 &micro;s</td><td class="n">816 &micro;s</td><td class="n">1.24 ms</td><td class="n">2,436</td><td class="barcell"><div class="bar" style="width:80%"></div></td></tr>
+<tr><td>Plan execution (5 handler steps)</td><td class="n">833 &micro;s</td><td class="n">1.64 ms</td><td class="n">2.07 ms</td><td class="n">1,034</td><td class="barcell"><div class="bar" style="width:89%"></div></td></tr>
+<tr><td>Intent routing (regex tier)</td><td class="n">1.50 ms</td><td class="n">3.64 ms</td><td class="n">5.01 ms</td><td class="n">580</td><td class="barcell"><div class="bar" style="width:95%"></div></td></tr>
+</table></div>
+<p>Takeaway: permission check, budget charge, scoped execution and usage tracking together add roughly
+25&nbsp;&micro;s per tool call (about 8&nbsp;&micro;s of it for usage tracking). Safety and telemetry are not a cost centre. Routing at about 1.5&nbsp;ms is the
+slowest deterministic step, and it is still orders of magnitude cheaper than any LLM call.</p>
+<p>Cold import (fresh interpreter): <code>core.router</code> 112 ms &middot; <code>core.agent_executor</code> 123 ms &middot;
+<code>core.specialists</code> 92 ms &middot; <code>core.goal_planner</code> 103 ms.</p>
+
+<h3>Before / after (same machine)</h3>
+<div class="scroll"><table>
+<tr><th>Item</th><th class="n">Before</th><th class="n">After</th><th class="n">Speed-up</th></tr>
+<tr><td><code>MemoryManager.remember</code></td><td class="n">20.7 ms</td><td class="n">0.15 ms</td><td class="n">~140&times;</td></tr>
+<tr><td><code>MemorySystem.set_preference</code></td><td class="n">14.1 ms</td><td class="n">0.09 ms</td><td class="n">~160&times;</td></tr>
+<tr><td><code>SelfAwareness.learn_fact</code></td><td class="n">13.7 ms</td><td class="n">0.10 ms</td><td class="n">~140&times;</td></tr>
+</table></div>
+<p>Cause: a new SQLite connection per write (journal files created and deleted each time on Windows). Fix: one shared WAL connection per
+database (<code>utils/sqlite_util.py</code>). Trade-off: WAL with <code>synchronous=NORMAL</code> can lose only the last few commits on an OS crash or power loss.</p>
+
+<h2>2. Token and cost telemetry (new)</h2>
+<ul>
+  <li><strong>What is recorded:</strong> every successful LLM call &mdash; provider, model, prompt and completion tokens, estimated cost, latency &mdash; attributed to the user command in flight (planned sub-steps share the outer command's id). Stored in the SQLite telemetry database.</li>
+  <li><strong>Exact vs estimated tokens:</strong> exact counts from Groq, OpenAI, DeepSeek, Mistral, Anthropic, Gemini and Ollama when the provider returns usage. Streaming, and any call without usage, falls back to about 4 characters per token and is flagged <em>estimated</em>.</li>
+  <li><strong>Cost is an estimate.</strong> Local models cost $0. Cloud models use rough per-provider blended rates (one table, <code>core/telemetry/pricing.py</code>). Set <code>FLEXIE_PRICING_FILE</code> to a JSON file of your plan's per-model prices for real numbers. No current provider prices were hardcoded.</li>
+  <li><strong>Telemetry never breaks a call:</strong> tracking errors are swallowed (tested). Failed calls and cache hits are not recorded.</li>
+</ul>
+<div class="two">
+<div><h3>Read it</h3>
+<pre>python -m core.telemetry.report
+python -m core.telemetry.report --since-hours 24
+python -m core.telemetry.report --json</pre>
+<p>Also <code>GET /api/flexie/usage</code> (bearer token). Each command logs one <code>[USAGE]</code> line and its trace records the token total.</p></div>
+<div><h3>Verified by</h3>
+<ul><li>17 new tests: provider usage shapes, pricing and overrides, attribution, persistence, old-database migration, the Brain and Ollama paths, the API endpoint, orchestrator attribution</li>
+<li>4 new CI-gated usage evals</li></ul></div>
+</div>
+
+<h2>3. What was fixed</h2>
+<h3>Security</h3>
+<ul>
+  <li><code>/health</code> no longer leaks the API token. It is issued only to allowlisted origins (<code>FLEXIE_EXTENSION_IDS</code>), and CORS is an explicit allowlist.</li>
+  <li>Permissions fail closed in <code>ToolRegistry.execute</code> (previously nothing checked). Approvals are single-use. Denied agent steps no longer &ldquo;log and continue&rdquo;.</li>
+  <li><code>python.exec</code> cannot be told to skip the sandbox (operator policy only).</li>
+  <li>Confirmation matching is strict (&ldquo;ok but first delete everything&rdquo; is no longer consent).</li>
+  <li>Prompt-injection boundary: tool output is fed back as untrusted data, and after web, email or MCP content enters a turn, effectful tools (click, fill, open) need approval until the next user turn.</li>
+  <li>Model-generated plans are treated as untrusted: unknown tools dropped, types coerced, steps capped at 8, timeouts capped, risk never taken from the model.</li>
+</ul>
+<h3>Flow and architecture</h3>
+<ul>
+  <li>Planner output was silently discarded by a <code>s.command</code> AttributeError. It now reaches <code>AgentExecutor</code> as a typed task graph, and handler steps honour <code>blocked</code> and <code>awaiting_confirmation</code>.</li>
+  <li>The controller wrapper dropped <code>is_subcommand</code>, <code>silent</code> and <code>depth</code>. They are now forwarded.</li>
+  <li>One <code>_resolve_route</code>: the deterministic router beats learned routes, the router runs once per command, and authoritative overrides skip the planner.</li>
+  <li>Specialists (P2): hard-scoped registries, a real tool loop over <code>Brain</code>, approvals by voice or UI, a <code>delegate</code> tool for the lead, whole-word routing, and fixed tag mismatches that left some specialists with no tools.</li>
+  <li>Memory: <code>MemoryFacade</code> is the single remember and forget path (forget used to leave copies in other stores). The wiki rewrite is debounced and database paths are anchored to the project.</li>
+  <li>Harness: <code>RunBudget</code> (steps, time, identical-call loop guard) on plan execution and specialist loops, agent-level evals gating CI, and <code>evals/bench.py</code>.</li>
+  <li>Portability: <code>engines/system.py</code> imports without <code>pycaw</code>, <code>comtypes</code> and <code>pyautogui</code>. The matching controls degrade instead of breaking import.</li>
+  <li>The hardcoded user name was replaced by <code>FLEXIE_USER_NAME</code> (falls back to the OS user).</li>
+</ul>
+<p>Bugs found by the new evals and tests, not by reading: a plan lost to one junk step; a dependency gap after skipped steps (would deadlock); a <code>\b</code> regex corrupted into a backspace by an edit (caught by a test); planner tool names that matched no registered tool.</p>
+
+<h2 id="limits">4. What is not done or not measured</h2>
+<div class="two">
+<div><h3><span class="pill bad">Not measured</span></h3>
+<ul>
+  <li>Plan quality, tool selection and task success with a real model. The Brain's JSON tool protocol is untested against a real (especially small local) model.</li>
+  <li>Real token and cost numbers: telemetry exists now, but nothing has run through it with a live model yet.</li>
+  <li>Any comparison with OpenJarvis or another framework.</li>
+  <li>Voice approval, the browser extension, desktop and browser automation, full orchestrator startup, and a GitHub Actions run.</li>
+</ul></div>
+<div><h3><span class="pill warn">Still open</span></h3>
+<ul>
+  <li>Orchestrator is about 1,430 lines (the plan targets under 600).</li>
+  <li>Memory stores still exist side by side behind the facade (no single <code>MemoryBackend</code>).</li>
+  <li>No skill or MCP trust tiers; no per-skill capability sets.</li>
+  <li>Many <code>except Exception: logging.debug</code> blocks still hide failures; <code>engines/</code> and <code>core/handlers/</code> still mirror each other.</li>
+  <li>Safety for handler-routed steps still partly depends on user wording, not only typed tool permissions.</li>
+  <li>The System specialist has one tool (<code>app.open</code>); no desktop tools are registered.</li>
+  <li>Telemetry gaps: the <code>agent_loop</code> chat path and the model-hub Ollama call are not instrumented.</li>
+  <li>Loop-guard limits (20 steps, 300 s, 3 repeats) are untuned defaults.</li>
+</ul></div>
+</div>
+
+<h2>5. Configuration</h2>
+<div class="scroll"><table>
+<tr><th>Variable</th><th>Purpose</th><th>Default</th></tr>
+<tr><td><code>FLEXIE_EXTENSION_IDS</code></td><td>Extension IDs trusted to receive the API token (required for the browser extension). Set in <code>.env</code> to your extension ID.</td><td>none</td></tr>
+<tr><td><code>FLEXIE_PRICING_FILE</code></td><td>JSON of per-model prices for cost estimates</td><td>blended rates</td></tr>
+<tr><td><code>FLEXIE_USAGE_PERSIST</code></td><td>Set to <code>0</code> to keep usage in memory only</td><td>on</td></tr>
+<tr><td><code>FLEXIE_USER_NAME</code></td><td>Name used in greetings and prompts</td><td>OS username</td></tr>
+<tr><td><code>FLEXIE_DATA_DIR</code></td><td>Where memory databases live</td><td>project folder</td></tr>
+<tr><td><code>FLEXIE_ALLOW_UNSANDBOXED_EXEC</code></td><td>Allow <code>python.exec</code> outside the sandbox</td><td>off</td></tr>
+<tr><td><code>FLEXIE_RUN_MAX_STEPS</code> / <code>_SECONDS</code> / <code>_REPEATS</code></td><td>Run budget and loop guard</td><td>20 / 300 / 3</td></tr>
+</table></div>
+
+<h2>6. Reproduce</h2>
+<pre>pytest tests                       # 736 tests
+python -m evals.run                # routing eval (45 tasks)
+python -m evals.agent_run          # agent evals (43 tasks), also a CI gate
+python -m evals.bench              # speed benchmark, writes evals/results/bench-*.json and .md
+python -m core.telemetry.report    # token / cost report from the telemetry database</pre>
+
+<footer>Generated from the repository state on 2026-11-18. Source data: <code>evals/results/bench-20261118-141406.json</code> and the saved full test run output. Companion files: <code>BENCHMARK_REPORT.md</code>, <code>OPENJARVIS_ADAPTATION.md</code> (section 11).</footer>
+</div>
+</body>
+</html>

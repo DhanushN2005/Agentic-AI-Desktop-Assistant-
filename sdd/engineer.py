@@ -18,10 +18,10 @@ class SDDEngineer:
         self.logger.info("Parsing PRD requirements...")
         prompt = f"""
         Analyze the following Product Requirement Document (PRD) and compile a structured software specification.
-        
+
         PRD Content:
         "{prd_content}"
-        
+
         Return a JSON object containing:
         {{
             "title": "Project Title",
@@ -35,16 +35,21 @@ class SDDEngineer:
             ],
             "dependencies": ["package1", "package2"]
         }}
-        
+
         Return ONLY valid JSON.
         """
 
         try:
             res_raw = self.brain.ask(prompt, system_override="You are a principal systems engineer. Return ONLY JSON.", use_rag=False)
             cleaned = res_raw.strip()
-            if cleaned.startswith("```"):
-                match = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL)
-                if match: cleaned = match.group(1).strip()
+            match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
+            if match:
+                cleaned = match.group(1).strip()
+            elif "{" in cleaned:
+                start = cleaned.find("{")
+                end = cleaned.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    cleaned = cleaned[start:end+1]
 
             spec = json.loads(cleaned)
             self.bus.publish(Event("sdd.prd.parsed", {"title": spec.get("title")}))
@@ -59,7 +64,7 @@ class SDDEngineer:
         prompt = f"""
         Based on this software specification, generate a sequential task list representing the implementation order:
         {json.dumps(spec)}
-        
+
         Return a JSON array of task dicts:
         [
             {{
@@ -69,15 +74,20 @@ class SDDEngineer:
                 "depends_on": []
             }}
         ]
-        
+
         Return ONLY valid JSON.
         """
         try:
             res_raw = self.brain.ask(prompt, system_override="You are a task planner. Return ONLY JSON.", use_rag=False)
             cleaned = res_raw.strip()
-            if cleaned.startswith("```"):
-                match = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL)
-                if match: cleaned = match.group(1).strip()
+            match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", cleaned, re.DOTALL)
+            if match:
+                cleaned = match.group(1).strip()
+            elif "[" in cleaned:
+                start = cleaned.find("[")
+                end = cleaned.rfind("]")
+                if start != -1 and end != -1 and end > start:
+                    cleaned = cleaned[start:end+1]
 
             task_graph = json.loads(cleaned)
             self.bus.publish(Event("sdd.graph.generated", {"tasks_count": len(task_graph)}))
@@ -91,14 +101,14 @@ class SDDEngineer:
         self.logger.info(f"Generating patch for bug: {bug_description}")
         prompt = f"""
         Generate a bug fix or code patch for the following Python file:
-        
+
         Bug Description: {bug_description}
-        
+
         Original Code:
         ```python
         {original_code}
         ```
-        
+
         Return ONLY the updated python code file. Do not write explanation, and do not wrap in markdown code blocks.
         """
         res = self.brain.ask(prompt, use_rag=False)
@@ -106,7 +116,8 @@ class SDDEngineer:
         res_clean = res.strip()
         if res_clean.startswith("```"):
             match = re.search(r"```(?:python)?\s*(.*?)\s*```", res_clean, re.DOTALL)
-            if match: res_clean = match.group(1).strip()
+            if match:
+                res_clean = match.group(1).strip()
 
         self.bus.publish(Event("sdd.patch.generated", {}))
         return res_clean

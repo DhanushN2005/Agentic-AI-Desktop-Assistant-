@@ -8,13 +8,14 @@ def _ollama_base() -> str:
     """Ollama host derived from Config.OLLAMA_URL (no hardcoded localhost)."""
     try:
         from urllib.parse import urlparse
+
         from utils.config import Config
         raw = getattr(Config, "OLLAMA_URL", "") or "http://localhost:11434/api/generate"
         parts = urlparse(raw)
         if parts.scheme and parts.netloc:
             return f"{parts.scheme}://{parts.netloc}"
-    except Exception:
-        pass
+    except Exception as _e:
+        logging.debug("[core/vector_store.py:17] Swallowed exception: %s: %s", type(_e).__name__, _e)
     return "http://localhost:11434"
 
 
@@ -38,7 +39,7 @@ class VectorStore:
 
     def _ollama_available(self) -> bool:
         try:
-            from urllib.request import urlopen, Request
+            from urllib.request import Request, urlopen
             req = Request(f"{_ollama_base()}/api/tags")
             with urlopen(req, timeout=2) as r:
                 return r.status == 200
@@ -150,3 +151,24 @@ class VectorStore:
             except Exception as e:
                 self._note_error("search", e)
         return []
+
+    def forget_matching(self, text: str, limit: int = 20) -> int:
+        """Delete indexed episodes whose text contains ``text`` (also drops queued ones)."""
+        needle = text.lower().strip()
+        if not needle:
+            return 0
+        removed = 0
+        kept = [p for p in self._pending if needle not in p[1].lower()]
+        removed += len(self._pending) - len(kept)
+        self._pending = kept
+        if self.collection:
+            try:
+                res = self.collection.get(include=["documents"])
+                ids = [i for i, d in zip(res.get("ids", []), res.get("documents", []), strict=False)
+                       if d and needle in d.lower()][:limit]
+                if ids:
+                    self.collection.delete(ids=ids)
+                    removed += len(ids)
+            except Exception as e:
+                self._note_error("forget", e)
+        return removed

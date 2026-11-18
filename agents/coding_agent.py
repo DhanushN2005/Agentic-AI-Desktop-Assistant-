@@ -1,8 +1,8 @@
+import logging
 from typing import Any
 
 from agents.base import BaseAgent
 from engines.developer import DeveloperEngine
-import logging
 
 
 class CodingAgent(BaseAgent):
@@ -19,7 +19,9 @@ class CodingAgent(BaseAgent):
         self.logger.info(f"CodingAgent executing action: {action}")
 
         # If a sandbox executor class exists (Phase 3), delegate process isolation to it
-        use_sandbox = payload.get("sandbox", True)
+        # Opting out of the sandbox is operator policy, not a payload field a model can set.
+        import os
+        use_sandbox = payload.get("sandbox", True) or os.getenv("FLEXIE_ALLOW_UNSANDBOXED_EXEC", "0") != "1"
 
         if use_sandbox:
             try:

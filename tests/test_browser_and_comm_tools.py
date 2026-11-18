@@ -1,10 +1,9 @@
 """Unit and integration tests for Browser & Email Communication Tools."""
 from unittest.mock import MagicMock
-import pytest
 
-from core.tool_registry import ToolRegistry, PermissionLevel
 from core.browser_and_comm_tools import register_browser_and_comm_tools
 from core.handlers.system import handle_comm
+from core.tool_registry import ToolRegistry
 
 
 class TestBrowserAndCommTools:

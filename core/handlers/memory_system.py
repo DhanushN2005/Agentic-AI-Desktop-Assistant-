@@ -1,6 +1,5 @@
 import os
 import re
-import time
 
 
 def handle_memory_system(orch, c):
@@ -17,23 +16,14 @@ def handle_memory_system(orch, c):
         if not target:
             response = "What would you like me to forget?"
         else:
-            forgotten = False
-            if mm:
-                # Direct match or substring search
-                if mm.forget(target):
-                    forgotten = True
-                else:
-                    matches = mm.search(target, limit=3)
-                    for m in matches:
-                        mm.forget(m.key)
-                        forgotten = True
-            if hasattr(orch, "memory") and hasattr(orch.memory, "forget"):
-                try:
-                    orch.memory.forget(target)
-                    forgotten = True
-                except Exception:
-                    pass
-            response = f"I have forgotten: {target}." if forgotten else f"I couldn't find any memory matching '{target}'."
+            from core.memory_facade import MemoryFacade
+            report = MemoryFacade(orch).forget(target)
+            if report.total:
+                response = f"I have forgotten: {target}."
+            elif report.errors:
+                response = f"I couldn't fully forget '{target}' — some memory stores failed."
+            else:
+                response = f"I couldn't find any memory matching '{target}'."
 
     # 2. Explicit Remember commands
     elif any(w in cmd for w in ["remember that", "remember this", "keep in mind", "don't forget", "remember"]):
@@ -42,7 +32,7 @@ def handle_memory_system(orch, c):
         if fact:
             # Determine category: preferences vs facts
             is_pref = any(p in fact.lower() for p in ["i like", "i prefer", "my favorite", "my preferred", "i love"])
-            
+
             # Key/value extraction if phrased as "X is Y" or "X are Y"
             fact_lower = fact.lower()
             if " is " in fact_lower or " are " in fact_lower:
@@ -54,18 +44,10 @@ def handle_memory_system(orch, c):
                 store_key = fact[:50].strip()
                 store_val = fact.strip()
 
-            cat = None
-            if mm:
-                from core.memory_manager import MemoryCategory
-                cat = MemoryCategory.PREFERENCES if is_pref else MemoryCategory.FACTS
-                mm.remember(store_key, store_val, category=cat, importance=0.85, tags=["user_explicit"])
-
-            if hasattr(orch, "memory_system") and orch.memory_system:
-                orch.memory_system.set_preference(f"fact_{int(time.time())}", fact)
-            if hasattr(orch, "awareness") and orch.awareness:
-                orch.awareness.learn_fact(fact, "user_told")
-            if hasattr(orch, "memory") and hasattr(orch.memory, "store"):
-                orch.memory.store(store_key, store_val, cat="user")
+            from core.memory_facade import MemoryFacade
+            from core.memory_manager import MemoryCategory
+            cat = MemoryCategory.PREFERENCES if is_pref else MemoryCategory.FACTS
+            MemoryFacade(orch).remember_fact(store_key, store_val, raw_fact=fact, category=cat)
 
             response = f"Got it. I'll remember that: {fact}"
         else:

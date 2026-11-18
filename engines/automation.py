@@ -1,8 +1,7 @@
 """Automation Scheduler - cron-like jobs for Flexie."""
-import time
-import threading
 import logging
-from typing import Dict, List
+import threading
+import time
 from datetime import datetime
 
 # ---- Compatibility shims for orchestrator (fixes ImportError: cannot import name 'GoalExecutor') ----
@@ -34,8 +33,8 @@ class RuleEngine:
     def __init__(self, orch):
         self.orch = orch
         self.logger = logging.getLogger("Flexie.RuleEngine")
-        self.rules: Dict[str, dict] = {}
-        self._last_fired: Dict[str, float] = {}
+        self.rules: dict[str, dict] = {}
+        self._last_fired: dict[str, float] = {}
 
     def add_rule(self, rule_id: str = None, condition=None, command: str = None,
                  cooldown: int = 300, enabled: bool = True, **kw) -> bool:
@@ -64,7 +63,7 @@ class RuleEngine:
             return True
         return False
 
-    def list_rules(self) -> List[str]:
+    def list_rules(self) -> list[str]:
         if not self.rules:
             return ["No automation rules."]
         return [f"{rid}: {r['command']} when [{r['condition']}]"
@@ -152,7 +151,7 @@ class AutomationScheduler:
     """Simple in-process scheduler for recurring tasks."""
     def __init__(self, orchestrator):
         self.orch = orchestrator
-        self.jobs: Dict[str, dict] = {}
+        self.jobs: dict[str, dict] = {}
         self._running = False
         self._thread = None
         self.logger = logging.getLogger("Flexie.Automation")
@@ -178,7 +177,7 @@ class AutomationScheduler:
             return True
         return False
 
-    def list_jobs(self) -> List[str]:
+    def list_jobs(self) -> list[str]:
         if not self.jobs:
             return ["No scheduled automations."]
         return [f"{jid}: {j['command']} [{j['trigger']}]" for jid, j in self.jobs.items()]

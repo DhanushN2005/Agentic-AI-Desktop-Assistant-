@@ -274,10 +274,19 @@ class TestGoalPlanner:
         assert graph.all_completed() is True
 
     def test_tool_match(self):
-        planner = GoalPlanner()
+        # Only tools that are actually registered may be planned as typed calls.
+        reg = ToolRegistry()
+        for name in ("files.search", "files.rename", "app.open"):
+            reg.register(ToolSpec(name=name, description=name, params=[],
+                                  permission=PermissionLevel.READ_ONLY, execute_fn=lambda: None))
+        planner = GoalPlanner(tool_registry=reg)
         assert planner._match_tool("search for files") == "files.search"
         assert planner._match_tool("rename the file") == "files.rename"
         assert planner._match_tool("open the browser") == "app.open"
+        # Unregistered tool names are never emitted; the step goes to the handler pipeline.
+        assert GoalPlanner()._match_tool("search for files") == ""
+        # Whole-word matching: "research" must not match the "search" keyword.
+        assert planner._match_tool("research quantum computing") == ""
 
     def test_verification_inference(self):
         planner = GoalPlanner()

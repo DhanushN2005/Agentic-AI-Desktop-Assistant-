@@ -5,8 +5,6 @@ import json
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from core.jobs.handler import handle_job_intent
 from core.jobs.launcher import (
     find_browser_target,
@@ -38,7 +36,7 @@ class TestScaffoldIDE:
         # Check .vscode/tasks.json
         tasks_path = os.path.join(ws, ".vscode", "tasks.json")
         assert os.path.exists(tasks_path)
-        with open(tasks_path, "r", encoding="utf-8") as f:
+        with open(tasks_path, encoding="utf-8") as f:
             tasks = json.load(f)
         assert tasks["version"] == "2.0.0"
         assert len(tasks["tasks"]) >= 1
@@ -46,7 +44,7 @@ class TestScaffoldIDE:
         # Check .vscode/extensions.json
         ext_path = os.path.join(ws, ".vscode", "extensions.json")
         assert os.path.exists(ext_path)
-        with open(ext_path, "r", encoding="utf-8") as f:
+        with open(ext_path, encoding="utf-8") as f:
             ext = json.load(f)
         recs = ext["recommendations"]
         assert "saoudrizwan.claude-dev" in recs
@@ -56,7 +54,7 @@ class TestScaffoldIDE:
         # Check .vscode/settings.json
         settings_path = os.path.join(ws, ".vscode", "settings.json")
         assert os.path.exists(settings_path)
-        with open(settings_path, "r", encoding="utf-8") as f:
+        with open(settings_path, encoding="utf-8") as f:
             settings = json.load(f)
         assert "cline.apiProvider" in settings
         assert "roo-cline.apiProvider" in settings
@@ -65,7 +63,7 @@ class TestScaffoldIDE:
         # Check .clinerules
         clinerules_path = os.path.join(ws, ".clinerules")
         assert os.path.exists(clinerules_path)
-        with open(clinerules_path, "r", encoding="utf-8") as f:
+        with open(clinerules_path, encoding="utf-8") as f:
             clinerules = f.read()
         assert "PLAN.md" in clinerules
         assert "ACCEPTANCE.md" in clinerules

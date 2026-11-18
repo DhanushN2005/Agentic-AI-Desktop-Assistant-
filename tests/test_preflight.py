@@ -1,12 +1,11 @@
 """Unit tests for Phase 0 Preflight & Path Jail security checks."""
 import os
-import shutil
-import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import pytest
 
-from utils.path_jail import resolve_in_root, validate_path_jail, is_basename_safe, is_system_location
-from utils.preflight import run_preflight, _check_binary, _resolve_code_cli
+from utils.path_jail import is_basename_safe, is_system_location, resolve_in_root, validate_path_jail
+from utils.preflight import _check_binary, run_preflight
 
 
 class TestPathJail:

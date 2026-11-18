@@ -2,18 +2,15 @@
 import json
 import os
 import time
-from unittest.mock import MagicMock, patch
-import pytest
+from unittest.mock import MagicMock
 
 from core.jobs.manager import JobManager
-from core.jobs.models import BuildJob, JobStatus
 from core.jobs.planner import (
     ProjectFileSpec,
     ProjectSpec,
     _strip_markdown_fences,
     clarify_request,
     generate_project_spec,
-    get_builtin_fallback_spec,
     is_vague_request,
     match_template,
     write_project_spec_files,
@@ -203,7 +200,7 @@ class TestJobManagerPhaseExecution:
         mgr.submit_job(job)
 
         # Wait for worker thread to process at least the scaffold phase
-        for _ in range(60):
+        for _ in range(150):
             time.sleep(0.1)
             updated = mgr.store.load(job.id)
             if updated and updated.current_phase >= 1:

@@ -1,11 +1,9 @@
 """Tests for Step 3: MCP (Model Context Protocol) Client Adapter."""
-import json
-import pytest
 from unittest.mock import MagicMock, patch
 
-from core.mcp_adapter import MCPServerConfig, MCPStdioClient, MCPManager
-from core.tool_registry import ToolRegistry, PermissionLevel
 from core.action_result import ActionResult
+from core.mcp_adapter import MCPManager, MCPServerConfig, MCPStdioClient
+from core.tool_registry import PermissionLevel, ToolRegistry
 
 
 class TestMCPAdapter:

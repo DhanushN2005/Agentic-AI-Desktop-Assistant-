@@ -11,6 +11,7 @@ from core.safety import SafetyGuard
 from core.telemetry import Telemetry
 from core.tool_registry import PermissionLevel
 from engines.long_term_memory import GlobalMemory
+from utils.config import Config
 
 
 class FlexieController:
@@ -89,9 +90,15 @@ class FlexieController:
 
         return command
 
-    def execute(self, command: str):
-        """Processes a command through the safety and telemetry pipeline."""
+    def execute(self, command: str, *args, **kwargs):
+        """Processes a command through the safety and telemetry pipeline.
+
+        Extra arguments (is_subcommand, silent, source, depth) belong to the wrapped
+        orchestrator handler and are forwarded unchanged. Dropping them made planned
+        sub-steps look like fresh top-level commands and re-planned them recursively.
+        """
         self.last_command_time = time.time()
+        self._handler_args = (args, kwargs)
 
         # DANGER GATE: an earlier high-impact command awaits user confirmation.
         if self.pending_confirmation:
@@ -177,13 +184,13 @@ class FlexieController:
 
         # P0 Feature 8: Personal Assistant Mode (Daily Briefing)
         if command.lower() in ["good morning flexie", "daily briefing", "system report"]:
-            self.orch.speak("Good morning Dhanush! Gathering your daily briefing...", silent=True)
+            self.orch.speak(f"Good morning {Config.USER_NAME}! Gathering your daily briefing...", silent=True)
             # Gather state
             notes = self.orch.brain.vector_store.search_episodes("User Note", limit=3)
             notes_text = "Recent notes:\n" + "\n".join([n.get('text', '') for n in notes]) if notes else "No recent notes."
 
             prompt = (
-                f"Generate a very brief spoken daily briefing for Dhanush.\n"
+                f"Generate a very brief spoken daily briefing for {Config.USER_NAME}.\n"
                 f"Include:\n{notes_text}\n"
                 "System status is GREEN. Mention the time and wish them a productive day."
             )
@@ -219,12 +226,23 @@ class FlexieController:
         # 3. DANGER GATE & PERMISSION CHECK: high-impact actions require explicit human confirmation.
         is_dangerous = self.danger_gate.detect(command)
         perm_level = self.permission_system.classify_action(command) if self.permission_system else None
-        requires_approval = is_dangerous or (
-            perm_level and perm_level.value >= PermissionLevel.USER_CONFIRMATION.value
-            and self.permission_system.current_level.value < perm_level.value
+        ps = self.permission_system
+        needs_level = bool(
+            perm_level and ps
+            and perm_level.value >= PermissionLevel.USER_CONFIRMATION.value
+            and ps.current_level.value < perm_level.value
         )
+        # An approval that is currently active at/above the required level already covers
+        # this command (e.g. the agent executor asked the user a moment ago) — don't ask twice.
+        approval_active = bool(
+            perm_level and ps
+            and ps.current_level.value > ps.default_level.value
+            and ps.current_level.value >= perm_level.value
+        )
+        requires_approval = (is_dangerous or needs_level) and not approval_active
         if requires_approval:
             self.pending_confirmation = command
+            self._pending_handler_args = getattr(self, "_handler_args", ((), {}))
             if self.permission_system:
                 level_to_req = perm_level or PermissionLevel.USER_CONFIRMATION
                 self.permission_system.create_approval_request(command, level=level_to_req)
@@ -253,7 +271,13 @@ class FlexieController:
                 self.orch.send_to_ui("APPROVAL_RESOLVED", "approved")
             self.orch.speak("Confirmed. Executing now.", silent=True)
             # Dispatch with a fresh trace; danger gate already approved.
-            return self._invoke(confirmed)
+            # The approval covers THIS command only — drop the escalation after.
+            try:
+                self._handler_args = getattr(self, "_pending_handler_args", ((), {}))
+                return self._invoke(confirmed)
+            finally:
+                if self.permission_system:
+                    self.permission_system.consume_approval()
         elif self.danger_gate.is_cancellation(command):
             self.pending_confirmation = None
             if self.permission_system:
@@ -270,7 +294,8 @@ class FlexieController:
         """Runs the wrapped orchestrator logic and records a telemetry trace."""
         trace = trace or self.telemetry.start_trace(command)
         try:
-            result = self.original_handle(command)
+            h_args, h_kwargs = getattr(self, "_handler_args", ((), {}))
+            result = self.original_handle(command, *h_args, **h_kwargs)
             if result is False:
                 self.telemetry.end_trace(trace, status="failed", error="Handler returned failure")
                 return "failed"

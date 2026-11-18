@@ -29,6 +29,10 @@ flexie_durable_workflows.json
 # Browser / Playwright session artifacts
 browser_session/
 
+# Runtime-written memory wikis (rewritten with a sync timestamp every run)
+data/MEMORY.md
+workspace/MEMORY.md
+
 # Test & temp
 captures/
 temp_test_chroma/
@@ -46,3 +50,12 @@ flexie_web/dist/
 .idea/
 .vscode/
 *.swp
+
+# Eval run output
+evals/results/
+
+*.db-wal
+*.db-shm
+
+# Vector memory store (personal data)
+context/flexie_memory/

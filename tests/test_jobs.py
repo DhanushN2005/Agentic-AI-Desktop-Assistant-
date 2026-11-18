@@ -1,9 +1,9 @@
 """Unit and integration tests for Phase 1: Background Build Job Runner."""
 import os
-import shutil
 import subprocess
 import time
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from core.jobs.git_ops import commit_job_phase, init_job_repo, is_git_available, undo_last_phase

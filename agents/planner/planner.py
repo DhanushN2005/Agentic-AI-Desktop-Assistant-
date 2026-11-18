@@ -23,9 +23,9 @@ class PlannerAgent(BaseAgent):
         prompt = f"""
         Analyze the following high-level user goal for a desktop assistant named Flexie:
         User Goal: "{goal}"
-        
+
         Decompose this goal into a directed workflow graph (DAG) representing sequential execution steps.
-        
+
         Return a JSON object matching this structure EXACTLY:
         {{
             "goal": "string",
@@ -38,19 +38,23 @@ class PlannerAgent(BaseAgent):
                 }}
             ]
         }}
-        
+
         Do not add any Markdown blocks or formatting outside the JSON. Return only the raw JSON string.
         """
 
         try:
             res_raw = self.brain.ask(prompt, system_override="You are a system architect. Return ONLY valid JSON.")
 
-            # Simple JSON extraction
+            # Robust JSON extraction
             json_str = res_raw.strip()
-            if json_str.startswith("```"):
-                match = re.search(r"```(?:json)?\s*(.*?)\s*```", json_str, re.DOTALL)
-                if match:
-                    json_str = match.group(1).strip()
+            match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", json_str, re.DOTALL)
+            if match:
+                json_str = match.group(1).strip()
+            elif "{" in json_str:
+                start = json_str.find("{")
+                end = json_str.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    json_str = json_str[start:end+1]
 
             plan_data = json.loads(json_str)
             steps = plan_data.get("steps", [])
@@ -70,28 +74,35 @@ class PlannerAgent(BaseAgent):
 
     def _topological_sort(self, steps: list[dict[str, Any]]) -> list[str]:
         """Performs a dependency resolution sorting to return sequential string commands."""
-        # Standard Kahn's algorithm or simple iteration for small DAG lists
         sorted_cmds = []
         visited = set()
+        visiting = set()
 
         # Build index mapping ID -> Step
-        steps_map = {step["id"]: step for step in steps}
+        steps_map = {step["id"]: step for step in steps if isinstance(step, dict) and "id" in step}
 
         def visit(step_id):
             if step_id in visited:
+                return
+            if step_id in visiting:
+                # Cycle detected: break loop safely
                 return
             step = steps_map.get(step_id)
             if not step:
                 return
 
+            visiting.add(step_id)
             # Visit dependencies first
             for dep in step.get("depends_on", []):
                 visit(dep)
+            visiting.remove(step_id)
 
             visited.add(step_id)
-            sorted_cmds.append(step["action"])
+            if "action" in step and step["action"]:
+                sorted_cmds.append(step["action"])
 
         for step in steps:
-            visit(step["id"])
+            if isinstance(step, dict) and "id" in step:
+                visit(step["id"])
 
         return sorted_cmds

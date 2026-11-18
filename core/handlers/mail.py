@@ -21,8 +21,9 @@ Supported intents (also registered in dispatcher.py):
 """
 
 from __future__ import annotations
-import re
+
 import logging
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -104,6 +105,10 @@ def handle_mail_check(orch, c: str) -> bool:
     _speak_emails(orch, emails)
     # Send structured data to UI
     orch.send_to_ui("MAIL_INBOX", emails)
+    try:
+        orch.send_to_ui("MAIL_COUNT", str(len(emails)))
+    except Exception as _e:
+        logging.debug("[mail:handle_mail_check] %s", _e)
     return True
 
 
@@ -117,6 +122,10 @@ def handle_mail_count(orch, c: str) -> bool:
         orch.speak(
             f"You have {result['unread']} unread email(s) out of {result['total']} total in your inbox."
         )
+        try:
+            orch.send_to_ui("MAIL_COUNT", str(result.get("unread", 0)))
+        except Exception as _e:
+            logging.debug("[mail:handle_mail_count] %s", _e)
     return True
 
 
@@ -126,6 +135,9 @@ def handle_mail_read(orch, c: str) -> bool:
     eng = _email(orch)
 
     idx = _extract_number(c)
+    # "open that mail" / "open it" → read the most recent email in the last inbox
+    if not idx and any(w in c for w in ("that", "it", "this")) and getattr(eng, "_last_inbox", None):
+        idx = 1
     if idx and eng._last_inbox:
         email_obj = eng.get_email_by_index(idx)
         if email_obj:
@@ -370,14 +382,84 @@ def handle_mail_folders(orch, c: str) -> bool:
 
 
 def handle_mail_summarize(orch, c: str) -> bool:
-    """AI-powered summary of the inbox."""
+    """AI-powered summary of the inbox or a specific targeted email."""
     orch.send_to_ui("STATE", "PROCESSING")
     brain = _brain(orch)
     if not brain:
         return handle_mail_check(orch, c)
 
+    eng = _email(orch)
+    c_lower = c.lower()
+
+    # Check if the user is targeting a specific email (e.g. "that hdfc mail", "latest mail", "email 1")
+    is_inbox_wide = any(phrase in c_lower for phrase in ("my inbox", "all emails", "all mail", "inbox summary", "whole inbox"))
+
+    target_email = None
+    if not is_inbox_wide:
+        words = re.findall(r"\b[a-zA-Z0-9_-]+\b", c_lower)
+        stop_words = {
+            "summarize", "summary", "that", "this", "the", "mail", "email", "in", "simple",
+            "what", "i", "need", "to", "do", "latest", "recent", "my", "me", "a", "an", "for", "please", "about"
+        }
+        keywords = [w for w in words if w not in stop_words]
+
+        # Check last-read or cached inbox first
+        cached = getattr(eng, "_last_inbox", []) or []
+        for kw in keywords:
+            for item in cached:
+                sender = item.get("from", "").lower()
+                subj = item.get("subject", "").lower()
+                if kw in sender or kw in subj:
+                    target_email = item
+                    break
+            if target_email:
+                break
+
+        # If not found in cache, search directly via IMAP
+        if not target_email and keywords:
+            try:
+                search_res = eng.search_emails(keywords[0], count=3)
+                if search_res and "error" not in search_res[0]:
+                    target_email = search_res[0]
+            except Exception as _e:
+                logging.debug("[mail:search_target] %s", _e)
+
+        # 2. If user referred to "latest", "that", "this", or "last" without specific sender keyword
+        if not target_email and any(w in c_lower for w in ("latest", "last", "that", "this", "it")):
+            if cached:
+                target_email = cached[0]
+            else:
+                try:
+                    recent = eng.get_unread_emails_detailed(count=1)
+                    if recent and "error" not in recent[0]:
+                        target_email = recent[0]
+                except Exception as _e:
+                    logging.debug("[mail:recent_target] %s", _e)
+
+    if target_email:
+        sender = target_email.get("from", "Unknown")
+        subject = target_email.get("subject", "No subject")
+        body = target_email.get("body", target_email.get("preview", ""))[:2500]
+        prompt = (
+            f"You are Flexie, a helpful assistant. The user wants a summary of this email.\n"
+            f"Email Details:\n"
+            f"- From: {sender}\n"
+            f"- Subject: {subject}\n"
+            f"- Content:\n{body}\n\n"
+            f"User's Question / Request: {c}\n\n"
+            "Provide a concise, conversational summary answering directly what the email is about "
+            "and specifically what action the user needs to take (if any). Speak in natural spoken English."
+        )
+        try:
+            summary = brain.ask(prompt)
+        except Exception:
+            summary = f"Email from {sender} with subject '{subject}'. Preview: {body[:150]}"
+        orch.speak(summary)
+        orch.send_to_ui("MAIL_SUMMARY", {"summary": summary, "email": target_email})
+        return True
+
     orch.speak("Summarizing your inbox with AI…")
-    summary = _email(orch).ai_summarize_inbox(brain, count=5)
+    summary = eng.ai_summarize_inbox(brain, count=5)
     orch.speak(summary)
     orch.send_to_ui("MAIL_SUMMARY", {"summary": summary})
     return True

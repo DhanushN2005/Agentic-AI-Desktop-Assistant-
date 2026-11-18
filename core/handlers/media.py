@@ -1,4 +1,5 @@
 import re
+import threading
 import urllib.parse
 
 
@@ -65,7 +66,7 @@ def handle_youtube(orch, c):
 
     # Advanced Controls — use word-boundary matching so "stopwatch" ≠ "stop"
     yt_actions = {
-        "pause": ["pause", "stop", "halt", "resume", "play", "mute", "unmute"],
+        "pause": ["pause video", "halt video", "resume video"],
         "fullscreen": ["fullscreen", "full screen", "maximize"],
         "theatre": ["theatre", "theater", "wide"],
         "captions": ["caption", "subtitle", "cc "],
@@ -73,9 +74,7 @@ def handle_youtube(orch, c):
         "slow down": ["slow"],
         "reset speed": ["normal speed", "reset speed"],
         "forward": ["forward", "ahead"],
-        "backward": ["backward", "rewind", "go back"],
-        "volume up": ["volume up", "louder", "increase vol"],
-        "volume down": ["volume down", "softer", "quieter", "decrease vol"]
+        "backward": ["backward", "rewind", "go back"]
     }
 
     for act, triggers in yt_actions.items():
@@ -92,19 +91,58 @@ def handle_youtube(orch, c):
 
     if not clean_c and orch.ctx.last_query:
         clean_c = orch.ctx.last_query
-    if clean_c:
+
+    is_explicit_yt = any(w in c for w in ["youtube", "yt"]) or any(c.startswith(p) for p in ["search ", "find ", "watch ", "look up "])
+    if clean_c and is_explicit_yt:
         orch.ctx.update(query=clean_c, engine="youtube", yt_query=clean_c)
         url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(clean_c)}"
         orch.speak(f"Opening YouTube search for {clean_c}.")
         orch.browser.navigate(url)
-    else:
-        orch.speak("What should I look for on YouTube?")
+        return True
+    return False
+
+
+def _parse_sleep_minutes(text):
+    m = re.search(r"(\d+)\s*(min(?:ute)?s?|hrs?|hours?)", text)
+    if m:
+        v = int(m.group(1))
+        if m.group(2).startswith("h"):
+            return v * 60
+        return v
+    if "half an hour" in text or "half hour" in text:
+        return 30
+    if "one hour" in text:
+        return 60
+    return None
+
+
+def handle_sleep_timer(orch, c):
+    mins = _parse_sleep_minutes(c)
+    if not mins:
+        orch.speak("For how long? Say 'sleep timer for 30 minutes'.")
+        return True
+    def _stop():
+        import time as _t
+        _t.sleep(mins * 60)
+        try:
+            orch.music.stop()
+        except Exception:
+            pass
+        try:
+            orch.yt.control_player("pause")
+        except Exception:
+            pass
+        orch.speak("Sleep timer ended. Playback stopped.")
+    threading.Thread(target=_stop, daemon=True).start()
+    orch.speak(f"Sleep timer set for {mins} minutes.")
     return True
 
 
 def handle_media(orch, c):
     if any(k in c for k in ["app", "build", "task", "project", "code"]):
         return False
+    if "sleep timer" in c or "sleep in" in c:
+        return handle_sleep_timer(orch, c)
 
     # Persistence: If YouTube is active, prioritize it
     if orch.yt.is_session_active() or orch.ctx.active_engine == "youtube":

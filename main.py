@@ -1,5 +1,5 @@
-import warnings
 import logging
+import warnings
 
 # SILENCE ALL DEPRECATION WARNINGS IMMEDIATELY
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -75,6 +75,13 @@ def main():
     # Start Orchestrator
     assistant = FlexieOrchestrator()
 
+    # Start API server for browser extension and external integrations
+    try:
+        from interface.api_server import start_api_server_background
+        start_api_server_background(orch=assistant)
+    except Exception as _api_err:
+        logging.debug("[main.py:api_server] %s: %s", type(_api_err).__name__, _api_err)
+
     # --- PRODUCTION OVERLAY BRIDGE ---
     from core.controller import FlexieController
 
@@ -86,7 +93,7 @@ def main():
 
     # Non-destructive overlay: Intercept command calls
     def wrapped_handle(cmd, *args, **kwargs):
-        return controller.execute(cmd)
+        return controller.execute(cmd, *args, **kwargs)
 
     assistant.handle_command = wrapped_handle
     # ---------------------------------
@@ -136,6 +143,7 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     if "--ui" in sys.argv:
         from PyQt6.QtWidgets import QApplication
+
         from interface.ui import FlexieUI
         app = QApplication(sys.argv)
         ui = FlexieUI()

@@ -102,8 +102,7 @@ class SandboxExecutor:
             # Run python process with timeout
             proc = subprocess.run(
                 ["python", abs_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 timeout=self.timeout
             )

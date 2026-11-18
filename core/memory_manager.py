@@ -21,11 +21,13 @@ Provides commands:
 import json
 import logging
 import os
-import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
+
+from utils.sqlite_util import fast_connect
 
 
 class MemoryCategory(Enum):
@@ -74,7 +76,7 @@ class MemoryEntry:
 class MemoryManager:
     """
     Centralized memory management with structured categories.
-    
+
     Wraps the existing MemoryEngine with additional categorization
     and metadata support.
     """
@@ -90,7 +92,7 @@ class MemoryManager:
     def _ensure_db(self):
         """Create database tables if they don't exist."""
         os.makedirs(os.path.dirname(self.DB_PATH), exist_ok=True)
-        conn = sqlite3.connect(self.DB_PATH)
+        conn = fast_connect(self.DB_PATH)
         try:
             # WAL mode: readers don't block writers (single-writer still serialised).
             try:
@@ -119,7 +121,7 @@ class MemoryManager:
     def _load(self):
         """Load memories from database."""
         try:
-            conn = sqlite3.connect(self.DB_PATH)
+            conn = fast_connect(self.DB_PATH)
             c = conn.cursor()
             c.execute("SELECT * FROM memories")
             for row in c.fetchall():
@@ -165,7 +167,7 @@ class MemoryManager:
     def _save_entry(self, entry: "MemoryEntry"):
         """Persist a single entry (INSERT OR REPLACE) — O(1), no full rewrite."""
         try:
-            with sqlite3.connect(self.DB_PATH) as conn:
+            with fast_connect(self.DB_PATH) as conn:
                 conn.execute("""
                     INSERT OR REPLACE INTO memories
                     (key, value, category, timestamp, source, confidence, importance, expiration, tags, metadata)
@@ -177,7 +179,7 @@ class MemoryManager:
     def _delete_key(self, key: str):
         """Delete a single row — O(1), no full rewrite."""
         try:
-            with sqlite3.connect(self.DB_PATH) as conn:
+            with fast_connect(self.DB_PATH) as conn:
                 conn.execute("DELETE FROM memories WHERE key = ?", (key,))
         except Exception as e:
             self.logger.warning(f"[MEMORY] Failed to delete {key}: {e}")
@@ -185,7 +187,7 @@ class MemoryManager:
     def _save(self):
         """Persist memories to database (full sync; prefer _save_entry for single rows)."""
         try:
-            with sqlite3.connect(self.DB_PATH) as conn:
+            with fast_connect(self.DB_PATH) as conn:
                 conn.executemany("""
                     INSERT OR REPLACE INTO memories
                     (key, value, category, timestamp, source, confidence, importance, expiration, tags, metadata)
@@ -256,6 +258,21 @@ class MemoryManager:
             self.sync_markdown_wiki()
             return True
         return False
+
+    def forget_matching(self, text: str) -> int:
+        """Remove every memory whose key, value or tags contain ``text`` (case-insensitive)."""
+        needle = text.lower().strip()
+        if not needle:
+            return 0
+        keys = [k for k, e in self._entries.items()
+                if needle in k or needle in str(e.value).lower() or any(needle in t for t in e.tags)]
+        for k in keys:
+            del self._entries[k]
+            self._delete_key(k)
+        if keys:
+            self.logger.info(f"[MEMORY] Forgot {len(keys)} entries matching {needle!r}")
+            self.sync_markdown_wiki()
+        return len(keys)
 
     def forget_category(self, category: MemoryCategory) -> int:
         """Remove all memories in a category."""
@@ -384,13 +401,39 @@ class MemoryManager:
                 ws_file = os.path.join(ws_dir, "MEMORY.md")
                 with open(ws_file, "w", encoding="utf-8") as wf:
                     wf.write(content)
-            except Exception:
-                pass
+            except Exception as _e:
+                logging.debug("[core/memory_manager.py:387] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
         return content
 
-    def sync_markdown_wiki(self):
-        """Automatically keep the Markdown wiki up to date on disk."""
+    _WIKI_DEBOUNCE_SECONDS = 5.0
+    # Class-level defaults so instances built without __init__ (tests) still work.
+    _wiki_lock = threading.Lock()
+    _wiki_timer: threading.Timer | None = None
+
+    def sync_markdown_wiki(self, force: bool = False):
+        """Keep the Markdown wiki current without rewriting it on every single write.
+
+        Every utterance and reply is remembered, so a synchronous full-file rewrite
+        per call was O(entries) work on the hot path. Writes are coalesced: at most
+        one export per debounce window, performed on a background timer.
+        """
+        if force or self._WIKI_DEBOUNCE_SECONDS <= 0:
+            self._do_wiki_export()
+            return
+        with self._wiki_lock:
+            if self._wiki_timer is not None:
+                return  # an export is already scheduled; it will pick up this change
+            self._wiki_timer = threading.Timer(self._WIKI_DEBOUNCE_SECONDS, self._wiki_timer_fire)
+            self._wiki_timer.daemon = True
+            self._wiki_timer.start()
+
+    def _wiki_timer_fire(self):
+        with self._wiki_lock:
+            self._wiki_timer = None
+        self._do_wiki_export()
+
+    def _do_wiki_export(self):
         try:
             self.export_to_markdown()
         except Exception as _e:

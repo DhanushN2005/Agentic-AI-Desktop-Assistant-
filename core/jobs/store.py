@@ -6,7 +6,6 @@ import logging
 import os
 import tempfile
 import threading
-from typing import Dict, List, Optional
 
 from core.jobs.models import BuildJob
 
@@ -45,27 +44,27 @@ class JobStore:
                 if "tmp_path" in locals() and os.path.exists(tmp_path):
                     try:
                         os.remove(tmp_path)
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        logging.debug("[core/jobs/store.py:47] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 return False
 
-    def load(self, job_id: str) -> Optional[BuildJob]:
+    def load(self, job_id: str) -> BuildJob | None:
         """Load job by ID from disk."""
         dest_file = self._job_file(job_id)
         if not os.path.exists(dest_file):
             return None
         with self._lock:
             try:
-                with open(dest_file, "r", encoding="utf-8") as f:
+                with open(dest_file, encoding="utf-8") as f:
                     data = json.load(f)
                 return BuildJob.from_dict(data)
             except Exception as e:
                 logger.error("Failed loading job %s: %s", job_id, e)
                 return None
 
-    def list_all(self) -> List[BuildJob]:
+    def list_all(self) -> list[BuildJob]:
         """List all persisted jobs ordered by created_at descending."""
-        jobs: List[BuildJob] = []
+        jobs: list[BuildJob] = []
         if not os.path.exists(self.storage_dir):
             return jobs
         with self._lock:
@@ -73,7 +72,7 @@ class JobStore:
                 if fname.endswith(".json") and not fname.startswith("."):
                     path = os.path.join(self.storage_dir, fname)
                     try:
-                        with open(path, "r", encoding="utf-8") as f:
+                        with open(path, encoding="utf-8") as f:
                             data = json.load(f)
                         jobs.append(BuildJob.from_dict(data))
                     except Exception as e:

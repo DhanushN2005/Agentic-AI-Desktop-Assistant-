@@ -120,7 +120,7 @@ def test_add_episode_queues_on_error():
 
 # --- 9. memory manager WAL + single-row ---
 def test_memory_wal_and_single_row(tmp_path, monkeypatch):
-    from core.memory_manager import MemoryManager, MemoryCategory
+    from core.memory_manager import MemoryCategory, MemoryManager
     db = tmp_path / "mem.db"
     monkeypatch.setattr(MemoryManager, "DB_PATH", str(db))
     mm = MemoryManager()

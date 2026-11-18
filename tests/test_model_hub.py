@@ -4,6 +4,7 @@ import time
 import urllib.error
 import urllib.request
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from core.model_hub import (

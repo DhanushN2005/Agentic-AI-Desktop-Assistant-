@@ -1,17 +1,12 @@
 """Unit and integration tests for Phase 4: Verification & Self-Healing."""
-import os
 import socket
 import time
 from unittest.mock import MagicMock, patch
-import pytest
 
 from core.jobs.verifier import (
     SelfHealer,
     detect_stack,
     find_free_port,
-    get_project_venv,
-    install_dependencies,
-    run_tests,
     start_and_smoke_test,
     verify_and_update_acceptance,
 )
@@ -46,7 +41,7 @@ class TestStackDetection:
 class TestPortAllocationAndSmokeTest:
     def test_find_free_port(self):
         p1 = find_free_port()
-        p2 = find_free_port()
+        find_free_port()
         assert isinstance(p1, int)
         assert p1 > 1024
         # Verify port is usable

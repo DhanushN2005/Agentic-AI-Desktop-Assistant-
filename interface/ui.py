@@ -66,6 +66,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -299,7 +300,10 @@ class ApiKeysDialog(QDialog):
                     has = bool(txt.strip())
                     if not has:
                         # Show saved state
-                        try: from utils.config import Config as _C; has_saved = bool(_C.get_api_key(p)); d.setStyleSheet("color: #00FF41; font-size: 10px; background: transparent; border: none;" if has_saved else "color: rgba(255,255,255,40); font-size: 10px; background: transparent; border: none;")
+                        try:
+                            from utils.config import Config as _C
+                            has_saved = bool(_C.get_api_key(p))
+                            d.setStyleSheet("color: #00FF41; font-size: 10px; background: transparent; border: none;" if has_saved else "color: rgba(255,255,255,40); font-size: 10px; background: transparent; border: none;")
                         except Exception as _e:
                             logging.debug("[interface/ui.py:291] Swallowed exception: %s: %s", type(_e).__name__, _e)
                         e.setStyleSheet("background: rgba(0,0,0,80); border: 1px solid rgba(255,255,255,15); border-radius: 8px;")
@@ -391,9 +395,12 @@ class ApiKeysDialog(QDialog):
             # find auto entry
             for i in range(self.active_combo.count()):
                 if self.active_combo.itemText(i).startswith("auto"):
-                    if active == "auto": idx = i; break
+                    if active == "auto":
+                        idx = i
+                        break
                 elif self.active_combo.itemText(i) == active:
-                    idx = i; break
+                    idx = i
+                    break
             self.active_combo.setCurrentIndex(max(0, idx))
             for pid in self.fields:
                 meta = SUPPORTED_PROVIDERS[pid]
@@ -412,8 +419,8 @@ class ApiKeysDialog(QDialog):
             self.ollama_edit.setText(C.OLLAMA_URL if C.OLLAMA_URL != "http://localhost:11434/api/generate" else "")
             self.ollama_edit.setPlaceholderText(C.OLLAMA_URL)
             self.ollama_model_combo.setCurrentText(C.OLLAMA_MODEL)
-        except Exception:
-            pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:421] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
     def _collect_updates(self) -> dict:
         updates = {}
@@ -461,6 +468,7 @@ class ApiKeysDialog(QDialog):
             if ok:
                 try:
                     import socket
+
                     from utils.udp_auth import pack as _udp_pack
                     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                     s.sendto(_udp_pack("RELOAD_BRAIN").encode("utf-8"), ("127.0.0.1", 9887))
@@ -693,13 +701,16 @@ class ControlPopup(QWidget):
             return row, vlbl, bar
 
         cpu_row, self.cpu_value, self.cpu_progress = create_stat("CPU")
-        metrics_layout.addLayout(cpu_row); metrics_layout.addWidget(self.cpu_progress)
+        metrics_layout.addLayout(cpu_row)
+        metrics_layout.addWidget(self.cpu_progress)
 
         ram_row, self.ram_value, self.ram_progress = create_stat("RAM")
-        metrics_layout.addLayout(ram_row); metrics_layout.addWidget(self.ram_progress)
+        metrics_layout.addLayout(ram_row)
+        metrics_layout.addWidget(self.ram_progress)
 
         batt_row, self.batt_value, self.batt_progress = create_stat("BATTERY")
-        metrics_layout.addLayout(batt_row); metrics_layout.addWidget(self.batt_progress)
+        metrics_layout.addLayout(batt_row)
+        metrics_layout.addWidget(self.batt_progress)
 
         layout.addWidget(self.metrics_frame)
 
@@ -752,8 +763,10 @@ class ControlPopup(QWidget):
         vol_row, self.vol_slider = create_slider_row("🔊", 50, 0, 100)
         bri_row, self.bri_slider = create_slider_row("☀️", 70, 0, 100)
 
-        self.vol_container = QWidget(); self.vol_container.setLayout(vol_row)
-        self.bri_container = QWidget(); self.bri_container.setLayout(bri_row)
+        self.vol_container = QWidget()
+        self.vol_container.setLayout(vol_row)
+        self.bri_container = QWidget()
+        self.bri_container.setLayout(bri_row)
         layout.addWidget(self.vol_container)
         layout.addWidget(self.bri_container)
 
@@ -766,7 +779,8 @@ class ControlPopup(QWidget):
         self.mode_combo.addItems(["Professional", "Developer", "Hacker", "Minimal", "Focus"])
         mode_layout.addWidget(QLabel("🧠"))
         mode_layout.addWidget(self.mode_combo, 1)
-        self.mode_container = QWidget(); self.mode_container.setLayout(mode_layout)
+        self.mode_container = QWidget()
+        self.mode_container.setLayout(mode_layout)
         layout.addWidget(self.mode_container)
 
         # — Quick Model Switch (no dialog) —
@@ -804,7 +818,8 @@ class ControlPopup(QWidget):
         quick_grid.addWidget(self.btn_mute, 0, 1)
         quick_grid.addWidget(self.btn_clip, 1, 0)
         quick_grid.addWidget(self.btn_snap, 1, 1)
-        self.grid_container = QWidget(); self.grid_container.setLayout(quick_grid)
+        self.grid_container = QWidget()
+        self.grid_container.setLayout(quick_grid)
         layout.addWidget(self.grid_container)
 
         # AI Keys button
@@ -862,8 +877,10 @@ class ControlPopup(QWidget):
                 from utils.config import Config as _C
                 active = getattr(_C, 'ACTIVE_PROVIDER', 'auto')
                 idx = self.quick_provider_combo.findText(active)
-                if idx >= 0: self.quick_provider_combo.setCurrentIndex(idx)
-                else: _on_provider_changed(active)
+                if idx >= 0:
+                    self.quick_provider_combo.setCurrentIndex(idx)
+                else:
+                    _on_provider_changed(active)
             except Exception as _e:
                 logging.debug("[interface/ui.py:848] Swallowed exception: %s: %s", type(_e).__name__, _e)
         except Exception as _e:
@@ -882,7 +899,8 @@ class ControlPopup(QWidget):
                 dot_color = "#00D2FF"
                 # Check if any key exists
                 any_key = any(_C.get_api_key(pid) for pid in _SP)
-                if not any_key: dot_color = "#FF3B30"
+                if not any_key:
+                    dot_color = "#FF3B30"
             else:
                 model_disp = _C.get_model(active) if active != "ollama" else _C.OLLAMA_MODEL
                 has_key = bool(_C.get_api_key(active)) if active != "ollama" else True
@@ -902,8 +920,8 @@ class ControlPopup(QWidget):
                 # Highlight active with bold
                 if is_active:
                     lbl.setStyleSheet(lbl.styleSheet() + " font-weight: 700;")
-        except Exception:
-            pass
+        except Exception as _e:
+            logging.debug("[interface/ui.py:922] Swallowed exception: %s: %s", type(_e).__name__, _e)
         # Update quick combo current model display
         try:
             from utils.config import Config as _C
@@ -994,7 +1012,8 @@ class ControlPopup(QWidget):
         self.anim_group.start()
 
     def hide_animated(self):
-        try: self.op_anim.finished.disconnect(self.hide)
+        try:
+            self.op_anim.finished.disconnect(self.hide)
         except Exception as _e:
             logging.debug("[interface/ui.py:976] Swallowed exception: %s: %s", type(_e).__name__, _e)
         self.op_anim.setDuration(250)
@@ -1024,12 +1043,14 @@ class ControlPopup(QWidget):
         tl_g = QRadialGradient(QPointF(rect.left(), rect.top()), 60)
         tl_g.setColorAt(0, QColor(0, 255, 100, 18))
         tl_g.setColorAt(1, QColor(0, 255, 100, 0))
-        painter.setBrush(tl_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(tl_g)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(QPointF(rect.left(), rect.top()), 60, 60)
         br_g = QRadialGradient(QPointF(rect.right(), rect.bottom()), 50)
         br_g.setColorAt(0, QColor(0, 200, 80, 12))
         br_g.setColorAt(1, QColor(0, 200, 80, 0))
-        painter.setBrush(br_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(br_g)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(QPointF(rect.right(), rect.bottom()), 50, 50)
 
 class Particle:
@@ -1075,35 +1096,53 @@ class Particle:
 class EnhancedFlexieOrb(QWidget):
     # ── animatable properties ────────────────────────────────────────────────
     @pyqtProperty(float)
-    def scale_factor(self): return self._scale
+    def scale_factor(self):
+        return self._scale
     @scale_factor.setter
-    def scale_factor(self, v): self._scale = v; self.update()
+    def scale_factor(self, v):
+        self._scale = v
+        self.update()
 
     @pyqtProperty(float)
-    def view_scale(self): return self._view_scale
+    def view_scale(self):
+        return self._view_scale
     @view_scale.setter
-    def view_scale(self, v): self._view_scale = v; self.update()
+    def view_scale(self, v):
+        self._view_scale = v
+        self.update()
 
     @pyqtProperty(float)
-    def eye_openness(self): return self._eye_openness
+    def eye_openness(self):
+        return self._eye_openness
     @eye_openness.setter
-    def eye_openness(self, v): self._eye_openness = v; self.update()
+    def eye_openness(self, v):
+        self._eye_openness = v
+        self.update()
 
     @pyqtProperty(float)
-    def glow_intensity(self): return self._glow_intensity
+    def glow_intensity(self):
+        return self._glow_intensity
     @glow_intensity.setter
-    def glow_intensity(self, v): self._glow_intensity = v; self.update()
+    def glow_intensity(self, v):
+        self._glow_intensity = v
+        self.update()
 
     @pyqtProperty(float)
-    def wake_burst(self): return self._wake_burst
+    def wake_burst(self):
+        return self._wake_burst
     @wake_burst.setter
-    def wake_burst(self, v): self._wake_burst = v; self.update()
+    def wake_burst(self, v):
+        self._wake_burst = v
+        self.update()
 
     # colour interpolation target (0-1 blend toward new state colour)
     @pyqtProperty(float)
-    def color_blend(self): return self._color_blend
+    def color_blend(self):
+        return self._color_blend
     @color_blend.setter
-    def color_blend(self, v): self._color_blend = v; self.update()
+    def color_blend(self, v):
+        self._color_blend = v
+        self.update()
 
     # ── state colour palette ─────────────────────────────────────────────────
     STATE_COLORS = {
@@ -1195,10 +1234,14 @@ class EnhancedFlexieOrb(QWidget):
         # ── wake sequence ───────────────────────────────────────────────────
         self.wake_seq = QSequentialAnimationGroup(self)
         _su = QPropertyAnimation(self, b"view_scale")
-        _su.setDuration(500); _su.setStartValue(0.40); _su.setEndValue(1.0)
+        _su.setDuration(500)
+        _su.setStartValue(0.40)
+        _su.setEndValue(1.0)
         _su.setEasingCurve(QEasingCurve.Type.OutBack)
         _eo = QPropertyAnimation(self, b"eye_openness")
-        _eo.setDuration(600); _eo.setStartValue(0.0); _eo.setEndValue(1.0)
+        _eo.setDuration(600)
+        _eo.setStartValue(0.0)
+        _eo.setEndValue(1.0)
         _eo.setEasingCurve(QEasingCurve.Type.OutElastic)
         self.wake_seq.addAnimation(_su)
         self.wake_seq.addAnimation(_eo)
@@ -1210,11 +1253,15 @@ class EnhancedFlexieOrb(QWidget):
 
     # ── mouse events – pass through so window stays draggable ───────────────
     def mouseMoveEvent(self, event):
-        self._mouse_pos = event.position(); event.ignore()
-    def mousePressEvent(self, event):   event.ignore()
-    def mouseReleaseEvent(self, event): event.ignore()
+        self._mouse_pos = event.position()
+        event.ignore()
+    def mousePressEvent(self, event):
+        event.ignore()
+    def mouseReleaseEvent(self, event):
+        event.ignore()
     def leaveEvent(self, event):
-        self._mouse_pos = QPointF(150.0, 150.0); event.ignore()
+        self._mouse_pos = QPointF(150.0, 150.0)
+        event.ignore()
 
     # ── helpers ─────────────────────────────────────────────────────────────
     def _lerp_color(self, c1, c2, t):
@@ -1236,9 +1283,12 @@ class EnhancedFlexieOrb(QWidget):
     def _update_anim(self):
         self._frame_count += 1
         cpu = psutil.cpu_percent()
-        if cpu > 90 and self._frame_count % 4 != 0: return
-        if cpu > 70 and self._frame_count % 2 != 0: return
-        if not self.isVisible(): return
+        if cpu > 90 and self._frame_count % 4 != 0:
+            return
+        if cpu > 70 and self._frame_count % 2 != 0:
+            return
+        if not self.isVisible():
+            return
 
         t = time.time()
         st = self.state
@@ -1267,9 +1317,11 @@ class EnhancedFlexieOrb(QWidget):
             self._pulse = abs(math.sin(t * 14)) * 30
             self._glow_intensity = 0.6 + 0.4 * abs(math.sin(t * 5))
         elif st in ("SLEEP", "MINIMIZED"):
-            self._pulse = 0; self._glow_intensity = 0.06 * abs(math.sin(t * 0.7))
+            self._pulse = 0
+            self._glow_intensity = 0.06 * abs(math.sin(t * 0.7))
         else:
-            self._pulse = 0; self._glow_intensity = 0.28 + 0.1 * math.sin(t * 1.8)
+            self._pulse = 0
+            self._glow_intensity = 0.28 + 0.1 * math.sin(t * 1.8)
 
         # energy core pulse
         core_speeds = {"PROCESSING": 8.0, "SPEAKING": 11.0,
@@ -1295,7 +1347,8 @@ class EnhancedFlexieOrb(QWidget):
                 self._scan_eye_dx = 0
                 self._scan_eye_dy = math.sin(phase * math.pi) * 6
         else:
-            self._scan_eye_dx = 0; self._scan_eye_dy = 0
+            self._scan_eye_dx = 0
+            self._scan_eye_dy = 0
 
         # eye blink (SPEAKING)
         if st == "SPEAKING":
@@ -1314,7 +1367,8 @@ class EnhancedFlexieOrb(QWidget):
         # expire dead particles
         self.particles = [p for p in self.particles if p.life > 0]
 
-        try: self.update()
+        try:
+            self.update()
         except Exception as _e:
             logging.debug("[interface/ui.py:1285] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
@@ -1339,27 +1393,40 @@ class EnhancedFlexieOrb(QWidget):
 
         if new_st == "WAKE":
             self.wake_seq.stop()
-            self._view_scale = 0.40; self._eye_openness = 0.0
+            self._view_scale = 0.40
+            self._eye_openness = 0.0
             self.wake_seq.start()
-            self.burst_anim.stop(); self._wake_burst = 1.0; self.burst_anim.start()
+            self.burst_anim.stop()
+            self._wake_burst = 1.0
+            self.burst_anim.start()
             self.state = "LISTENING"
         elif is_active:
-            self.view_anim.stop(); self.view_anim.setDuration(400)
-            self.view_anim.setEndValue(1.0); self.view_anim.start()
-            self.eye_anim.stop(); self.eye_anim.setDuration(350)
-            self.eye_anim.setEndValue(1.0); self.eye_anim.start()
+            self.view_anim.stop()
+            self.view_anim.setDuration(400)
+            self.view_anim.setEndValue(1.0)
+            self.view_anim.start()
+            self.eye_anim.stop()
+            self.eye_anim.setDuration(350)
+            self.eye_anim.setEndValue(1.0)
+            self.eye_anim.start()
         else:
             dur_v = 1500 if new_st == "SLEEP" else 800
             end_v = 0.40 if new_st == "SLEEP" else 0.30
-            self.view_anim.stop(); self.view_anim.setDuration(dur_v)
-            self.view_anim.setEndValue(end_v); self.view_anim.start()
-            self.eye_anim.stop(); self.eye_anim.setDuration(1000 if new_st == "SLEEP" else 500)
-            self.eye_anim.setEndValue(0.0); self.eye_anim.start()
+            self.view_anim.stop()
+            self.view_anim.setDuration(dur_v)
+            self.view_anim.setEndValue(end_v)
+            self.view_anim.start()
+            self.eye_anim.stop()
+            self.eye_anim.setDuration(1000 if new_st == "SLEEP" else 500)
+            self.eye_anim.setEndValue(0.0)
+            self.eye_anim.start()
 
         # breath speed
         dur_b = {"LISTENING":600,"SPEAKING":800,"PROCESSING":350,
                  "SLEEP":5000,"MINIMIZED":3500}.get(self.state, 2500)
-        self.breath.stop(); self.breath.setDuration(dur_b); self.breath.start()
+        self.breath.stop()
+        self.breath.setDuration(dur_b)
+        self.breath.start()
 
     # ── paint ────────────────────────────────────────────────────────────────
     def paintEvent(self, event):
@@ -1384,7 +1451,8 @@ class EnhancedFlexieOrb(QWidget):
 
         def layer(fx, fy=None):
             """Return QPointF offset for a depth layer (0-1 factor)."""
-            if fy is None: fy = fx
+            if fy is None:
+                fy = fx
             return QPointF(center.x() + mx * fx, center.y() + my * fy)
 
         bg_c     = layer(0.10)   # neural background
@@ -1392,7 +1460,9 @@ class EnhancedFlexieOrb(QWidget):
         part_c   = layer(0.50)   # particles
         face_c   = layer(0.70)   # face body + core
         eye_c    = layer(1.00)   # eyes
-        ar       = accent.red(); ag = accent.green(); ab = accent.blue()
+        ar       = accent.red()
+        ag = accent.green()
+        ab = accent.blue()
 
         # ═══════════════════════════════════════════════════════════════════
         # LAYER 0 – Neural background (clipped to face shape)
@@ -1419,7 +1489,8 @@ class EnhancedFlexieOrb(QWidget):
             bg.setColorAt(0,   QColor(ar, ag, ab, 0))
             bg.setColorAt(0.55,QColor(ar, ag, ab, ba))
             bg.setColorAt(1,   QColor(ar, ag, ab, 0))
-            painter.setBrush(bg); painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(bg)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(center, br, br)
 
         # ═══════════════════════════════════════════════════════════════════
@@ -1432,7 +1503,8 @@ class EnhancedFlexieOrb(QWidget):
             gg.setColorAt(0,   QColor(ar, ag, ab, ga))
             gg.setColorAt(0.45,QColor(secondary.red(), secondary.green(), secondary.blue(), int(ga*0.55)))
             gg.setColorAt(1,   Qt.GlobalColor.transparent)
-            painter.setBrush(gg); painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(gg)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(ring_c, glow_r, glow_r)
 
         # ═══════════════════════════════════════════════════════════════════
@@ -1477,7 +1549,8 @@ class EnhancedFlexieOrb(QWidget):
                 nhalo = QRadialGradient(QPointF(nx, ny), 5 * scale)
                 nhalo.setColorAt(0, QColor(ar, ag, ab, node_pulse))
                 nhalo.setColorAt(1, QColor(ar, ag, ab, 0))
-                painter.setBrush(nhalo); painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(nhalo)
+                painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(QPointF(nx, ny), 4*scale, 4*scale)
 
             # 1. Inner concentric tech ring
@@ -1497,7 +1570,8 @@ class EnhancedFlexieOrb(QWidget):
                 nhalo = QRadialGradient(QPointF(nx, ny), halo_r)
                 nhalo.setColorAt(0, QColor(ar, ag, ab, int(160 * v)))
                 nhalo.setColorAt(1, QColor(ar, ag, ab, 0))
-                painter.setBrush(nhalo); painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(nhalo)
+                painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(QPointF(nx, ny), halo_r, halo_r)
                 painter.setBrush(QColor(ar, ag, ab, int(255*v)))
                 painter.drawEllipse(QPointF(nx, ny), 2.2*scale, 2.2*scale)
@@ -1580,7 +1654,8 @@ class EnhancedFlexieOrb(QWidget):
                 rfill = QRadialGradient(ring_c, sweep_r)
                 rfill.setColorAt(0,   QColor(ar, ag, ab, 18))
                 rfill.setColorAt(1,   QColor(ar, ag, ab, 0))
-                painter.setBrush(rfill); painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(rfill)
+                painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawPie(QRectF(ring_c.x()-sweep_r, ring_c.y()-sweep_r,
                                        sweep_r*2, sweep_r*2),
                                 int((self._radar_angle - 30) * 16), 30*16)
@@ -1600,7 +1675,8 @@ class EnhancedFlexieOrb(QWidget):
                         painter.setPen(QPen(trail_c, p.size * 0.5 * scale))
                         painter.drawLine(p.history[k], p.history[k+1])
                 dot_c = QColor(ar, ag, ab, int(255 * max(0, p.life) * v))
-                painter.setBrush(dot_c); painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(dot_c)
+                painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(QPointF(px, py), p.size*scale, p.size*scale)
 
             # Subtle animated connection lines between nearby orbital particles
@@ -1622,7 +1698,7 @@ class EnhancedFlexieOrb(QWidget):
         # ═══════════════════════════════════════════════════════════════════
         orb_size = 98 * scale
         orb_r = orb_size / 2
-        face_rect = QRectF(face_c.x() - orb_r, face_c.y() - orb_r, orb_size, orb_size)
+        QRectF(face_c.x() - orb_r, face_c.y() - orb_r, orb_size, orb_size)
 
         # energy core (behind face body)
         core_r = orb_size * 0.55 * self._core_pulse
@@ -1630,7 +1706,8 @@ class EnhancedFlexieOrb(QWidget):
         cg.setColorAt(0, QColor(ar, ag, ab, int(80 * self._glow_intensity * self._core_pulse)))
         cg.setColorAt(0.4, QColor(ar, ag, ab, int(30 * self._core_pulse * v)))
         cg.setColorAt(1, Qt.GlobalColor.transparent)
-        painter.setBrush(cg); painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(cg)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(face_c, core_r*1.3, core_r*1.3)
 
         # face body gradient (deep black and dark-green spherical glass)
@@ -1650,7 +1727,8 @@ class EnhancedFlexieOrb(QWidget):
                                 QPointF(face_c.x(), face_c.y() + orb_r))
         rim_g.setColorAt(0.0, Qt.GlobalColor.transparent)
         rim_g.setColorAt(1.0, QColor(ar, ag, ab, int(65 * v)))
-        painter.setBrush(rim_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(rim_g)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(face_c, orb_r - 1.5, orb_r - 1.5)
 
         # PROCESSING – scan line inside face
@@ -1663,7 +1741,8 @@ class EnhancedFlexieOrb(QWidget):
             flg = QRadialGradient(QPointF(face_c.x(), scan_y), orb_size*0.75)
             flg.setColorAt(0, QColor(ar, ag, ab, int(70*v)))
             flg.setColorAt(1, Qt.GlobalColor.transparent)
-            painter.setBrush(flg); painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(flg)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(QPointF(face_c.x(), scan_y), orb_size*0.5, 5)
 
         # ── Glass reflection (curved forehead sheen — enhanced) ─────────────
@@ -1672,7 +1751,8 @@ class EnhancedFlexieOrb(QWidget):
         hl_g.setColorAt(0.0, QColor(255, 255, 255, int(120*v)))
         hl_g.setColorAt(0.45, QColor(255, 255, 255, int(45*v)))
         hl_g.setColorAt(1.0, QColor(255, 255, 255, 0))
-        painter.setBrush(hl_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(hl_g)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(QPointF(face_c.x() - orb_r*0.12, face_c.y() - orb_r * 0.44),
                            orb_r * 0.72, orb_r * 0.38)
         # Small bright specular dot (top-left quadrant)
@@ -1680,7 +1760,8 @@ class EnhancedFlexieOrb(QWidget):
         spec_g.setColorAt(0.0, QColor(255, 255, 255, int(180*v)))
         spec_g.setColorAt(0.5, QColor(255, 255, 255, int(55*v)))
         spec_g.setColorAt(1.0, QColor(255, 255, 255, 0))
-        painter.setBrush(spec_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(spec_g)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(QPointF(face_c.x() - orb_r*0.28, face_c.y() - orb_r*0.52),
                            orb_r*0.22, orb_r*0.14)
 
@@ -1692,7 +1773,8 @@ class EnhancedFlexieOrb(QWidget):
         sheen_g.setColorAt(0, QColor(255,255,255, 0))
         sheen_g.setColorAt(0.5, QColor(255,255,255, int(30*v)))
         sheen_g.setColorAt(1, QColor(255,255,255, 0))
-        painter.setBrush(sheen_g); painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(sheen_g)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(face_c, orb_r, orb_r)
         painter.setClipping(False)
 
@@ -1702,7 +1784,8 @@ class EnhancedFlexieOrb(QWidget):
             mouth_w  = orb_size * 0.36 * (0.5 + self._mouth_open * 0.5)
             mouth_h  = max(2.5, 6 * scale * self._mouth_open)
             mc = QColor(ar, ag, ab, int(210 * self._mouth_open * v))
-            painter.setBrush(mc); painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(mc)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(
                 QRectF(face_c.x() - mouth_w/2, mouth_y - mouth_h/2, mouth_w, mouth_h),
                 mouth_h/2, mouth_h/2)
@@ -1748,7 +1831,8 @@ class EnhancedFlexieOrb(QWidget):
             visor_g.setColorAt(0.0, QColor(ar, ag, ab, int(85 * self._eye_openness * v)))
             visor_g.setColorAt(0.6, QColor(ar, ag, ab, int(30 * self._eye_openness * v)))
             visor_g.setColorAt(1.0, Qt.GlobalColor.transparent)
-            painter.setBrush(visor_g); painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(visor_g)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(QPointF(eye_c.x(), eye_cy), 44 * scale, 18 * scale)
 
             for ecx in (eye_cx_l, eye_cx_r):
@@ -1758,7 +1842,8 @@ class EnhancedFlexieOrb(QWidget):
                 eg.setColorAt(0,   QColor(ar, ag, ab, int(220 * self._eye_openness * v)))
                 eg.setColorAt(0.5, QColor(ar, ag, ab, int(70  * self._eye_openness * v)))
                 eg.setColorAt(1,   Qt.GlobalColor.transparent)
-                painter.setBrush(eg); painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(eg)
+                painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(QPointF(ecx, eye_cy), glow_r, glow_r)
 
                 # eye body (smooth rounded capsule)
@@ -1780,7 +1865,8 @@ class EnhancedFlexieOrb(QWidget):
                         int(self._rot*16 + 180*16), 100*16)
 
                 # pupil highlight (tracks mouse / scan)
-                hw = eye_w * 0.22; hh = eye_h * 0.30
+                hw = eye_w * 0.22
+                hh = eye_h * 0.30
                 painter.setBrush(QColor(255, 255, 255, int(240 * self._eye_openness)))
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(
@@ -1802,6 +1888,24 @@ class FlexieUI(QWidget):
         self.orb = EnhancedFlexieOrb()
         self.layout.addWidget(self.orb)
         self.setFixedSize(300, 300)
+
+        # Mail notification badge (red dot + count) overlaid on the orb
+        self.mail_badge = QLabel("0", self)
+        self.mail_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.mail_badge.setFixedSize(26, 26)
+        self.mail_badge.setStyleSheet(
+            "background:#FF3B30;color:#FFFFFF;border-radius:13px;"
+            "font-weight:bold;font-size:11px;border:2px solid #FFFFFF;"
+        )
+        self.mail_badge.hide()
+        self.mail_badge.move(228, 46)
+        self._pending_approval_id = None
+
+        # Poll unread mail count every 60s to keep the badge fresh
+        self.mail_poll_timer = QTimer(self)
+        self.mail_poll_timer.timeout.connect(lambda: self._send_udp("MAIL_COUNT"))
+        self.mail_poll_timer.start(60000)
+        QTimer.singleShot(8000, lambda: self._send_udp("MAIL_COUNT"))
 
         self.drag_pos = QPoint()
         self._last_activity = time.time()
@@ -2009,7 +2113,8 @@ class FlexieUI(QWidget):
         # Active provider
         if prov:
             active_val = prov if prov != "auto (fallback chain)" else "auto"
-            if active_val.startswith("auto"): active_val = "auto"
+            if active_val.startswith("auto"):
+                active_val = "auto"
             self._send_udp(f"SET_ACTIVE_PROVIDER:{active_val}")
         # Model for that provider
         if prov and prov != "auto" and model and model != "auto":
@@ -2027,10 +2132,13 @@ class FlexieUI(QWidget):
 
     def _set_volume(self, val):
         self._send_udp(f"SET_VOLUME:{val}")
-        if val == 0: self.panel.btn_mute.setText("🔊 UNMUTE")
-        else: self.panel.btn_mute.setText("🔇 MUTE")
+        if val == 0:
+            self.panel.btn_mute.setText("🔊 UNMUTE")
+        else:
+            self.panel.btn_mute.setText("🔇 MUTE")
 
-    def _set_brightness(self, val): self._send_udp(f"SET_BRIGHTNESS:{val}")
+    def _set_brightness(self, val):
+        self._send_udp(f"SET_BRIGHTNESS:{val}")
 
     def _apply_mode_visuals(self, mode):
         """Visual-only update (no UDP) — shared by local and remote mode changes."""
@@ -2053,7 +2161,8 @@ class FlexieUI(QWidget):
                 QLabel#SectionHeader {{ color: {accent}; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 2.5px; }}
             """)
             self.panel.container.setObjectName("MainContainer")
-            self.panel.container.style().unpolish(self.panel.container); self.panel.container.style().polish(self.panel.container)
+            self.panel.container.style().unpolish(self.panel.container)
+            self.panel.container.style().polish(self.panel.container)
         except Exception as _e:
             logging.debug("[interface/ui.py:1829] Swallowed exception: %s: %s", type(_e).__name__, _e)
         try:
@@ -2068,11 +2177,14 @@ class FlexieUI(QWidget):
                 self.orb._secondary_from = self.orb._secondary_to
                 self.orb._accent_to = QColor(accent)
                 self.orb._secondary_to = QColor(secondary)
-                self.orb.color_anim.stop(); self.orb._color_blend = 0.0; self.orb.color_anim.start()
+                self.orb.color_anim.stop()
+                self.orb._color_blend = 0.0
+                self.orb.color_anim.start()
         except Exception as _e:
             logging.debug("[interface/ui.py:1842] Swallowed exception: %s: %s", type(_e).__name__, _e)
         self.orb.set_state(self.orb.state)
-        try: self.panel.refresh_provider_badge()
+        try:
+            self.panel.refresh_provider_badge()
         except Exception as _e:
             logging.debug("[interface/ui.py:1845] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
@@ -2082,10 +2194,50 @@ class FlexieUI(QWidget):
         if send_udp:
             self._send_udp(f"mode:{mode}")
 
+    def set_mail_badge(self, count):
+        """Show/hide the red mail badge on the orb with the unread count."""
+        try:
+            n = int(count)
+        except (ValueError, TypeError):
+            n = 0
+        if n > 0:
+            self.mail_badge.setText(str(n if n < 100 else "99+"))
+            self.mail_badge.show()
+            self.mail_badge.raise_()
+        else:
+            self.mail_badge.hide()
+
+    def _show_approval_popup(self, value):
+        """Modal popup asking the user to approve/reject a permission request."""
+        try:
+            import json
+            data = json.loads(value)
+            action = data.get("action", value)
+            req_id = data.get("id")
+        except Exception:
+            action = str(value)
+            req_id = None
+        self._pending_approval_id = req_id
+        box = QMessageBox(self)
+        box.setWindowTitle("Permission Required")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(f"Flexie wants to:\n{action}")
+        box.setInformativeText("Approve to proceed, or reject to cancel.")
+        approve_btn = box.addButton("Approve", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Reject", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() == approve_btn:
+            cmd = f"APPROVE:{req_id}" if req_id else "APPROVE"
+            self._send_udp(cmd)
+        else:
+            cmd = f"REJECT:{req_id}" if req_id else "CANCEL"
+            self._send_udp(cmd)
+
     def _process_udp(self):
         while self.udp_sock.hasPendingDatagrams():
             data, _, _ = self.udp_sock.readDatagram(65535)
-            if not data: continue
+            if not data:
+                continue
             msg = data.decode('utf-8')
             if ":" in msg:
                 tag, val = msg.split(":", 1)
@@ -2097,19 +2249,36 @@ class FlexieUI(QWidget):
                     accent = _acc
                     self.panel.status_indicator.setStyleSheet(f"background-color: {accent}; border-radius: 6px;")
                 elif tag == "MODE":
-                    try: self.panel.mode_combo.blockSignals(True)
+                    try:
+                        self.panel.mode_combo.blockSignals(True)
                     except Exception as _e:
                         logging.debug("[interface/ui.py:1869] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.panel.mode_combo.setCurrentText(val.capitalize())
-                    try: self.panel.mode_combo.blockSignals(False)
+                    try:
+                        self.panel.mode_combo.blockSignals(False)
                     except Exception as _e:
                         logging.debug("[interface/ui.py:1872] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                    try: self._apply_mode_visuals(val)
+                    try:
+                        self._apply_mode_visuals(val)
                     except Exception as _e:
                         logging.debug("[interface/ui.py:1874] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.panel.status_label.setText(f"MODE → {val.upper()}")
                 elif tag == "QUIT":
                     QApplication.quit()
+                elif tag == "APPROVAL_REQUEST":
+                    self._show_approval_popup(val)
+                elif tag == "APPROVAL_RESOLVED":
+                    self.panel.status_label.setText(f"APPROVAL: {val.upper()}")
+                elif tag == "MAIL_COUNT":
+                    self.set_mail_badge(val.strip())
+                elif tag == "MAIL_INBOX":
+                    try:
+                        import ast
+                        _items = ast.literal_eval(val)
+                        if isinstance(_items, list):
+                            self.set_mail_badge(len(_items))
+                    except Exception as _e:
+                        logging.debug("[ui:mail_inbox] %s", _e)
                 elif tag == "SAY":
                     # Use setMarkdown for proper code block and formatting support
                     self.panel.result_area.setMarkdown(val)
@@ -2125,7 +2294,8 @@ class FlexieUI(QWidget):
 
     def _reflow_ui(self):
         """Forces the glass container to recalculate its dimensions based on content."""
-        if not self.panel: return
+        if not self.panel:
+            return
 
         # 1. Adjust the result area to its document content (adaptive width AND height)
         if self.panel.result_area.isVisible():
@@ -2193,16 +2363,20 @@ class FlexieUI(QWidget):
 
     def _handle_idle(self):
         idle = time.time() - self._last_activity
-        if self.orb.state in ["LISTENING", "PROCESSING", "SPEAKING"]: return
-        if idle > 60: self.orb.set_state("MINIMIZED")
-        elif idle > 25: self.orb.set_state("SLEEP")
+        if self.orb.state in ["LISTENING", "PROCESSING", "SPEAKING"]:
+            return
+        if idle > 60:
+            self.orb.set_state("MINIMIZED")
+        elif idle > 25:
+            self.orb.set_state("SLEEP")
 
     def mousePressEvent(self, event):
         self._set_activity()
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_pos = event.globalPosition().toPoint() - self.pos()
         elif event.button() == Qt.MouseButton.RightButton:
-            if self.panel.isVisible(): self.panel.hide_animated()
+            if self.panel.isVisible():
+                self.panel.hide_animated()
             else:
                 self.panel.set_minimal_mode(False) # FULL MODE ON ORB CLICK
                 self.panel.show_animated(self.pos() + QPoint(290, -100))
@@ -2213,7 +2387,8 @@ class FlexieUI(QWidget):
         self._set_activity()
         if event.buttons() == Qt.MouseButton.LeftButton:
             self.move(event.globalPosition().toPoint() - self.drag_pos)
-            if self.panel.isVisible(): self.panel.move(self.pos() + QPoint(290, -100))
+            if self.panel.isVisible():
+                self.panel.move(self.pos() + QPoint(290, -100))
         event.accept()
 
     def enterEvent(self, event):

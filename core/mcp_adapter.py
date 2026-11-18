@@ -13,9 +13,8 @@ import logging
 import os
 import subprocess
 import threading
-import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from core.action_result import ActionResult
 from core.tool_registry import PermissionLevel, ToolRegistry, ToolSchema, ToolSpec
@@ -28,9 +27,9 @@ class MCPServerConfig:
     """Configuration for an external MCP server."""
     name: str
     command: str
-    args: List[str] = field(default_factory=list)
-    env: Dict[str, str] = field(default_factory=dict)
-    cwd: Optional[str] = None
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+    cwd: str | None = None
     enabled: bool = True
     timeout: float = 30.0
 
@@ -63,15 +62,15 @@ class MCPStdioClient:
 
     def __init__(self, config: MCPServerConfig):
         self.config = config
-        self.proc: Optional[subprocess.Popen] = None
+        self.proc: subprocess.Popen | None = None
         self._req_id = 0
         self._lock = threading.Lock()
-        self._pending_requests: Dict[int, threading.Event] = {}
-        self._responses: Dict[int, dict] = {}
-        self._reader_thread: Optional[threading.Thread] = None
+        self._pending_requests: dict[int, threading.Event] = {}
+        self._responses: dict[int, dict] = {}
+        self._reader_thread: threading.Thread | None = None
         self._running = False
-        self.server_info: Dict[str, Any] = {}
-        self.capabilities: Dict[str, Any] = {}
+        self.server_info: dict[str, Any] = {}
+        self.capabilities: dict[str, Any] = {}
 
     def start(self) -> bool:
         """Spawn the server process and initialize the MCP session."""
@@ -158,7 +157,7 @@ class MCPStdioClient:
                 break
         self._running = False
 
-    def send_request(self, method: str, params: Optional[dict] = None, timeout: float = 15.0) -> Optional[dict]:
+    def send_request(self, method: str, params: dict | None = None, timeout: float = 15.0) -> dict | None:
         """Send a JSON-RPC request and wait for the response."""
         if not self._running or not self.proc or not self.proc.stdin:
             return None
@@ -198,7 +197,7 @@ class MCPStdioClient:
             return None
         return resp.get("result")
 
-    def send_notification(self, method: str, params: Optional[dict] = None):
+    def send_notification(self, method: str, params: dict | None = None):
         """Send a one-way notification."""
         if not self._running or not self.proc or not self.proc.stdin:
             return
@@ -214,14 +213,14 @@ class MCPStdioClient:
         except Exception as e:
             logger.warning("Failed to send notification to MCP %s: %s", self.config.name, e)
 
-    def list_tools(self) -> List[dict]:
+    def list_tools(self) -> list[dict]:
         """Query tools/list from server."""
         res = self.send_request("tools/list", {}, timeout=self.config.timeout)
         if not res or not isinstance(res, dict):
             return []
         return res.get("tools", [])
 
-    def call_tool(self, name: str, arguments: dict, timeout: Optional[float] = None) -> ActionResult:
+    def call_tool(self, name: str, arguments: dict, timeout: float | None = None) -> ActionResult:
         """Invoke tools/call on the server."""
         t = timeout or self.config.timeout
         res = self.send_request("tools/call", {"name": name, "arguments": arguments}, timeout=t)
@@ -254,8 +253,8 @@ class MCPStdioClient:
             except Exception:
                 try:
                     self.proc.kill()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logging.debug("[core/mcp_adapter.py:256] Swallowed exception: %s: %s", type(_e).__name__, _e)
             self.proc = None
 
 
@@ -267,10 +266,10 @@ class MCPManager:
 
     CONFIG_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "mcp_servers.json")
 
-    def __init__(self, registry: Optional[ToolRegistry] = None):
+    def __init__(self, registry: ToolRegistry | None = None):
         self.registry = registry
-        self.clients: Dict[str, MCPStdioClient] = {}
-        self.registered_tool_names: Dict[str, str] = {}  # tool_name -> server_name
+        self.clients: dict[str, MCPStdioClient] = {}
+        self.registered_tool_names: dict[str, str] = {}  # tool_name -> server_name
         self.logger = logging.getLogger("Flexie.MCPManager")
 
     def add_server(self, config: MCPServerConfig) -> bool:
@@ -317,7 +316,7 @@ class MCPManager:
         self.logger.info("Registered %d tools from MCP server '%s'", count, server_name)
         return count
 
-    def _adapt_mcp_tool_to_spec(self, server_name: str, client: MCPStdioClient, tool_data: dict) -> Optional[ToolSpec]:
+    def _adapt_mcp_tool_to_spec(self, server_name: str, client: MCPStdioClient, tool_data: dict) -> ToolSpec | None:
         """Convert standard MCP tool definition to Flexiee ToolSpec."""
         raw_name = tool_data.get("name")
         if not raw_name:
@@ -331,7 +330,7 @@ class MCPManager:
         properties = input_schema.get("properties", {})
         required_list = input_schema.get("required", [])
 
-        params: List[ToolSchema] = []
+        params: list[ToolSchema] = []
         for p_name, p_info in properties.items():
             raw_type = p_info.get("type", "string")
             type_map = {
@@ -374,12 +373,12 @@ class MCPManager:
             tags=["mcp", server_name],
         )
 
-    def load_configs(self) -> List[MCPServerConfig]:
+    def load_configs(self) -> list[MCPServerConfig]:
         """Load configured MCP servers from json."""
         if not os.path.exists(self.CONFIG_FILE):
             return []
         try:
-            with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
+            with open(self.CONFIG_FILE, encoding="utf-8") as f:
                 data = json.load(f)
             configs = []
             servers = data.get("mcpServers", data)
@@ -402,9 +401,9 @@ class MCPManager:
 
     def shutdown(self):
         """Stop all running MCP servers."""
-        for name, client in list(self.clients.items()):
+        for _name, client in list(self.clients.items()):
             try:
                 client.stop()
-            except Exception:
-                pass
+            except Exception as _e:
+                logging.debug("[core/mcp_adapter.py:407] Swallowed exception: %s: %s", type(_e).__name__, _e)
         self.clients.clear()

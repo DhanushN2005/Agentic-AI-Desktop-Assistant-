@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from utils.udp_auth import pack, unpack
 from utils.path_jail import (
     is_basename_safe,
     is_system_location,
     resolve_in_root,
 )
+from utils.udp_auth import pack, unpack
 
 
 # --- UDP auth ---

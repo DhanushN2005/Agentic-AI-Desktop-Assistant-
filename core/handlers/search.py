@@ -1,9 +1,8 @@
+import logging
 import re
 import subprocess
 import urllib.parse
 import webbrowser
-import logging
-
 
 _BROWSER_NAMES = ("chrome", "edge", "firefox", "browser", "opera", "brave")
 

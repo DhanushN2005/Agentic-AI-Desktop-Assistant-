@@ -1,9 +1,9 @@
+import logging
 import queue
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
-import logging
 
 
 class Event:
@@ -26,7 +26,7 @@ class EventBus:
     def __new__(cls, *args, **kwargs):
         with cls._lock:
             if not cls._instance:
-                cls._instance = super(EventBus, cls).__new__(cls)
+                cls._instance = super().__new__(cls)
                 cls._instance._init_bus()
             return cls._instance
 

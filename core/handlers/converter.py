@@ -1,5 +1,5 @@
-import re
 import logging
+import re
 
 _CURRENCY_USD = {
     "usd": 1.0, "dollar": 1.0, "dollars": 1.0, "us": 1.0,

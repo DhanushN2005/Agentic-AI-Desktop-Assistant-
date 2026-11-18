@@ -17,6 +17,7 @@ Complex/ambiguous goals get escalated to the GoalPlanner.
 """
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -259,11 +260,13 @@ class GoalPlanner:
     def _llm_decompose(self, goal: str, goal_id: str, context: str = "") -> TaskGraph:
         """Use LLM to decompose a complex goal."""
         # Get available tools
-        available_tools = []
         if self.tool_registry:
-            available_tools = self.tool_registry.list_tool_names()
-
-        tools_str = ", ".join(available_tools[:50]) if available_tools else "(use existing handlers)"
+            tools_str = ("\n").join(
+                f"- {t['name']}({self._param_names(t)}): {t['description']}"
+                for t in self.tool_registry.get_tools_for_llm()[:50]
+            ) or "(use existing handlers)"
+        else:
+            tools_str = "(use existing handlers)"
 
         prompt = f"""You are a task planner for a desktop AI assistant.
 Decompose the user's goal into sequential steps.
@@ -271,7 +274,8 @@ Decompose the user's goal into sequential steps.
 User Goal: "{goal}"
 Context: {context or "None"}
 
-Available Tools: {tools_str}
+Available Tools (use EXACT names and argument names; use "" for the tool if none fits):
+{tools_str}
 
 Return ONLY a JSON array of steps. Each step:
 {{
@@ -301,39 +305,78 @@ Rules:
                 steps_data = json.loads(match.group())
                 graph = TaskGraph(goal_id=goal_id, original_goal=goal)
 
-                for i, step_data in enumerate(steps_data):
+                for step_data in steps_data[: self.MAX_STEPS]:
+                    if not isinstance(step_data, dict):
+                        continue  # model output is untrusted: skip junk instead of failing the plan
                     verification_str = step_data.get("verification", "NONE")
                     try:
                         verification = VerificationStrategy[verification_str]
-                    except KeyError as _e:
-                        logging.debug("[core/goal_planner.py:308] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                    except (KeyError, TypeError):
                         verification = VerificationStrategy.NONE
 
-                    step = TaskStep(
-                        task_id=f"step_{i}",
-                        description=step_data.get("description", ""),
-                        tool=step_data.get("tool", ""),
-                        arguments=step_data.get("arguments", {}),
-                        depends_on=[f"step_{i-1}"] if i > 0 else [],
-                        verification=verification,
-                        timeout=step_data.get("timeout", 15.0),
-                        permission_level=step_data.get("permission_level", "SAFE_ACTION"),
-                        requires_confirmation=step_data.get("requires_confirmation", False),
-                    )
+                    # Number ACCEPTED steps contiguously so depends_on never points at a
+                    # skipped step (which would leave the executor with "no ready steps").
+                    step = self._sanitize_step(len(graph.steps), step_data, verification)
+                    if step is None:
+                        continue
                     graph.add_step(step)
 
-                return graph
+                if graph.steps:
+                    return graph
+                self.logger.warning("[GOAL_PLANNER] LLM plan had no valid steps; using deterministic plan.")
         except Exception as e:
             self.logger.warning(f"[GOAL_PLANNER] LLM parse error: {e}")
 
         # Fallback to deterministic
         return self._deterministic_decompose(goal, goal_id)
 
+    @staticmethod
+    def _param_names(tool_def: dict) -> str:
+        params = tool_def.get("parameters") or {}
+        props = params.get("properties", params) if isinstance(params, dict) else {}
+        return ", ".join(props) if isinstance(props, dict) else ""
+
+    MAX_STEPS = 8
+    MAX_STEP_TIMEOUT = 120.0
+
+    def _registered(self, name: str) -> bool:
+        reg = self.tool_registry
+        return bool(name and reg is not None and reg.get(name) is not None)
+
+    def _sanitize_step(self, i: int, data: Any, verification: "VerificationStrategy") -> "TaskStep | None":
+        """Treat the model's plan as untrusted input: coerce types, drop unknown tools,
+        cap size. Risk level is NOT taken from the model — the executor derives
+        permissions from the registered tool, so a model cannot label a step 'safe'."""
+        if not isinstance(data, dict):
+            return None
+        description = str(data.get("description", "")).strip()[:300]
+        if not description:
+            return None
+        tool = data.get("tool", "")
+        tool = tool if isinstance(tool, str) and self._registered(tool) else ""
+        args = data.get("arguments", {})
+        args = args if isinstance(args, dict) and tool else {}
+        try:
+            timeout = min(max(float(data.get("timeout", 15.0)), 1.0), self.MAX_STEP_TIMEOUT)
+        except (TypeError, ValueError):
+            timeout = 15.0
+        return TaskStep(
+            task_id=f"step_{i}",
+            description=description,
+            tool=tool,
+            arguments=args,
+            depends_on=[f"step_{i-1}"] if i > 0 else [],
+            verification=verification,
+            timeout=timeout,
+        )
+
     def _match_tool(self, description: str) -> str:
         """Match a step description to a tool name."""
         desc_lower = description.lower()
         for keyword, tool in self.TOOL_KEYWORDS.items():
-            if keyword in desc_lower:
+            # Whole-word match, and only tools that are actually registered; anything
+            # else is handled by the normal handler pipeline instead of a dead name.
+            if re.search(r"\b" + re.escape(keyword) + r"\b", desc_lower) and self._registered(tool):
                 return tool
         return ""
 

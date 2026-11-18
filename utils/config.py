@@ -1,9 +1,12 @@
+import getpass
 import logging
 import os
 import re
 import tempfile
 
 from dotenv import load_dotenv
+
+from utils.paths import data_file
 
 # Load .env file from project root
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'), override=True)
@@ -155,8 +158,8 @@ def _write_env_file(updates: dict) -> bool:
         try:
             with open(path, encoding="utf-8") as f:
                 lines = f.readlines()
-            for l in lines:
-                s = l.strip()
+            for line in lines:
+                s = line.strip()
                 if s and not s.startswith("#") and "=" in s:
                     existing_keys.add(s.split("=", 1)[0].strip())
         except Exception as _e:
@@ -165,15 +168,15 @@ def _write_env_file(updates: dict) -> bool:
     # Update existing lines
     new_lines = []
     updated = set()
-    for l in lines:
-        s = l.strip()
+    for line in lines:
+        s = line.strip()
         if s and not s.startswith("#") and "=" in s:
             k = s.split("=", 1)[0].strip()
             if k in updates:
                 new_lines.append(f"{k}={updates[k]}\n")
                 updated.add(k)
                 continue
-        new_lines.append(l)
+        new_lines.append(line)
     # Append new keys
     for k, v in updates.items():
         if k not in updated and k not in existing_keys:
@@ -191,8 +194,8 @@ def _write_env_file(updates: dict) -> bool:
         except BaseException:
             try:
                 os.unlink(tmp)
-            except OSError:
-                pass
+            except OSError as _e:
+                logging.debug("[utils/config.py:194] Swallowed exception: %s: %s", type(_e).__name__, _e)
             raise
         # Reload into process env
         for k, v in updates.items():
@@ -227,9 +230,9 @@ def _mask_key(key: str) -> str:
 class Config:
     # Basic Info
     NAME       = "Flexie 2.0"
-    USER_NAME  = "Dhanush"
+    USER_NAME  = os.getenv("FLEXIE_USER_NAME") or getpass.getuser()
     WAKE_WORDS = ["flexie", "flexi", "alexi", "lexi", "flaxy", "arsis", "wake up", "hello flexie", "hello flexi", "hey flexie", "hey flexi", "activate"]
-    DB_NAME    = "flexie_intelligence.db"
+    DB_NAME    = data_file("flexie_intelligence.db")
     LOG_FILE   = "flexie_activity.log"
     CONVERSATION_HISTORY_TURNS = _env_number("FLEXIE_CONVERSATION_HISTORY_TURNS", 8, int)
     CONVERSATION_HISTORY_CHARS = _env_number("FLEXIE_CONVERSATION_HISTORY_CHARS", 8000, int)
@@ -257,6 +260,7 @@ class Config:
     JOB_VOICE_CLARIFY_TIMEOUT = _env_number("FLEXIE_JOB_VOICE_CLARIFY_TIMEOUT", 20, int)
     JOB_BRIDGE_API_KEY    = os.getenv("FLEXIE_JOB_BRIDGE_API_KEY", "flexie-local-bridge")
     JOB_DEFAULT_STACK     = os.getenv("FLEXIE_JOB_DEFAULT_STACK", "python-flask")
+    JOB_AUTO_RESUME_ON_STARTUP = _env_bool("FLEXIE_JOB_AUTO_RESUME_ON_STARTUP", True)
     GIT_USER_NAME         = os.getenv("FLEXIE_GIT_USER_NAME", "Flexie Dev Assistant")
     GIT_USER_EMAIL        = os.getenv("FLEXIE_GIT_USER_EMAIL", "flexie@local")
     SNAP_PATH  = os.path.join(os.getcwd(), "captures", "flexie_snap.png")
@@ -427,7 +431,7 @@ class Config:
 
     SYSTEM_PROMPT_STANDARD = (
         "You are Flexie, a warm, witty AI companion with the personality of Jarvis "
-        "from Iron Man — for your user, Dhanush. "
+        "from Iron Man — for your user, " + USER_NAME + ". "
         "You control the screen, browser, and system, so act on requests directly.\n"
         "VOICE RULES (your replies are SPOKEN aloud, so write for the ear):\n"
         "- Conversational and personable: natural contractions ('I'll', 'that's'), "
@@ -460,7 +464,7 @@ class Config:
     )
 
     SYSTEM_PROMPT_DEVELOPER = (
-        "You are Flexie, a developer-first AI assistant for Dhanush.\n"
+        "You are Flexie, a developer-first AI assistant for " + USER_NAME + ".\n"
         "RULES:\n"
         "- Think and respond like a senior engineer: precise, terse, technical.\n"
         "- Prefer code, commands, and tools over explanations.\n"
@@ -471,7 +475,7 @@ class Config:
     )
 
     SYSTEM_PROMPT_FOCUS = (
-        "You are Flexie in FOCUS mode for Dhanush.\n"
+        "You are Flexie in FOCUS mode for " + USER_NAME + ".\n"
         "RULES:\n"
         "- DO NOT disturb. Only respond to direct commands.\n"
         "- NEVER make suggestions, give tips, or start conversations.\n"
@@ -482,7 +486,7 @@ class Config:
     )
 
     SYSTEM_PROMPT_MINIMAL = (
-        "You are Flexie in MINIMAL mode for Dhanush.\n"
+        "You are Flexie in MINIMAL mode for " + USER_NAME + ".\n"
         "RULES:\n"
         "- Be extremely terse. Every reply 8 words or fewer.\n"
         "- No greetings, no humor, no filler, no explanations unless asked.\n"

@@ -30,6 +30,10 @@ class PermissionSystem:
         # Expiry (monotonic) for temporary escalations; None = not escalated.
         self._escalation_expires: float | None = None
         self._pending_approval: dict | None = None
+        # Sources of untrusted content (web pages, email, MCP output) seen this user turn.
+        # While non-empty, side-effecting SAFE_ACTION tools need explicit approval, so
+        # injected instructions in that content cannot silently trigger actions.
+        self._untrusted_sources: set[str] = set()
         self._on_approval_callback: Callable[[dict], None] | None = None
 
         # Patterns that classify actions into permission levels
@@ -86,6 +90,23 @@ class PermissionSystem:
         for level, patterns in self._level_patterns.items():
             self._compiled[level] = [re.compile(p, re.IGNORECASE) for p in patterns]
 
+    # Browsing/reading tools stay free even when tainted; these are the effectful ones.
+    _READ_ONLY_TAGS = frozenset({"web", "search", "extract", "intelligence"})
+
+    def mark_untrusted(self, source: str):
+        """Record that untrusted content (web/email/MCP output) entered this turn."""
+        if source and source not in self._untrusted_sources:
+            self._untrusted_sources.add(source)
+            self.logger.info(f"[PERMISSION] Untrusted content from {source}: effectful actions now need approval")
+
+    def clear_taint(self):
+        """Call at the start of each new user turn."""
+        self._untrusted_sources.clear()
+
+    @property
+    def is_tainted(self) -> bool:
+        return bool(self._untrusted_sources)
+
     def classify_action(self, command: str) -> PermissionLevel:
         """
         Classifies a command into a permission level based on pattern matching.
@@ -134,12 +155,12 @@ class PermissionSystem:
     ) -> tuple[bool, str, PermissionLevel | None]:
         """
         Check if a tool can be executed given the current permission level.
-        
+
         Args:
             tool: Either a ToolSpec object or a string (tool name / command text)
             command_context: Additional context for classification
             current_level: Override current permission level
-        
+
         Returns:
             (allowed: bool, reason: str, required_level: Optional[PermissionLevel])
         """
@@ -160,6 +181,16 @@ class PermissionSystem:
             context_level = self.classify_action(command_context)
             # Use the more restrictive of tool's default and context-derived level
             required = PermissionLevel(max(required.value, context_level.value))
+
+        # Taint: after untrusted content entered the turn, effectful SAFE_ACTION tools
+        # (click/fill/open...) are treated as needing confirmation.
+        if (
+            self._untrusted_sources
+            and required == PermissionLevel.SAFE_ACTION
+            and hasattr(tool, "tags")
+            and not (set(getattr(tool, "tags", [])) & self._READ_ONLY_TAGS)
+        ):
+            required = PermissionLevel.USER_CONFIRMATION
 
         if required.value <= effective_level.value:
             return True, "Allowed", required
@@ -197,6 +228,46 @@ class PermissionSystem:
         self._escalation_expires = (_time.monotonic() + ttl_seconds) if ttl_seconds and ttl_seconds > 0 else None
         self.logger.info(f"[PERMISSION] Escalated: {old.name} -> {level.name} (ttl={ttl_seconds}s)")
 
+    def await_approval(
+        self,
+        action: str,
+        description: str,
+        level: PermissionLevel,
+        voice_confirm: Callable[[str], bool] | None = None,
+        wait_seconds: float = 20.0,
+        is_cancelled: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Ask the user to approve ``action`` and block until answered or timed out.
+
+        Voice users are asked directly (the action thread is busy, so a spoken
+        "confirm" could not be processed any other way); UI/API approval is polled.
+        Returns True only on an explicit approval; otherwise the request is rejected
+        (fail closed). The caller should ``consume_approval()`` once the action ran.
+        """
+        import time as _time
+        self.create_approval_request(action, details=description, level=level)
+        if callable(voice_confirm):
+            try:
+                if voice_confirm(f"I need your approval to {description}. Should I go ahead?"):
+                    self.approve_request()
+            except Exception as e:
+                self.logger.debug(f"[PermissionSystem] voice approval failed: {e}")
+        deadline = _time.monotonic() + wait_seconds
+        while True:
+            self._maybe_expire_escalation()
+            if self.current_level.value >= level.value:
+                return True
+            if _time.monotonic() >= deadline or (is_cancelled and is_cancelled()):
+                break
+            _time.sleep(0.25)
+        self.reject_request()
+        return False
+
+    def consume_approval(self):
+        """End an approval's escalation as soon as the approved action finishes, so a
+        single approval cannot silently authorize later, unrelated actions."""
+        self.reset()
+
     def reset(self):
         """Reset to default permission level."""
         self._escalation_expires = None
@@ -233,7 +304,7 @@ class PermissionSystem:
         """Return the current pending approval request, if any."""
         return self._pending_approval
 
-    def approve_request(self, request_id: str | None = None, ttl_seconds: float = 300.0) -> bool:
+    def approve_request(self, request_id: str | None = None, ttl_seconds: float = 60.0) -> bool:
         """Approve the pending request and escalate permission."""
         if not self._pending_approval:
             return False

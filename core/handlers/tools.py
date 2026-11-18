@@ -1,9 +1,9 @@
 import ast
+import logging
 import operator
 import re
 
 from engines.system import SystemCtrl
-import logging
 
 
 def _safe_eval(node):

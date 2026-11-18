@@ -105,7 +105,7 @@ SKIP_DIRS = {
 class CodeSearchEngine:
     """
     Searches the local codebase for code patterns.
-    
+
     Usage:
         engine = CodeSearchEngine()  # defaults to project root
         engine = CodeSearchEngine(workspace_path="/path/to/project")
@@ -131,13 +131,13 @@ class CodeSearchEngine:
     ) -> SearchResult:
         """
         Search for text patterns in the codebase.
-        
+
         Args:
             query: Search query (supports regex)
             extensions: File extensions to search (e.g., [".py", ".js"]). None = all code files.
             max_results: Maximum number of results
             context_lines: Lines of context around each match
-        
+
         Returns:
             SearchResult with structured matches
         """

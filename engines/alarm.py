@@ -1,8 +1,8 @@
+import logging
 import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
-import logging
 
 
 class AlarmEngine:
@@ -113,6 +113,40 @@ class AlarmEngine:
                 timer.cancel()
                 return f"Timer {timer_id} cancelled."
             return f"Timer {timer_id} not found."
+
+    def cancel_all_alarms(self) -> str:
+        with self._lock:
+            n = len(self._alarms)
+            for t in self._alarms.values():
+                t.cancel()
+            self._alarms.clear()
+            return f"Cancelled {n} alarm(s)." if n else "No alarms to cancel."
+
+    def cancel_all_timers(self) -> str:
+        with self._lock:
+            n = len(self._timers)
+            for t in self._timers.values():
+                t.cancel()
+            self._timers.clear()
+            return f"Cancelled {n} timer(s)." if n else "No timers to cancel."
+
+    def cancel_last_timer(self) -> str:
+        with self._lock:
+            if not self._timers:
+                return "No active timers."
+            last_id = list(self._timers.keys())[-1]
+            t = self._timers.pop(last_id)
+            t.cancel()
+            return f"Cancelled {last_id}."
+
+    def cancel_last_alarm(self) -> str:
+        with self._lock:
+            if not self._alarms:
+                return "No active alarms."
+            last_id = list(self._alarms.keys())[-1]
+            t = self._alarms.pop(last_id)
+            t.cancel()
+            return f"Cancelled {last_id}."
 
     def list_alarms(self) -> str:
         if not self._alarms:

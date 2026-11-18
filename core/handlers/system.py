@@ -1,13 +1,12 @@
+import logging
 import os
 import re
-import time
-import logging
-import webbrowser
 import subprocess
 import sys
+import time
+import webbrowser
 
 from engines.self_awareness import MODE_MAP
-
 from engines.system import SystemCtrl
 from utils.config import Config
 from utils.helpers import get_numbers
@@ -104,12 +103,31 @@ def handle_snap(orch, c):
 
 def handle_volume(orch, c, silent):
     nums = get_numbers(c)
-    if nums:
-        v = nums[0]
-    elif any(x in c for x in ["up", "raise", "increase", "louder", "higher", "max"]):
-        v = min(100, SystemCtrl.get_volume() + 5)
-    elif any(x in c for x in ["down", "lower", "decrease", "quieter", "reduce", "min"]):
-        v = max(0, SystemCtrl.get_volume() - 5)
+    curr = SystemCtrl.get_volume()
+    is_down = any(x in c for x in ["down", "lower", "decrease", "quieter", "reduce", "drop"])
+    is_up = any(x in c for x in ["up", "raise", "increase", "louder", "higher", "boost"])
+
+    if "mute" in c and "unmute" not in c:
+        v = 0
+    elif "unmute" in c:
+        v = 30 if curr == 0 else curr
+    elif nums:
+        amt = nums[0]
+        # Relative adjustment: e.g. "down volume by 20", "volume down 20", "turn volume up by 15"
+        if "by" in c or (is_down and "to" not in c) or (is_up and "to" not in c):
+            if is_down:
+                v = max(0, curr - amt)
+            elif is_up:
+                v = min(100, curr + amt)
+            else:
+                v = max(0, min(100, amt))
+        else:
+            # Absolute target: e.g. "set volume 40", "volume to 70", "volume 50"
+            v = max(0, min(100, amt))
+    elif is_up or "max" in c:
+        v = 100 if "max" in c else min(100, curr + 5)
+    elif is_down or "min" in c:
+        v = 0 if "min" in c else max(0, curr - 5)
     else:
         v = 50
     SystemCtrl.set_volume(v)
@@ -160,7 +178,7 @@ def _open_browser_only(orch, browser_name: str, silent: bool):
     else:
         # Chrome may already be open — just acknowledge
         if not silent:
-            orch.speak(f"Chrome is ready for you.")
+            orch.speak("Chrome is ready for you.")
     return True
 
 
@@ -324,7 +342,7 @@ def handle_comm(orch, c):
 
 def handle_voice(orch, c):
     if "test" in c or "can you hear me" in c:
-        orch.speak("I can hear you loud and clear, Dhanush. If you can hear me too, then our voice systems are working perfectly.")
+        orch.speak(f"I can hear you loud and clear, {Config.USER_NAME}. If you can hear me too, then our voice systems are working perfectly.")
     elif "diagnose" in c or "check" in c:
         orch.speak("Starting voice hardware diagnostic.")
         try:
@@ -363,13 +381,13 @@ def handle_run_cmd(orch, c):
     trigger_words = ["run command", "execute", "run cmd"]
     for word in trigger_words:
         c = c.replace(word, "").strip()
-    
+
     # Get the CMD command
     cmd = c.strip()
     if not cmd:
         orch.speak("Please specify a command to run. Examples: dir, cd, type filename.")
         return True
-    
+
     # Execute the command
     result = SystemCtrl.run_cmd(cmd)
     orch.speak(result)

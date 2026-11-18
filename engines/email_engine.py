@@ -1,14 +1,14 @@
 import email
 import email.header
 import imaplib
-import smtplib
 import logging
+import smtplib
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formatdate
 
 from utils.config import Config
-
 
 log = logging.getLogger("Flexie.Email")
 
@@ -40,23 +40,48 @@ def _extract_body(msg) -> str:
                     charset = part.get_content_charset() or "utf-8"
                     body = part.get_payload(decode=True).decode(charset, errors="ignore")
                     break
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logging.debug("[engines/email_engine.py:42] Swallowed exception: %s: %s", type(_e).__name__, _e)
     else:
         try:
             charset = msg.get_content_charset() or "utf-8"
             body = msg.get_payload(decode=True).decode(charset, errors="ignore")
-        except Exception:
-            pass
+        except Exception as _e:
+            logging.debug("[engines/email_engine.py:48] Swallowed exception: %s: %s", type(_e).__name__, _e)
     return body.strip()
 
 
+_cached_imap = None
+_cached_imap_time = 0.0
+
+
 def _imap_connect():
-    """Return an authenticated IMAP4_SSL connection or raise."""
+    """Return an authenticated IMAP4_SSL connection with 60s session reuse."""
+    global _cached_imap, _cached_imap_time
     if not (Config.EMAIL_ADDRESS and Config.EMAIL_PASSWORD):
         raise RuntimeError("Email credentials not configured (EMAIL_ADDRESS / EMAIL_PASSWORD).")
+
+    now = time.time()
+    if _cached_imap is not None and (now - _cached_imap_time < 60):
+        try:
+            status, _ = _cached_imap.noop()
+            if status == "OK":
+                _cached_imap_time = now
+                return _cached_imap
+        except Exception:
+            _cached_imap = None
+
+    if _cached_imap:
+        try:
+            _cached_imap.logout()
+        except Exception:
+            pass
+        _cached_imap = None
+
     m = imaplib.IMAP4_SSL("imap.gmail.com")
     m.login(Config.EMAIL_ADDRESS, Config.EMAIL_PASSWORD)
+    _cached_imap = m
+    _cached_imap_time = now
     return m
 
 
@@ -403,9 +428,12 @@ class EmailEngine:
         """Construct a Gmail web composer URL for browser fallback."""
         import urllib.parse
         params = {"view": "cm", "fs": "1"}
-        if to:      params["to"] = to
-        if subject: params["su"] = subject
-        if body:    params["body"] = body[:2000]
+        if to:
+            params["to"] = to
+        if subject:
+            params["su"] = subject
+        if body:
+            params["body"] = body[:2000]
         return f"https://mail.google.com/mail/?{urllib.parse.urlencode(params)}"
 
     # ─────────────────────────────────────────────────────────────────

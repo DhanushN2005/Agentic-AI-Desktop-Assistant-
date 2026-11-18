@@ -23,7 +23,7 @@ ALWAYS_SIMPLE_INTENTS = {
     "dictionary", "wiki", "pomodoro", "ip_lookup", "color_info",
     "lorem", "uuid", "tip_calc", "body_metrics", "age_calc",
     "password", "qr_code", "text_tools", "hash_encoder",
-    "json_fmt", "memory_system", "list_reminders",
+    "json_fmt", "memory_system",    "list_reminders", "todo_list",
     "local_code_search", "clipboard_mgr",
     "code_gen", "research", "file_save", "automation",
 }
@@ -48,7 +48,7 @@ CANCEL_PATTERNS = [
 class HybridRouter:
     """
     Wraps the existing IntentRouter with intelligent escalation.
-    
+
     Simple commands → fast deterministic path (existing system).
     Complex commands → GoalPlanner → ToolRegistry execution.
     """
@@ -70,10 +70,13 @@ class HybridRouter:
         self._complex_patterns = [re.compile(p, re.IGNORECASE) for p in COMPLEX_PATTERNS]
         self._cancel_patterns = [re.compile(p, re.IGNORECASE) for p in CANCEL_PATTERNS]
 
-    def classify(self, command: str) -> str:
+    def classify(self, command: str, routed: tuple[str, float] | None = None) -> str:
         """
         Classify a command as 'simple' or 'complex'.
-        
+
+        ``routed`` is an already-computed ``(intent, confidence)`` from the caller;
+        passing it avoids re-running the regex router on the same text.
+
         Returns:
             "simple" — use deterministic router
             "complex" — use GoalPlanner + tool execution
@@ -99,13 +102,16 @@ class HybridRouter:
                 is_save = bool(re.match(r"^(save|export|write)\b", parts[1]))
                 if is_cr and is_save:
                     return "simple"
-            # Check complex patterns first
-            if any(p.search(cmd) for p in self._complex_patterns):
-                return "complex"
+            # A bare "and" / comma inside a phrase ("rock and roll", "salt, pepper") is
+            # not a sequence. If the router already matches the WHOLE command with
+            # high confidence and there is no real sequencing word, keep it simple.
+            sequencing = re.search(r"\b(then|after that|and then|finally|next|also|after)\b", cmd)
+            if not sequencing and routed is not None and routed[1] >= 0.9:
+                return "simple"
             return "complex"
 
         # Check if the intent is always simple
-        intent, confidence = self.router.route(cmd)
+        intent, confidence = routed if routed is not None else self.router.route(cmd)
         if intent in ALWAYS_SIMPLE_INTENTS:
             return "simple"
 
@@ -132,7 +138,7 @@ class HybridRouter:
     def route(self, command: str) -> tuple[str, float, str]:
         """
         Route a command through the hybrid system.
-        
+
         Returns:
             (intent, confidence, mode) where mode is "simple" or "complex"
         """
@@ -151,7 +157,7 @@ class HybridRouter:
     def should_escalate(self, intent: str, confidence: float, command: str) -> bool:
         """
         Determine if a routed intent should be escalated to the agent planner.
-        
+
         This is called AFTER the deterministic router to decide if the
         agent planner should take over for better handling.
         """

@@ -5,11 +5,8 @@ Quick smoke-test for the two voice-command bugs fixed in handle_app_op:
   3. "in the opened chrome search for animation" → routes to browser_search
 """
 import re
-import sys
-import types
 import unittest
 from unittest.mock import MagicMock, patch
-
 
 # ── Minimal stubs so we can import without the full runtime ─────────────────
 
@@ -46,7 +43,8 @@ with patch.dict("sys.modules", {
     "utils.config": MagicMock(Config=MagicMock(MODES=[])),
     "utils.helpers": MagicMock(),
 }):
-    import importlib.util, pathlib
+    import importlib.util
+    import pathlib
     spec = importlib.util.spec_from_file_location(
         "core.handlers.system",
         pathlib.Path(__file__).parent.parent / "core" / "handlers" / "system.py",

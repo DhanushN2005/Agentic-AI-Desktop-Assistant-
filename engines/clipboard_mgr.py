@@ -1,7 +1,9 @@
-import time
+import logging
 import sqlite3
 import threading
-import logging
+import time
+
+from utils.paths import data_file
 
 try:
     import pyperclip
@@ -14,8 +16,8 @@ except ImportError as _e:
 class ClipboardManagerEngine:
     """Clipboard history manager using SQLite."""
 
-    def __init__(self, db_path: str = "clipboard_history.db"):
-        self._db_path = db_path
+    def __init__(self, db_path: str | None = None):
+        self._db_path = db_path or data_file("clipboard_history.db")
         self._lock = threading.Lock()
         self._last_content = ""
         self._init_db()
@@ -62,7 +64,7 @@ class ClipboardManagerEngine:
         if _CLIP_OK:
             pyperclip.copy(text)
         self._add(text)
-        return f"Copied to clipboard."
+        return "Copied to clipboard."
 
     def paste(self) -> str:
         if _CLIP_OK:

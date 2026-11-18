@@ -5,6 +5,7 @@ import threading
 import time
 
 from utils.config import Config
+from utils.sql_like import like_contains
 
 
 class MemoryEngine:
@@ -27,7 +28,7 @@ class MemoryEngine:
                     task TEXT, trigger_ts REAL, done INTEGER DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
                 CREATE TABLE IF NOT EXISTS chat_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     role TEXT, content TEXT, ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS conversation_turns (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,7 +61,20 @@ class MemoryEngine:
     def forget(self, key):
         with self._lock:
             cur = self.conn.cursor()
-            cur.execute("DELETE FROM memory WHERE key=?", (key,)); self.conn.commit()
+            cur.execute("DELETE FROM memory WHERE key=?", (key,))
+            self.conn.commit()
+
+    def forget_matching(self, text: str) -> int:
+        """Delete stored facts whose key or value contains ``text``. Returns rows removed."""
+        pat = like_contains(text)
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "DELETE FROM memory WHERE key LIKE ? ESCAPE '!' OR value LIKE ? ESCAPE '!'",
+                (pat, pat),
+            )
+            self.conn.commit()
+            return cur.rowcount
 
     def log_activity(self, cmd):
         ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -127,7 +141,8 @@ class MemoryEngine:
     def set_setting(self, k, v):
         with self._lock:
             cur = self.conn.cursor()
-            cur.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (k, str(v))); self.conn.commit()
+            cur.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (k, str(v)))
+            self.conn.commit()
 
     def get_setting(self, k, default):
         with self._lock:

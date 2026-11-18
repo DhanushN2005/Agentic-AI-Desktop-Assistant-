@@ -1,8 +1,8 @@
+import logging
 import re
 from difflib import get_close_matches
 
 from utils.config import Config
-import logging
 
 # Common typo corrections for voice/typing errors
 TYPO_MAP = {
@@ -82,6 +82,10 @@ TYPO_MAP = {
 # Natural language override patterns: (pattern, intent, confidence)
 # Checked BEFORE compiled triggers to intercept conversational phrasing.
 NL_OVERRIDES = [
+    # ── System volume/audio controls (must fire before any media/youtube fallback) ──
+    (r"\b(?:(?:set|turn|increase|decrease|raise|lower|reduce|down|up|change)\s+(?:the\s+)?)?volume\b", "media", 0.99),
+    (r"\b(?:volume\s*(?:up|down|to|by|\d+)|mute|unmute|quieter|louder)\b", "media", 0.99),
+
     # ── Filesystem ops — must fire before any youtube pattern ────────────────
     (r"\b(?:create|make|add)\s+(?:a\s+)?(?:new\s+)?(?:folder|directory)\b", "file_op", 0.99),
 
@@ -150,6 +154,7 @@ NL_OVERRIDES = [
     # Read a specific email
     (r"\b(read\s+email\s+\d+|open\s+email\s+\d+|show\s+email\s+\d+)\b", "mail_read", 0.97),
     (r"\b(read\s+(?:the\s+)?(?:email|mail|message)\s+from)\b", "mail_read", 0.95),
+    (r"\b(open|read|show)\s+(?:that|this|it)\s+(?:mail|email|message)\b", "mail_read", 0.96),
     (r"\b(what\s+(?:does|did)\s+(?:the\s+)?(?:email|mail)\s+(?:from|say))\b", "mail_read", 0.9),
     # Send
     (r"\b(send\s+(?:an?\s+)?(?:email|mail|message)\s+to)\b", "mail_send", 0.97),
@@ -182,8 +187,8 @@ NL_OVERRIDES = [
     # Folders
     (r"\b((?:list|show|view)\s+(?:my\s+)?(?:mail\s+)?folders?)\b", "mail_folders", 0.9),
     (r"\b(what\s+(?:email|mail)\s+folders?\s+(?:do\s+i\s+have|are\s+there))\b", "mail_folders", 0.9),
-    # Summarize inbox
-    (r"\b(summarize\s+(?:my\s+)?(?:inbox|emails?|mail)|(?:inbox|email)\s+summary|brief\s+(?:me\s+on\s+)?(?:my\s+)?(?:inbox|emails?))\b", "mail_summarize", 0.95),
+    # Summarize inbox or specific email
+    (r"\b(?:summarize|summary|overview|explain|brief)\b.*\b(?:emails?|mails?|inbox)\b|\b(?:emails?|mails?|inbox)\b.*\b(?:summarize|summary|overview|tldr|gist)\b", "mail_summarize", 0.96),
     # AI compose
     (r"\b(compose\s+(?:an?\s+)?(?:email|mail)|write\s+(?:an?\s+)?(?:email|mail)\s+to|draft\s+(?:an?\s+)?(?:email|mail)\s+to)\b", "mail_compose", 0.93),
     # ────────────────────────────────────────────────────────────────────
@@ -193,6 +198,10 @@ NL_OVERRIDES = [
 
     # Reminders (only "remind me" patterns — "remember that" goes to memory_system)
     (r"\b(remind\s+me|set\s+(?:a\s+)?reminder|schedule\s+(?:a\s+)?reminder)\b", "remind_me", 0.9),
+    (r"\b(add|put|include|buy|get).{0,40}\b(to (?:my )?(?:list|todo|to do|shopping list))\b", "todo_list", 0.9),
+    (r"\b(remove|delete|take off|cross off).{0,40}\b(from (?:my )?(?:list|todo|to do|shopping list))\b", "todo_list", 0.9),
+    (r"\b(list|show|read).{0,20}\b(my )?(list|todo|to do|shopping (?:list)?)\b", "todo_list", 0.9),
+    (r"\b(clear|empty).{0,20}\b(my )?(list|todo|to do|shopping (?:list)?)\b", "todo_list", 0.9),
     (r"\b(list|show|display|what|any|my)\s+(?:are\s+)?(?:my\s+)?(?:pending\s+)?reminders?\b", "list_reminders", 0.9),
 
     # Notifications
@@ -529,7 +538,6 @@ class IntentRouter:
                 "next video", "next song", "skip song", "skip video",
                 "pause video", "resume video", "video info",
                 "fullscreen", "show full screen", "show in full screen",
-                "mute video", "unmute video", "volume up", "volume down",
                 "slow down video", "speed up video", "enable captions",
                 "turn on subtitles", "video settings", "video quality"
             ], 4),
@@ -1207,7 +1215,7 @@ class IntentRouter:
             "create a document named photosynthesis",
             "paste the response"
         ]
-        
+
         CRITICAL RULES FOR STEPS:
         - Each step must be a SINGLE action (one verb, one target)
         - Steps should be SHORT and specific (under 10 words each)
@@ -1304,6 +1312,10 @@ class IntentRouter:
             if any(x in cmd for x in ["folder", "directory", "file system", "flder", "fldr"]):
                 return "file_op", 0.95
             return "file_save", 0.95
+
+        # 2.9 SPECIAL CASE: SLEEP TIMER
+        if "sleep timer" in cmd or "sleep in" in cmd:
+            return "media", 0.95
 
         # 3. SPECIAL CASE: MUSIC/SONGS
         yt_control_kw = ["full screen", "fullscreen", "next", "skip", "previous", "pause", "resume", "stop", "volume", "speed", "captions", "subtitle", "forward", "backward", "rewind", "show"]
