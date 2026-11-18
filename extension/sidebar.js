@@ -41,7 +41,7 @@ async function checkConnection() {
 
 // Check every 5 s
 checkConnection();
-setInterval(checkConnection, 5000);
+let _connTimer = setInterval(checkConnection, 5000);
 
 // ── Page data ─────────────────────────────────────────────────────────
 async function refreshPageData() {
@@ -61,7 +61,20 @@ async function refreshPageData() {
 }
 
 refreshPageData();
-setInterval(refreshPageData, 4000);
+let _pageTimer = setInterval(refreshPageData, 4000);
+
+// Stop polling while the panel is hidden; refresh immediately on show / tab change.
+function _setPolling(on) {
+  clearInterval(_connTimer); clearInterval(_pageTimer);
+  _connTimer = _pageTimer = null;
+  if (on) {
+    checkConnection(); refreshPageData();
+    _connTimer = setInterval(checkConnection, 5000);
+    _pageTimer = setInterval(refreshPageData, 4000);
+  }
+}
+document.addEventListener("visibilitychange", () => _setPolling(!document.hidden));
+if (chrome.tabs?.onActivated) chrome.tabs.onActivated.addListener(() => { if (!document.hidden) refreshPageData(); });
 
 // ── Chat helpers ──────────────────────────────────────────────────────
 function addMessage(sender, html, isHtml = false) {
@@ -101,7 +114,7 @@ async function askFlexie(query, action = "ask") {
         query,
         url:           pageData.url,
         title:         pageData.title,
-        page_content:  pageData.pageText,
+        page_content:  (pageData.pageText || "").slice(0, 4000),
         selected_text: pageData.selectedText,
         action,
       }),
@@ -179,7 +192,7 @@ async function domTaskWithFeedback(label, domType, payload) {
 }
 
 // ── DOM Command Parser (natural language in the input bar) ────────────
-async function handleDomCommand(raw) {
+async function handleDomCommandBase(raw) {
   const cmd = raw.trim().toLowerCase();
 
   // Click
@@ -296,9 +309,8 @@ document.getElementById("btnCheckMail")?.addEventListener("click", () =>
   sendMailCommand("inbox"));
 
 // ── Context from background (right-click menu) ────────────────────────
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.flexie_active_context) {
-    const ctx = changes.flexie_active_context.newValue;
+function handleActiveContext(ctx) {
+  {
     if (!ctx) return;
     if      (ctx.action === "summarize")    askFlexie("Summarize this page.", "summarize");
     else if (ctx.action === "explain")      askFlexie(`Explain: ${ctx.text || ""}`, "explain");
@@ -320,6 +332,13 @@ chrome.storage.onChanged.addListener((changes) => {
     }
     chrome.storage.local.remove("flexie_active_context");
   }
+}
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.flexie_active_context) handleActiveContext(changes.flexie_active_context.newValue);
+});
+// The panel may open AFTER the context was stored: read it once on load.
+chrome.storage.local.get(["flexie_active_context"], (d) => {
+  if (d && d.flexie_active_context) handleActiveContext(d.flexie_active_context);
 });
 
 // ── Voice Input ───────────────────────────────────────────────────────
@@ -424,7 +443,6 @@ async function sendMailCommand(action, extra = {}) {
 }
 
 // Extend DOM command parser with mail commands
-const _origHandleDomCommand = handleDomCommand;
 async function handleDomCommand(raw) {
   const cmd = raw.trim().toLowerCase();
 
@@ -455,7 +473,7 @@ async function handleDomCommand(raw) {
   }
 
   // Fall through to original DOM command parser
-  return _origHandleDomCommand(raw);
+  return handleDomCommandBase(raw);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────

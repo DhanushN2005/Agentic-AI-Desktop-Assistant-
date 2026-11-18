@@ -159,6 +159,55 @@ def handle_mode_prefix(orch, c, silent):
 _BROWSER_APPS = ("chrome", "edge", "firefox", "browser", "opera", "brave")
 
 
+_BROWSER_EXE = {"chrome": "chrome", "edge": "msedge", "firefox": "firefox"}
+
+
+def _open_search_in_browser(orch, browser: str, query: str, silent: bool) -> bool:
+    """Open a Google search for ``query`` in the named browser and say what happened."""
+    from urllib.parse import quote_plus
+    url = "https://www.google.com/search?q=" + quote_plus(query)
+    exe = _BROWSER_EXE.get(browser)
+    opened = False
+    if exe and sys.platform == "win32":
+        try:
+            # fixed argv, no shell string: the URL is percent-encoded so it cannot inject anything
+            subprocess.Popen(["cmd.exe", "/c", "start", "", exe, url],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            opened = True
+        except OSError as e:
+            logging.debug("browser launch failed: %s", e)
+    if not opened:
+        opened = bool(webbrowser.open(url))
+    label = browser if browser in _BROWSER_EXE else "your browser"
+    orch.ctx.update(app=browser)
+    if not silent:
+        orch.speak(f"Searching Google for {query} in {label}." if opened
+                   else f"I couldn't open {label} to search for {query}.")
+    return opened
+
+
+def _clean_app_target(cl: str) -> str:
+    """Reduce a spoken open/close request to the app name.
+
+    "close the chrome that u opened", "close all chromes you have opened" and "close chrome windows"
+    all name just "chrome"; filler words and relative clauses are dropped.
+    """
+    t = re.sub(r"\b(open|run|launch|start|close|kill|quit|exit|app|apps|the|a|my|please|for me)\b", " ", cl)
+    # relative clauses: "that u opened", "which you have opened", "you started"
+    t = re.sub(r"\b(?:that|which)?\s*\b(?:you|u|i|we)\s+(?:have\s+|had\s+|just\s+|already\s+)?"
+               r"(?:opened|started|launched|run|ran)\b", " ", t)
+    t = re.sub(r"\b(?:windows?|tabs?|instances?|that|which|opened|running|currently|now)\b", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    # "all chromes" -> "chrome": drop a trailing plural s on a known app/browser name
+    m = re.fullmatch(r"(?:all\s+)?(?:of\s+)?(\w+?)s", t)
+    if m and (m.group(1) in _BROWSER_APPS or m.group(1) in getattr(Config, "APPS", {})):
+        return m.group(1)
+    parts = t.split()
+    if len(parts) == 2 and parts[0] == "all" and parts[1] not in ("apps", "windows", "programs", "applications", "everything"):
+        return parts[1]
+    return t
+
+
 def _open_browser_only(orch, browser_name: str, silent: bool):
     """Open a browser app and mark context. Returns True."""
     res = None
@@ -202,6 +251,13 @@ def handle_app_op(orch, c, silent):
     # ── Multi-step: "open chrome search for X" ──────────────────────────────
     if any(x in cl for x in ["search", "google", "find ", "who is", "what is"]):
         browser = next((b for b in _BROWSER_APPS if b in cl), None)
+        direct = re.match(
+            r"^(?:please\s+)?(?:open|launch|start)\s+(?:the\s+)?(?:chrome|edge|firefox|browser)\s+(?:and\s+)?"
+            r"(?:search\s+(?:for\s+)?|google\s+|look\s+up\s+|find\s+)(.+)$", cl.strip())
+        if browser and direct and direct.group(1).strip():
+            # "open chrome and search for X": put the search straight into that browser
+            # (instead of a slow multi-tab research pass that reads an essay aloud).
+            return _open_search_in_browser(orch, browser, direct.group(1).strip(), silent)
         if browser:
             _open_browser_only(orch, browser, silent=True)
         search_cmd = re.sub(
@@ -221,7 +277,8 @@ def handle_app_op(orch, c, silent):
         return _open_browser_only(orch, browser_hit, silent=silent)
 
     # ── General app open / close ────────────────────────────────────────────
-    target = re.sub(r"\b(open|run|launch|start|close|kill|app|the)\b", "", cl).strip()
+    target = (_clean_app_target(cl) if is_close
+              else re.sub(r"\b(open|run|launch|start|close|kill|app|the)\b", "", cl).strip())
     # Reject filler-only targets produced by compound-command splitting ("open for me", "open it")
     _FILLERS = {"", "me", "for me", "it", "this", "that", "us", "please", "for", "now"}
     if target in _FILLERS:
@@ -230,9 +287,17 @@ def handle_app_op(orch, c, silent):
         return True
 
     if is_close:
-        SystemCtrl.close_app(target)
+        if SystemCtrl.is_close_all(target):
+            if orch.voice.confirm("Close all your open apps? Unsaved work may be lost."):
+                closed = SystemCtrl.close_all_known_apps()
+                if not silent:
+                    orch.speak(f"Closed {', '.join(closed)}." if closed else "I did not find any known apps to close.")
+            elif not silent:
+                orch.speak("Okay, I left your apps open.")
+            return True
+        closed = SystemCtrl.close_app(target)
         if not silent:
-            orch.speak(f"Closed {target}.")
+            orch.speak("I couldn't find a running app called " + target + "." if closed is False else f"Closed {target}.")
     else:
         t_path = None
         if "same" in cl or " it" in cl or "this" in cl or "that" in cl:

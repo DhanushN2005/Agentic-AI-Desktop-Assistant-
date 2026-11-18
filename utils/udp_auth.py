@@ -19,9 +19,11 @@ Protocol: every datagram sent TO the orchestrator must look like::
 returns the payload, or ``None`` when auth fails (caller must reject).
 """
 import hmac
+import json
 import logging
 import os
 import secrets
+import threading
 
 ENV_VAR = "FLEXIE_UDP_TOKEN"
 _PREFIX = "TOKEN:"
@@ -68,7 +70,17 @@ def publish_token(token: str) -> bool:
         return False
 
 
-def get_token() -> str:
+def get_token(prefer_file: bool = False) -> str:
+    """Resolve the per-run token.
+
+    ``prefer_file=True`` reads the published token file BEFORE the environment,
+    so a long-lived child (the web bridge) that inherited a stale env value from
+    a previous main.py run follows a rotated token instead of being rejected.
+    """
+    if prefer_file:
+        tok = _read_token_file()
+        if tok:
+            return tok
     tok = os.getenv(ENV_VAR, "")
     if tok:
         return tok
@@ -80,8 +92,8 @@ def get_token() -> str:
     return tok
 
 
-def pack(message: str) -> str:
-    return f"{_PREFIX}{get_token()} {message}"
+def pack(message: str, prefer_file: bool = False) -> str:
+    return f"{_PREFIX}{get_token(prefer_file)} {message}"
 
 
 def unpack(raw: str):
@@ -99,3 +111,68 @@ def unpack(raw: str):
     if not hmac.compare_digest(head, expected):
         return None
     return payload
+
+
+# ── UI-bound datagrams (orchestrator/voice -> Qt UI / web bridge) ───────────
+ALLOW_UNSIGNED_ENV = "FLEXIE_ALLOW_UNSIGNED_UI"
+DEFAULT_UI_PORT = 9886   # Qt desktop UI (historic port, so old senders still reach it)
+WEB_UI_PORT = 9888       # web bridge gets its own port (no more shared 9886)
+UI_PORTS_FILE = os.path.join(_PROJECT_ROOT, ".flexie_ui_ports")
+_ports_lock = threading.Lock()
+
+
+def decode_ui_datagram(data) -> str | None:
+    """Verify + decode one UI-bound datagram.
+
+    Signed (``TOKEN:<t> payload``) datagrams yield the payload. Unsigned ones are
+    accepted only when ``FLEXIE_ALLOW_UNSIGNED_UI=1`` (migration aid). Bad bytes
+    are decoded with ``errors='replace'``; never raises.
+    """
+    try:
+        raw = data.decode("utf-8", errors="replace") if isinstance(data, (bytes, bytearray)) else str(data)
+        if raw.startswith(_PREFIX):
+            return unpack(raw)
+        if os.getenv(ALLOW_UNSIGNED_ENV, "") == "1":
+            return raw
+    except Exception as e:  # pragma: no cover - defensive
+        logging.debug("[utils/udp_auth.py:decode_ui_datagram] %s: %s", type(e).__name__, e)
+    return None
+
+
+def _read_ports() -> list[int]:
+    try:
+        with open(UI_PORTS_FILE, encoding="utf-8") as fh:
+            return [int(p) for p in json.load(fh) if 0 < int(p) < 65536]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def _write_ports(ports: list[int]) -> None:
+    try:
+        with open(UI_PORTS_FILE, "w", encoding="utf-8") as fh:
+            json.dump(sorted(set(ports)), fh)
+    except OSError as e:
+        logging.debug("[utils/udp_auth.py:_write_ports] %s: %s", type(e).__name__, e)
+
+
+def register_ui_port(port: int) -> None:
+    """Announce that a UI process listens on ``port`` (subscriber registry)."""
+    with _ports_lock:
+        _write_ports(_read_ports() + [int(port)])
+
+
+def unregister_ui_port(port: int) -> None:
+    with _ports_lock:
+        _write_ports([p for p in _read_ports() if p != int(port)])
+
+
+def reset_ui_ports() -> None:
+    """Called by main.py at startup: drop entries left by crashed processes."""
+    with _ports_lock:
+        _write_ports([])
+
+
+def ui_ports() -> list[int]:
+    """Ports a sender should fan UI updates out to (always includes the Qt port)."""
+    ports = _read_ports()
+    return sorted(set(ports) | {DEFAULT_UI_PORT})

@@ -16,6 +16,7 @@ def _registry(ran):
         name="file.write", description="write",
         params=[ToolSchema("path", "str", False, "x")],
         permission=PermissionLevel.USER_CONFIRMATION, execute_fn=_do, timeout=5,
+        capabilities=["filesystem:write"],
     ))
     return reg
 

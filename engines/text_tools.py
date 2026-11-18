@@ -7,9 +7,9 @@ class TextToolsEngine:
     def word_count(self, text: str) -> str:
         words = text.split()
         chars = len(text)
-        chars_no_space = len(text.replace(" ", "").replace("\n", ""))
-        lines = text.count("\n") + 1
-        sentences = len(re.split(r'[.!?]+', text.strip()))
+        chars_no_space = len(re.sub(r"\s+", "", text))
+        lines = len(text.splitlines()) if text else 0
+        sentences = len([p for p in re.split(r"[.!?]+", text) if p.strip()])
         return f"Words: {len(words)}, Characters: {chars}, Characters (no spaces): {chars_no_space}, Lines: {lines}, Sentences: {sentences}"
 
     def char_count(self, text: str) -> str:
@@ -25,12 +25,17 @@ class TextToolsEngine:
         return text.lower()
 
     def title_case(self, text: str) -> str:
-        return text.title()
+        # str.title() capitalises after apostrophes ("Don'T"); do it per word instead.
+        return re.sub(r"[^\W\d_]+(?:['’][^\W\d_]+)*",
+                      lambda m: m.group(0)[0].upper() + m.group(0)[1:].lower(), text)
 
     def sentence_case(self, text: str) -> str:
         if not text:
             return text
-        return text[0].upper() + text[1:]
+        if text.isupper():
+            text = text.lower()
+        return re.sub(r"(^\s*|[.!?]\s+)([^\W\d_])",
+                      lambda m: m.group(1) + m.group(2).upper(), text)
 
     def snake_case(self, text: str) -> str:
         text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
@@ -47,12 +52,13 @@ class TextToolsEngine:
         return '-'.join(text.split()).lower()
 
     def remove_duplicates(self, text: str) -> str:
-        lines = text.split("\n")
-        seen = []
-        for line in lines:
+        seen = set()
+        out = []
+        for line in text.split(chr(10)):
             if line not in seen:
-                seen.append(line)
-        return "\n".join(seen)
+                seen.add(line)
+                out.append(line)
+        return chr(10).join(out)
 
     def sort_lines(self, text: str, reverse: bool = False) -> str:
         lines = text.split("\n")
@@ -67,11 +73,11 @@ class TextToolsEngine:
         return "Emails found: " + ", ".join(emails) if emails else "No emails found."
 
     def extract_urls(self, text: str) -> str:
-        urls = re.findall(r'https?://[^\s<>\"\']+', text)
+        urls = [u.rstrip(".,;:!?)]}'\"") for u in re.findall(r'https?://[^\s<>"\']+', text, flags=re.IGNORECASE)]
         return "URLs found: " + ", ".join(urls) if urls else "No URLs found."
 
     def extract_numbers(self, text: str) -> str:
-        numbers = re.findall(r'-?\d+\.?\d*', text)
+        numbers = re.findall(r"(?<![\d.])-?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?!\d)|(?<!\d)-?\d+(?:\.\d+)?", text)
         return "Numbers found: " + ", ".join(numbers) if numbers else "No numbers found."
 
     def slugify(self, text: str) -> str:
@@ -81,18 +87,7 @@ class TextToolsEngine:
         return text
 
     def wrap(self, text: str, width: int = 80) -> str:
-        words = text.split()
-        lines = []
-        current = []
-        length = 0
-        for word in words:
-            if length + len(word) + 1 > width:
-                lines.append(" ".join(current))
-                current = [word]
-                length = len(word)
-            else:
-                current.append(word)
-                length += len(word) + 1
-        if current:
-            lines.append(" ".join(current))
-        return "\n".join(lines)
+        import textwrap
+        width = max(int(width), 1)
+        lines = textwrap.wrap(text, width=width, break_long_words=False, break_on_hyphens=False)
+        return chr(10).join(lines)

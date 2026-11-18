@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 from core.action_result import ActionResult
 from core.execution_graph import ExecutionGraph, ExecutionNode
 from core.goal_planner import StepStatus, TaskGraph, TaskStep, VerificationStrategy
-from core.permission_system import PermissionLevel, PermissionSystem
+from core.permission_system import PermissionSystem
 from core.run_budget import RunBudget
 from core.tool_registry import ToolRegistry
 
@@ -308,12 +308,9 @@ class AgentExecutor:
         if tool is None:
             # Handler-routed: repeat only a step that reported an explicit failure.
             return bool(result is not None and not result.success)
-        idempotent = getattr(tool, "idempotent", None)
-        if idempotent is None:
-            idempotent = tool.permission.value <= PermissionLevel.SAFE_ACTION.value
-        if result is not None and (result.data or {}).get("outcome_unknown") and not idempotent:
-            return False
-        return bool(idempotent)
+        # Only an explicit idempotent=True may be repeated; None/False => never retry a
+        # call that might have a side effect (the executor does not guess).
+        return getattr(tool, "idempotent", None) is True
 
     def _handle_verification_failure(self, step: TaskStep, result: ActionResult, pre_state: dict):
         """The action reported success but a definite check says the outcome is absent."""

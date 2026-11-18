@@ -1,4 +1,10 @@
 
+import logging
+import re
+
+_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+
+
 class Capability:
     def __init__(self, name: str, intents: list[str]):
         self.name = name
@@ -32,9 +38,20 @@ class CapabilityRegistry:
         self.register(Capability("specialist", ["specialist", "delegate", "agent_team", "coder_agent", "researcher_agent", "system_agent"]))
 
     def register(self, capability: Capability):
-        self._capabilities[capability.name] = capability
+        """Register a capability. An intent already owned by another capability is NOT remapped
+        (a plugin must not hijack e.g. ``file_delete``); the conflict is logged and skipped."""
+        name = capability.name
+        if not isinstance(name, str) or not _NAME_RE.match(name):
+            logging.getLogger("Flexie.CapabilityRegistry").warning("Rejected capability name %r", name)
+            return
+        self._capabilities[name] = capability
         for intent in capability.get_intents():
-            self._intent_to_capability[intent] = capability.name
+            owner = self._intent_to_capability.get(intent)
+            if owner is not None and owner != name:
+                logging.getLogger("Flexie.CapabilityRegistry").warning(
+                    "Capability %r cannot take intent %r (owned by %r)", name, intent, owner)
+                continue
+            self._intent_to_capability[intent] = name
 
     def get_all_atomic_intents(self) -> set:
         """Returns all atomic intents across all registered capabilities."""

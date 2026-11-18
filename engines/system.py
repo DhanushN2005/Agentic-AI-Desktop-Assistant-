@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import subprocess
 from ctypes import POINTER, cast
 
@@ -8,11 +9,6 @@ import psutil
 # Platform-specific desktop libraries are optional: on non-Windows hosts (or headless CI)
 # they fail to import, and the matching controls simply degrade instead of breaking import
 # of the whole module (and with it the orchestrator).
-try:
-    import pyautogui
-except Exception as _e:
-    logging.debug("[engines/system.py] pyautogui unavailable: %s", _e)
-    pyautogui = None
 try:
     from comtypes import CLSCTX_ALL
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
@@ -26,6 +22,9 @@ except Exception as _e:
     logging.debug("[engines/system.py:6] screen_brightness_control unavailable: %s", _e)
     sbc = None
 from utils.helpers import is_online
+from utils.lazy import LazyModule
+
+pyautogui = LazyModule("pyautogui")  # imported on first use; falsy if unavailable
 
 try:
     import pygetwindow as gw
@@ -136,7 +135,7 @@ class SystemCtrl:
             "previous": "prevtrack",
             "mute": "volumemute"
         }
-        if pyautogui is None:
+        if not pyautogui:
             logging.warning("Media keys need a desktop session (pyautogui unavailable).")
             return
         for k, v in km.items():
@@ -188,83 +187,137 @@ class SystemCtrl:
             logging.debug("[engines/system.py:129] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return "Unknown"
 
+    # Characters that let one string become several commands / redirect / expand.
+    _CMD_META = re.compile(r"[&<>^%|;`\r\n\x00]|[$][(]")
+    _DESTRUCTIVE_VERBS = frozenset({
+        "rm", "del", "erase", "rd", "rmdir", "format", "fdisk", "diskpart", "shutdown", "restart",
+        "poweroff", "move", "ren", "rename", "copy", "xcopy", "robocopy", "attrib", "reg", "regedit",
+        "powershell", "pwsh", "wmic", "taskkill", "net", "sc", "cipher", "takeown", "icacls",
+        "schtasks", "bcdedit", "mklink", "start", "call", "cmd", "curl", "wget", "certutil",
+        "bitsadmin", "mshta", "rundll32",
+    })
+    _CMD_DESTRUCTIVE = re.compile(r"\b(?:rm\s+-rf|del\s+/[sq]|format|fdisk|shutdown|poweroff)\b|>\s*nul|2>\s*/dev", re.IGNORECASE)
+    _SENSITIVE_NAME = re.compile(r"(^\.env|\.pem$|\.key$|\.pfx$|id_rsa|password|secret|credential|token)", re.IGNORECASE)
+
     @staticmethod
     def run_cmd(command: str) -> str:
-        """Execute a CMD command with safety restrictions.
+        """Run one of a few read-only commands WITHOUT a shell.
 
-        Blocks destructive commands for security.
-        Returns the output or error message."""
-        import subprocess
-
-        # Security: Block destructive commands
-        destructive = [
-            "rm -rf", "del /s", "format", "fdisk",
-            "shutdown", "restart", "poweroff",
-            ">null", ">>null", ">/dev", "2>/dev"
-        ]
-
-        cmd_lower = command.lower().strip()
-        for d in destructive:
-            if d in cmd_lower:
-                return f"Security blocked: '{d}' command prevented."
-
-        # Only allow specific safe commands
-        safe_prefixes = ["dir ", "cd ", "type ", "echo ", "cls ", "ver "]
-        if not any(cmd_lower.startswith(p) for p in safe_prefixes):
+        Only dir / cd / type / echo / cls / ver are accepted. Any shell
+        metacharacter (& < > ^ % | ; backtick $( ) or newline) or destructive
+        token is rejected, and nothing is ever passed to ``cmd /c`` as a string:
+        the commands are executed in Python (or as a fixed argv for ``ver``).
+        """
+        command = (command or "").strip()
+        if SystemCtrl._CMD_META.search(command):
+            return "Security blocked: command chaining, redirection and special characters are not allowed."
+        verb, _, rest = command.partition(" ")
+        verb = verb.lower()
+        rest = rest.strip()
+        m = SystemCtrl._CMD_DESTRUCTIVE.search(command)
+        if m or verb in SystemCtrl._DESTRUCTIVE_VERBS:
+            return f"Security blocked: '{m.group(0) if m else verb}' command prevented."
+        if verb not in ("dir", "cd", "type", "echo", "cls", "ver"):
             return "Command not allowed. Use: dir, cd, type, echo, cls, or ver commands only."
-
         try:
-            exec_args = ["cmd.exe", "/c", command] if os.name == "nt" else command
-            result = subprocess.run(
-                exec_args,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                shell=False
-            )
-            output = result.stdout.strip()
-            error = result.stderr.strip()
-
-            if output:
-                return output[:500]  # Limit output length
-            elif error:
-                return f"Error: {error[:200]}"
-            else:
-                return "Command executed successfully (no output)."
-        except subprocess.TimeoutExpired:
-            return "Command timed out (10s limit)."
+            if verb == "echo":
+                return (rest or "ECHO is on.")[:500]
+            if verb == "cls":
+                return "Screen cleared."
+            if verb == "ver":
+                if os.name != "nt":
+                    return "Command executed successfully (no output)."
+                res = subprocess.run(["cmd.exe", "/c", "ver"], capture_output=True, text=True,
+                                     timeout=10, shell=False)
+                return (res.stdout.strip() or "Command executed successfully (no output).")[:500]
+            target = rest.strip('"') or os.getcwd()
+            if verb == "cd":
+                return os.path.abspath(target) if os.path.isdir(target) else "The system cannot find the path specified."
+            if verb == "dir":
+                if not os.path.isdir(target):
+                    return "File Not Found"
+                names = sorted(os.listdir(target))[:50]
+                return (", ".join(names) or "Directory is empty.")[:500]
+            if verb == "type":
+                if not os.path.isfile(target):
+                    return "The system cannot find the file specified."
+                if SystemCtrl._SENSITIVE_NAME.search(os.path.basename(target)):
+                    return "Security blocked: that file looks like it holds secrets."
+                with open(target, encoding="utf-8", errors="replace") as fh:
+                    return fh.read(500)
         except Exception as e:
             return f"Command failed: {str(e)[:200]}"
+        return "Command executed successfully (no output)."
+
+    # Exact process-name aliases (never substring matching).
+    _APP_ALIASES = {
+        "chrome": ["chrome.exe"], "google chrome": ["chrome.exe"],
+        "vscode": ["code.exe"], "vs code": ["code.exe"], "visual studio code": ["code.exe"],
+        "spotify": ["spotify.exe"], "notepad": ["notepad.exe"],
+        "calculator": ["calculatorapp.exe", "calc.exe", "calculator.exe"],
+        "edge": ["msedge.exe"], "firefox": ["firefox.exe"], "brave": ["brave.exe"],
+        "word": ["winword.exe"], "excel": ["excel.exe"], "powerpoint": ["powerpnt.exe"],
+        "vlc": ["vlc.exe"], "discord": ["discord.exe"], "teams": ["teams.exe", "ms-teams.exe"],
+        "whatsapp": ["whatsapp.exe", "whatsapp.root.exe"],
+    }
+    _PROTECTED_PROCESSES = frozenset({
+        "system", "system idle process", "registry", "memcompression", "smss.exe", "csrss.exe",
+        "wininit.exe", "winlogon.exe", "services.exe", "lsass.exe", "svchost.exe", "explorer.exe",
+        "dwm.exe", "fontdrvhost.exe", "spoolsv.exe", "taskhostw.exe", "sihost.exe", "ctfmon.exe",
+        "searchhost.exe", "startmenuexperiencehost.exe", "runtimebroker.exe", "audiodg.exe",
+        "msmpeng.exe", "securityhealthservice.exe", "conhost.exe", "lsm.exe", "wudfhost.exe",
+        "python.exe", "pythonw.exe", "py.exe",
+    })
+    _ALL_WORDS = frozenset({"all", "everything", "all apps", "all applications", "all windows", "all programs", "all of them"})
+
+    @staticmethod
+    def _own_pids() -> set:
+        pids = {os.getpid()}
+        try:
+            me = psutil.Process()
+            pids.update(ch.pid for ch in me.children(recursive=True))
+            pids.update(par.pid for par in me.parents())
+        except Exception as _e:
+            logging.debug("own pid discovery failed: %s", _e)
+        return pids
+
+    @staticmethod
+    def is_close_all(app_name: str) -> bool:
+        return (app_name or "").lower().strip() in SystemCtrl._ALL_WORDS
 
     @staticmethod
     def close_app(app_name: str) -> bool:
-        target = app_name.lower().replace(".exe", "").strip()
-        if not target:
+        """Terminate processes whose name EXACTLY equals the app (or a curated alias)."""
+        target = (app_name or "").lower().replace(".exe", "").strip()
+        if not target or SystemCtrl.is_close_all(target):
             return False
-
+        names = {n.lower() for n in SystemCtrl._APP_ALIASES.get(target, [])}
+        if re.fullmatch(r"[a-z0-9_.\- ]+", target):
+            names.add(target + ".exe")
+        names -= SystemCtrl._PROTECTED_PROCESSES
+        if not names:
+            return False
+        own = SystemCtrl._own_pids()
         killed = False
-        app_map = {
-            "chrome": ["chrome.exe"],
-            "vscode": ["code.exe"],
-            "vs code": ["code.exe"],
-            "spotify": ["spotify.exe"],
-            "notepad": ["notepad.exe"],
-            "calculator": ["calc.exe"],
-            "edge": ["msedge.exe"]
-        }
-
-        process_names = app_map.get(target, [target if target.endswith(".exe") else target + ".exe", target])
-
-        for proc in psutil.process_iter(['name', 'pid']):
+        for proc in psutil.process_iter(["name", "pid"]):
             try:
-                pname = proc.info['name'].lower()
-                if any(tn in pname for tn in process_names) or target == pname.replace(".exe", ""):
+                pname = (proc.info.get("name") or "").lower()
+                if pname in names and proc.info.get("pid") not in own:
                     proc.terminate()
                     killed = True
             except (psutil.NoSuchProcess, psutil.AccessDenied) as _e:
-                logging.debug("[engines/system.py:157] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                logging.debug("close_app skip: %s: %s", type(_e).__name__, _e)
                 continue
         return killed
+
+    @staticmethod
+    def close_all_known_apps() -> list:
+        """After explicit confirmation: close every running app from the curated alias list."""
+        closed = []
+        for app in ("chrome", "edge", "firefox", "spotify", "notepad", "vlc", "word", "excel", "powerpoint"):
+            if SystemCtrl.close_app(app):
+                closed.append(app)
+        return closed
 
     @staticmethod
     def snap_window(direction: str, app_name: str = None) -> str:
@@ -288,7 +341,7 @@ class SystemCtrl:
             if not win:
                 return "I couldn't locate any active window to snap."
 
-            if pyautogui is None:
+            if not pyautogui:
                 return "Window snapping needs a desktop session."
             # Get screen resolution
             screen_w, screen_h = pyautogui.size()

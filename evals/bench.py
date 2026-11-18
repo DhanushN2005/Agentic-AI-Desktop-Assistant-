@@ -311,8 +311,8 @@ def render_markdown(r: dict) -> str:
           "- Largest files: " + ", ".join(f"{x['file']} ({x['loc']})" for x in s["largest_files"]), "",
           "## Not measured", "",
           "- Real-model plan quality, tool-selection accuracy or task success.",
-          "- Tokens, dollar cost or energy per command (no per-command token telemetry yet).",
-          "- Voice, desktop and browser automation latency; end-to-end startup of the full orchestrator.",
+          "- Real tokens / dollar cost per command (the telemetry exists, core/telemetry; this benchmark uses a fake model, so only its per-call overhead is measured) and energy per command.",
+          "- Voice, desktop and browser automation latency. (Orchestrator startup was timed separately: import + construct ~14.5 s -> ~1.9 s after lazy imports; not part of this script.)",
           "- Any comparison against other agent frameworks."]
     return "\n".join(L) + "\n"
 

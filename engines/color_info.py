@@ -1,5 +1,8 @@
+import colorsys
 import json
 import logging
+import re
+import urllib.parse
 import urllib.request
 
 
@@ -8,7 +11,7 @@ class ColorInfoEngine:
 
     def lookup(self, color: str) -> str:
         try:
-            url = f"https://www.thecolorapi.com/id?name={color.replace(' ', '%20')}"
+            url = f"https://www.thecolorapi.com/id?name={urllib.parse.quote(color, safe='')}"
             req = urllib.request.Request(url, headers={"User-Agent": "Flexie/2.0"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
@@ -33,7 +36,7 @@ class ColorInfoEngine:
 
     def from_hex(self, hex_code: str) -> str:
         try:
-            url = f"https://www.thecolorapi.com/id?hex={hex_code.replace('#', '')}"
+            url = f"https://www.thecolorapi.com/id?hex={urllib.parse.quote(hex_code.replace('#', ''), safe='')}"
             req = urllib.request.Request(url, headers={"User-Agent": "Flexie/2.0"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
@@ -57,16 +60,13 @@ class ColorInfoEngine:
             return "Could not generate random color."
 
     def complementary(self, hex_code: str) -> str:
-        try:
-            hex_val = hex_code.replace('#', '')
-            r = int(hex_val[0:2], 16)
-            g = int(hex_val[2:4], 16)
-            b = int(hex_val[4:6], 16)
-            comp_r = 255 - r
-            comp_g = 255 - g
-            comp_b = 255 - b
-            comp_hex = f"#{comp_r:02x}{comp_g:02x}{comp_b:02x}"
-            return f"Complementary color: {comp_hex} (RGB: {comp_r}, {comp_g}, {comp_b})"
-        except Exception as _e:
-            logging.debug("[engines/color_info.py:66] Swallowed exception: %s: %s", type(_e).__name__, _e)
+        """Complement = hue rotated by 180 degrees (not the RGB inverse)."""
+        hex_val = (hex_code or "").strip().lstrip("#")
+        if not re.fullmatch(r"[0-9a-fA-F]{6}", hex_val):
             return "Invalid hex code."
+        r, g, b = (int(hex_val[i:i + 2], 16) for i in (0, 2, 4))
+        h, light, sat = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+        cr, cg, cb = colorsys.hls_to_rgb((h + 0.5) % 1.0, light, sat)
+        comp_r, comp_g, comp_b = (int(round(v * 255)) for v in (cr, cg, cb))
+        comp_hex = f"#{comp_r:02x}{comp_g:02x}{comp_b:02x}"
+        return f"Complementary color: {comp_hex} (RGB: {comp_r}, {comp_g}, {comp_b})"

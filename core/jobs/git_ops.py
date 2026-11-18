@@ -37,14 +37,63 @@ def is_git_available() -> bool:
     return has_git
 
 
+_MUTATING = {"add", "commit", "reset", "checkout", "config", "clean", "restore", "rm", "stash", "switch", "merge", "rebase"}
+
+
+def _norm(path: str) -> str:
+    return os.path.normcase(os.path.realpath(path)).rstrip("/\\")
+
+
+def owns_repo(workspace: str) -> bool:
+    """True only if git's toplevel for ``workspace`` IS the workspace (its own repo).
+
+    Without this, a workspace lacking its own ``.git`` resolves to a PARENT repository
+    and ``git add -A`` / ``commit`` / ``reset`` would act on the parent's work tree.
+    """
+    if not isinstance(workspace, str) or not workspace.strip():
+        return False  # '' would resolve to the process cwd (possibly an unrelated repo)
+    real_ws = os.path.realpath(workspace)
+    if not os.path.isdir(real_ws):
+        return False
+    try:
+        res = run_tracked(
+            ["git", "rev-parse", "--show-toplevel"], cwd=real_ws, timeout=15,
+            env=scrubbed_env({"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}),
+        )
+    except Exception as e:
+        logger.warning("git toplevel check failed in %s: %s", real_ws, e)
+        return False
+    top = res.stdout.strip()
+    return res.returncode == 0 and bool(top) and _norm(top) == _norm(real_ws)
+
+
+def _subcommand(args: list[str]) -> str:
+    i = 0
+    while i < len(args):
+        if args[i] == "-c":
+            i += 2
+            continue
+        return args[i]
+    return ""
+
+
 def _git(args: list[str], cwd: str, timeout: float | None = None) -> RunResult:
-    """Run git (no shell, scrubbed env, tree-killed on timeout)."""
+    """Run git (no shell, scrubbed env, tree-killed on timeout).
+
+    Mutating subcommands are refused unless ``cwd`` is the root of its own repository.
+    """
+    if _subcommand(args) in _MUTATING and not owns_repo(cwd):
+        msg = f"refusing git {_subcommand(args)}: {cwd} is not the root of its own git repository"
+        logger.error(msg)
+        return RunResult(128, "", msg)
     env = scrubbed_env({"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"})
     return run_tracked(["git", *args], cwd=cwd, timeout=timeout or _timeout(), env=env)
 
 
 def ensure_gitignore(workspace: str) -> bool:
     """Create/extend .gitignore so dependency dirs, secrets and build junk are never committed."""
+    if not isinstance(workspace, str) or not workspace.strip():
+        return False
     path = os.path.join(workspace, ".gitignore")
     existing: list[str] = []
     try:
@@ -67,7 +116,7 @@ def clean_stale_index_lock(real_ws: str, force: bool = False) -> bool:
     """Remove .git/index.lock when it is stale (older than 2 min) or ``force`` (our git was killed)."""
     lock = os.path.join(real_ws, ".git", "index.lock")
     try:
-        if not os.path.exists(lock):
+        if not os.path.exists(lock) or not owns_repo(real_ws):
             return False
         age = time.time() - os.path.getmtime(lock)
         if force or age >= _STALE_LOCK_SECONDS:
@@ -81,7 +130,7 @@ def clean_stale_index_lock(real_ws: str, force: bool = False) -> bool:
 
 def init_job_repo(workspace: str, workspace_root: str | None = None) -> bool:
     """Initialize a git repository in the job workspace if git is available."""
-    if not is_git_available():
+    if not is_git_available() or not isinstance(workspace, str) or not workspace.strip():
         return False
 
     real_ws = os.path.realpath(workspace)
@@ -95,12 +144,15 @@ def init_job_repo(workspace: str, workspace_root: str | None = None) -> bool:
     ensure_gitignore(real_ws)
     git_dir = os.path.join(real_ws, ".git")
     if os.path.exists(git_dir):
-        return True
+        return owns_repo(real_ws)
 
     try:
-        res = _git(["init"], real_ws, 30)
+        res = _git(["init"], real_ws, 30)  # creates the workspace's OWN repo (never touches a parent)
         if res.returncode != 0:
             logger.warning("git init failed in %s: %s", real_ws, res.stderr)
+            return False
+        if not owns_repo(real_ws):
+            logger.error("git init in %s did not produce an own repository", real_ws)
             return False
         _git(["config", "user.name", getattr(Config, "GIT_USER_NAME", "Flexie Dev Assistant")], real_ws, 10)
         _git(["config", "user.email", getattr(Config, "GIT_USER_EMAIL", "flexie@local")], real_ws, 10)
@@ -126,10 +178,14 @@ def commit_job_phase_ex(workspace: str, phase_name: str, message: str) -> Commit
     """Stage and commit; reports whether a new commit was really made and any failure."""
     if not is_git_available():
         return CommitResult(None, False, "git not available")
+    if not isinstance(workspace, str) or not workspace.strip():
+        return CommitResult(None, False, "job has no workspace path; refusing to run git in the current directory")
     real_ws = os.path.realpath(workspace)
     if not os.path.exists(os.path.join(real_ws, ".git")):
         return CommitResult(None, False, "not a git repository")
 
+    if not owns_repo(real_ws):
+        return CommitResult(None, False, f"{real_ws} is not the root of its own git repository; refusing to commit")
     try:
         ensure_gitignore(real_ws)
         clean_stale_index_lock(real_ws)
@@ -183,6 +239,8 @@ def undo_last_phase(
     """
     if not is_git_available():
         return False, "Git is not available on this system. Undo is disabled."
+    if not isinstance(workspace, str) or not workspace.strip():
+        return False, "Job has no workspace path."
 
     real_ws = os.path.realpath(workspace)
     if workspace_root:
@@ -194,6 +252,8 @@ def undo_last_phase(
     if not os.path.exists(os.path.join(real_ws, ".git")):
         return False, "Workspace is not a git repository."
 
+    if not owns_repo(real_ws):
+        return False, "Workspace is not the root of its own git repository; refusing to roll back."
     try:
         clean_stale_index_lock(real_ws)
         if expected_commit:
@@ -219,7 +279,7 @@ def undo_last_phase(
 
 def get_job_git_history(workspace: str, max_count: int = 10) -> list[dict]:
     """Return recent git commit log for the workspace."""
-    if not is_git_available():
+    if not is_git_available() or not isinstance(workspace, str) or not workspace.strip():
         return []
 
     real_ws = os.path.realpath(workspace)

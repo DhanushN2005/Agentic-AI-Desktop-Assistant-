@@ -17,6 +17,8 @@ The LLM never executes arbitrary code. It requests a registered tool by name.
 """
 import contextvars
 import logging
+import math
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -60,6 +62,9 @@ class ToolSchema:
     default: Any = None
     description: str = ""
     enum: list[Any] | None = None  # allowed values
+    minimum: float | None = None  # inclusive numeric bound (int/float)
+    maximum: float | None = None  # inclusive numeric bound (int/float)
+    max_length: int | None = None  # str / list length cap
 
     def to_dict(self) -> dict:
         d = {"type": self.type, "required": self.required, "description": self.description}
@@ -67,6 +72,12 @@ class ToolSchema:
             d["default"] = self.default
         if self.enum is not None:
             d["enum"] = self.enum
+        if self.minimum is not None:
+            d["minimum"] = self.minimum
+        if self.maximum is not None:
+            d["maximum"] = self.maximum
+        if self.max_length is not None:
+            d["max_length"] = self.max_length
         return d
 
 
@@ -87,7 +98,7 @@ class ToolSpec:
     enabled: bool = True
     capabilities: list[str] = field(default_factory=list)
     # True: running it again leaves the same state (safe to retry after an inconclusive check).
-    # None: decide from the permission level (read-only / reversible tools are repeatable).
+    # None: unknown -> treated as NOT repeatable (only idempotent=True is ever retried).
     idempotent: bool | None = None
 
     def input_schema_dict(self) -> dict:
@@ -112,28 +123,101 @@ class ToolSpec:
 
     def validate_args(self, args: dict) -> tuple[bool, str]:
         """Validates provided args against the schema. Returns (ok, error_msg)."""
+        ok, err, _ = self.normalize_args(args)
+        return ok, err
+
+    def normalize_args(self, args: dict) -> tuple[bool, str, dict]:
+        """Validate ``args`` and return them with declared defaults applied.
+
+        Rejects bool for int/float, NaN/inf, out-of-range numbers (``minimum``/``maximum``),
+        over-long str/list (``max_length``), enum violations and unknown parameters. The input
+        dict is only copied when a default has to be filled in.
+        """
+        out = args
+        seen = 0
         for param in self.params:
-            if param.required and param.name not in args:
-                # Check default
+            name = param.name
+            if name not in args:
                 if param.default is not None:
+                    if out is args:
+                        out = dict(args)
+                    out[name] = param.default
                     continue
-                return False, f"Missing required parameter: {param.name}"
-            if param.name in args:
-                val = args[param.name]
-                # Type checking
-                type_map = {"str": str, "int": int, "float": (int, float), "bool": bool, "list": list, "dict": dict}
-                expected = type_map.get(param.type)
-                if expected and not isinstance(val, expected):
-                    return False, f"Parameter '{param.name}' expected {param.type}, got {type(val).__name__}"
-                # Enum checking
-                if param.enum and val not in param.enum:
-                    return False, f"Parameter '{param.name}' must be one of {param.enum}, got {val!r}"
-        # Check for unknown params
-        known = {p.name for p in self.params}
-        unknown = set(args.keys()) - known
-        if unknown:
-            return False, f"Unknown parameters: {unknown}"
-        return True, ""
+                if param.required:
+                    return False, f"Missing required parameter: {name}", args
+                continue
+            seen += 1
+            val = args[name]
+            expected = _TYPE_MAP.get(param.type)
+            if expected is not None:
+                numeric = param.type in ("int", "float")
+                if not isinstance(val, expected) or (numeric and isinstance(val, bool)):
+                    return False, f"Parameter '{name}' expected {param.type}, got {type(val).__name__}", args
+                if numeric:
+                    if isinstance(val, float) and not math.isfinite(val):
+                        return False, f"Parameter '{name}' must be a finite number, got {val!r}", args
+                    if param.minimum is not None and val < param.minimum:
+                        return False, f"Parameter '{name}' must be >= {param.minimum}, got {val!r}", args
+                    if param.maximum is not None and val > param.maximum:
+                        return False, f"Parameter '{name}' must be <= {param.maximum}, got {val!r}", args
+                elif param.max_length is not None and param.type in ("str", "list") and len(val) > param.max_length:
+                    return False, f"Parameter '{name}' is too long ({len(val)} > {param.max_length})", args
+            if param.enum and val not in param.enum:
+                return False, f"Parameter '{name}' must be one of {param.enum}, got {val!r}", args
+        if seen != len(args):
+            unknown = set(args.keys()) - {p.name for p in self.params}
+            return False, f"Unknown parameters: {unknown}", args
+        return True, "", out
+
+
+_TYPE_MAP = {"str": str, "int": int, "float": (int, float), "bool": bool, "list": list, "dict": dict}
+
+
+class _WorkerPool:
+    """Tiny pool of DAEMON worker threads (ThreadPoolExecutor workers are non-daemon and are
+    joined at interpreter exit, so one hung tool would block shutdown). A call that overruns
+    its timeout keeps its worker busy; the pool simply spawns another for later calls.
+    """
+
+    IDLE_EXIT_S = 30.0
+
+    def __init__(self) -> None:
+        self._q: queue.SimpleQueue = queue.SimpleQueue()
+        self._lock = threading.Lock()
+        self._idle = 0
+
+    def submit(self, fn: Callable[[], None]) -> None:
+        with self._lock:
+            if self._idle > 0:
+                self._idle -= 1
+                self._q.put(fn)
+                return
+        threading.Thread(target=self._worker, args=(fn,), name="tool-worker", daemon=True).start()
+
+    def _worker(self, job: Callable[[], None]) -> None:
+        while True:
+            try:
+                job()
+            except BaseException as exc:  # jobs capture their own errors; never kill the worker
+                logging.debug("[TOOL] worker job raised: %s", exc)
+            with self._lock:
+                self._idle += 1
+            while True:
+                try:
+                    job = self._q.get(timeout=self.IDLE_EXIT_S)
+                    break
+                except queue.Empty:
+                    with self._lock:
+                        if self._q.empty():
+                            self._idle -= 1
+                            return
+
+
+_POOL = _WorkerPool()
+
+
+class _InFlightError(Exception):
+    """A previous timed-out call to the same side-effecting tool is still running."""
 
 
 class ToolRegistry:
@@ -151,10 +235,12 @@ class ToolRegistry:
         # Optional PermissionSystem. When set, execute() fails CLOSED for any tool
         # whose required level exceeds the current level — callers cannot skip it.
         self.permission_gate = None
+        # (tool, args-hash) -> box of a timed-out, non-idempotent call that may still be running
+        self._stuck: dict[tuple[str, int], dict] = {}
 
     def register(self, tool: ToolSpec):
         """Register a tool. Overwrites if name already exists."""
-        ok, err = self.policy.validate(tool.effective_capabilities())
+        ok, err = self.policy.validate_tool(tool.capabilities, tool.effective_capabilities())
         if not ok:
             self.logger.warning("[TOOL] %s declares invalid capabilities: %s", tool.name, err)
         self._tools[tool.name] = tool
@@ -240,7 +326,7 @@ class ToolRegistry:
                           "permission_denied": True},
                 )
 
-        cap_ok, cap_err = self.policy.validate(tool.effective_capabilities())
+        cap_ok, cap_err = self.policy.validate_tool(tool.capabilities, tool.effective_capabilities())
         if not cap_ok:
             return ActionResult.fail(
                 message=f"Capability denied: {cap_err}",
@@ -248,10 +334,15 @@ class ToolRegistry:
                 data={"error": cap_err},
             )
 
-        # Validate args
-        ok, err = tool.validate_args(args)
+        # Validate args (and fill in declared defaults)
+        ok, err, args = tool.normalize_args(args)
         if not ok:
             return ActionResult.fail(message=f"Invalid args: {err}", intent=tool_name, data={"error": err})
+
+        # Content from third parties is untrusted whether the call succeeded, failed or timed
+        # out: an injected instruction can just as well sit in an error message.
+        if self.permission_gate is not None and any(t in UNTRUSTED_SOURCE_TAGS for t in tool.tags):
+            self.permission_gate.mark_untrusted(tool_name)
 
         # Execute
         effective_timeout = self._effective_timeout(tool, args, timeout)
@@ -261,13 +352,14 @@ class ToolRegistry:
             if not isinstance(result, ActionResult):
                 result = ActionResult.ok(message=str(result), intent=tool_name, data={"raw": result})
             result.intent = tool_name
-            if (
-                self.permission_gate is not None
-                and getattr(result, "success", False)
-                and set(tool.tags) & UNTRUSTED_SOURCE_TAGS
-            ):
-                self.permission_gate.mark_untrusted(tool_name)
             return result
+        except _InFlightError as _e:
+            return ActionResult.fail(
+                message=f"Tool '{tool_name}' is still running from a previous timed-out call; "
+                        "not starting it twice (outcome unknown)",
+                intent=tool_name,
+                data={"in_flight": True, "outcome_unknown": True},
+            )
         except TimeoutError as _e:
             logging.debug("[core/tool_registry.py:207] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return ActionResult.fail(
@@ -306,7 +398,7 @@ class ToolRegistry:
         thread, so a timed-out call may still finish in the background; callers must treat a
         timeout as "outcome unknown", not "did not happen".
         """
-        if set(tool.tags) & THREAD_AFFINE_TAGS:
+        if any(t in THREAD_AFFINE_TAGS for t in tool.tags):
             started = time.monotonic()
             result = tool.execute_fn(**args)
             elapsed = time.monotonic() - started
@@ -317,23 +409,52 @@ class ToolRegistry:
                     result.data = {**(result.data or {}), "slow_seconds": round(elapsed, 2)}
             return result
 
+        if self._stuck:
+            key = self._call_key(tool.name, args)
+            stuck = self._stuck.get(key)
+            if stuck is not None:
+                if not stuck.get("done"):
+                    raise _InFlightError(tool.name)
+                self._stuck.pop(key, None)
+
         box: dict[str, Any] = {}
+        done = threading.Lock()
+        done.acquire()
         ctx = contextvars.copy_context()  # keep per-command usage attribution inside the worker
+        fn = tool.execute_fn
 
         def _run() -> None:
             try:
-                box["result"] = ctx.run(tool.execute_fn, **args)
+                box["result"] = ctx.run(fn, **args)
             except BaseException as exc:  # re-raised on the caller's thread below
                 box["error"] = exc
+            finally:
+                box["done"] = True
+                done.release()
 
-        worker = threading.Thread(target=_run, name=f"tool-{tool.name}", daemon=True)
-        worker.start()
-        worker.join(timeout)
-        if worker.is_alive():
+        _POOL.submit(_run)
+        if not done.acquire(timeout=timeout):
+            if not self._repeatable(tool):
+                # A retry must not start the same side effect while this one may still be running.
+                if len(self._stuck) > 256:
+                    for k in [k for k, b in self._stuck.items() if b.get("done")]:
+                        self._stuck.pop(k, None)
+                self._stuck[self._call_key(tool.name, args)] = box
             raise TimeoutError(f"no result after {timeout:.0f}s; it may still be running in the background")
         if "error" in box:
             raise box["error"]
         return box.get("result")
+
+    @staticmethod
+    def _repeatable(tool: "ToolSpec") -> bool:
+        return tool.idempotent is True
+
+    @staticmethod
+    def _call_key(name: str, args: dict) -> tuple[str, int]:
+        try:
+            return name, hash(repr(sorted(args.items())))
+        except Exception:
+            return name, 0
 
     def verify(self, tool_name: str, result: ActionResult) -> bool:
         """Run the tool's verification function if it has one."""

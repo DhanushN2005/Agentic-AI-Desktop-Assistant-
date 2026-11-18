@@ -1,15 +1,16 @@
 import logging
 import re
 
+from utils.voice_parse import strip_wake
+
 
 def handle_json(orch, c):
     """Handle JSON formatting commands."""
     orch.send_to_ui("STATE", "PROCESSING")
-    cmd = c.lower().strip()
-    cmd = re.sub(r"^(flexi|flexie|hey flexie|ok flexie)\b", "", cmd).strip()
+    original = strip_wake(c)
 
-    # Try to find JSON in the command
-    json_text = re.search(r'(\{.*\}|\[.*\])', cmd, re.DOTALL)
+    # JSON payload comes from the ORIGINAL text so keys/values keep their case.
+    json_text = re.search(r'(\{.*\}|\[.*\])', original, re.DOTALL)
     if not json_text:
         # Try to get text from clipboard or context
         try:
@@ -24,8 +25,11 @@ def handle_json(orch, c):
             logging.debug("[core/handlers/json_fmt.py:22] Swallowed exception: %s: %s", type(_e).__name__, _e)
             orch.speak("I need JSON text to process.")
             return True
+        cmd = original.lower()
     else:
         json_text_str = json_text.group(1)
+        # keywords come only from the words around the JSON, never from its content
+        cmd = (original[:json_text.start()] + " " + original[json_text.end():]).lower()
 
     if "format" in cmd or "pretty" in cmd or "indent" in cmd:
         response = orch.json_formatter.format_json(json_text_str)

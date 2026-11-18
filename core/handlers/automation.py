@@ -7,6 +7,24 @@ def handle_automation(orch, c):
         jobs = orch.automation.list_jobs() if orch.automation else ["Automation not available"]
         orch.speak("\n".join(jobs))
         return True
+    m_toggle = re.match(r"^(enable|disable|turn on|turn off)\s+(?:automation\s+)?(\w+)", cmd)
+    if m_toggle and orch.automation:
+        jid = m_toggle.group(2)
+        on = m_toggle.group(1) in ("enable", "turn on")
+        if orch.automation.set_enabled(jid, on):
+            orch.speak(f"Automation {jid} is now {'enabled' if on else 'disabled'}.")
+        else:
+            orch.speak("I don't have an automation with that name. Say list automations first.")
+        return True
+    m_once = re.search(r"(?:schedule\s+)?(.+?)\s+in\s+(\d+)\s+(minute|hour)s?\b", cmd)
+    if m_once and orch.automation:
+        import time as _time
+        delay = int(m_once.group(2)) * (3600 if m_once.group(3) == "hour" else 60)
+        task_cmd = re.sub(r"^(schedule|automate)\s+", "", m_once.group(1)).strip()
+        jid = re.sub(r"\W+", "_", task_cmd)[:20] or "once_job"
+        orch.automation.add_job(jid, task_cmd, trigger="once", run_at=_time.time() + delay)
+        orch.speak(f"Okay, I will run {task_cmd} once in {m_once.group(2)} {m_once.group(3)}s.")
+        return True
     if any(x in cmd for x in ["remove", "delete", "cancel"]):
         m = re.search(r"(?:automation\s+)?(\w+)", cmd)
         jid = m.group(1) if m else ""

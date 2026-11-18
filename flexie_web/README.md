@@ -1,73 +1,29 @@
-# React + TypeScript + Vite
+# flexie_web
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + TypeScript + Vite front end for Flexie's **provider settings and hand-gesture control** panel. It is separate from the other two web UIs: the dashboard served by the bridge at `http://localhost:8766/` (`interface/web_ui.html`) and the hand-gesture orb in `../vision/` (launched by saying "open vision mode").
 
-Currently, two official plugins are available:
+## What is in it
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- `src/App.tsx` - provider key/model form (Groq, OpenAI, DeepSeek, Gemini, Anthropic, Mistral, Ollama), the active-provider switch, and a gesture panel.
+- `src/lib/handTracker.ts`, `gestureMapper.ts`, `useGestureControl.ts` - MediaPipe hand tracking (`@mediapipe/tasks-vision`), mapping gestures (swipe left/right/up/down, open palm, fist, wave, point) to Flexie commands with a 1.5 s cooldown.
+- Settings are kept in the browser's `localStorage`; saving also sends `SET_API_KEY:<provider>:<key>` and `SET_MODEL:<provider>:<model>` over a WebSocket to `ws://localhost:8765`.
 
-## React Compiler
+## Run it
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd flexie_web
+npm install
+npm run dev      # Vite dev server
+npm run build    # type-check + production build into dist/
+npm run lint
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Known gaps (verified against the code, not fixed here)
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- **Backend link:** the WebSocket bridge (`interface/web_ui_bridge.py`) accepts browser connections only from its own dashboard origin (`http://localhost:8766` / `127.0.0.1:8766`) and requires `AUTH:<token>` as the first message. This app, served from the Vite dev server, sends neither, so it shows "offline" and settings are saved locally only unless the bridge's allowed origins are extended.
+- **Stale model lists:** the provider catalogue in `App.tsx` lists default models such as `llama-3.1-8b-instant` (Groq) and `gemini-1.5-flash` that no longer match the backend defaults (`openai/gpt-oss-20b` for Groq, `gemini-flash-latest` for Gemini; see `utils/config.py` `SUPPORTED_PROVIDERS`).
+- Gestures need camera permission in the browser and have not been tested live.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Tooling
+
+Created from the Vite React-TS template: ESLint flat config in `eslint.config.js`, `@vitejs/plugin-react`, TypeScript project references (`tsconfig.app.json`, `tsconfig.node.json`). To turn on type-aware lint rules, replace `tseslint.configs.recommended` with `recommendedTypeChecked` (or `strictTypeChecked`) in `eslint.config.js`.

@@ -1,5 +1,15 @@
+import random
 import secrets
 import string
+
+SYMBOLS = "!@#$%^&*()-_=+[]{}|;:,.<>?"
+MIN_LENGTH = 8
+MAX_LENGTH = 128
+_COMMON = {
+    "password", "passw0rd", "123456", "12345678", "123456789", "qwerty", "qwerty123",
+    "letmein", "welcome", "admin", "iloveyou", "abc123", "111111", "000000",
+    "monkey", "dragon", "football", "login", "princess", "secret",
+}
 
 
 class PasswordEngine:
@@ -7,7 +17,15 @@ class PasswordEngine:
 
     def generate(self, length: int = 16, use_upper: bool = True,
                  use_lower: bool = True, use_digits: bool = True,
-                 use_symbols: bool = True) -> str:
+                 use_symbols: bool = True, min_length: int = MIN_LENGTH) -> str:
+        """Generate a password.  Raises ValueError for lengths outside
+        [min_length, 128] instead of silently returning a different length."""
+        if isinstance(length, bool) or not isinstance(length, int):
+            raise ValueError("Password length must be a whole number.")
+        if length < min_length:
+            raise ValueError(f"Password length must be at least {min_length} characters.")
+        if length > MAX_LENGTH:
+            raise ValueError(f"Password length must be at most {MAX_LENGTH} characters.")
         chars = ""
         required = []
         if use_lower:
@@ -20,7 +38,7 @@ class PasswordEngine:
             chars += string.digits
             required.append(secrets.choice(string.digits))
         if use_symbols:
-            symbols = "!@#$%^&*()-_=+[]{}|;:,.<>?"
+            symbols = SYMBOLS
             chars += symbols
             required.append(secrets.choice(symbols))
 
@@ -33,7 +51,6 @@ class PasswordEngine:
 
         password_chars = required + [secrets.choice(chars) for _ in range(remaining)]
         # Shuffle using secrets for cryptographic randomness
-        import random
         random.SystemRandom().shuffle(password_chars)
         return "".join(password_chars)
 
@@ -51,12 +68,14 @@ class PasswordEngine:
             "wheat", "xenon", "yield", "zebra", "coral", "dream",
             "frost", "glow", "haze", "ink", "jade", "knot"
         ]
+        if not isinstance(word_count, int) or not 3 <= word_count <= 20:
+            raise ValueError("A passphrase needs between 3 and 20 words.")
         chosen = [secrets.choice(words) for _ in range(word_count)]
         separator = secrets.choice(["-", ".", "_", " "])
         return separator.join(chosen)
 
     def strength_check(self, password: str) -> dict:
-        """Check password strength."""
+        """Check password strength (score 0-6: length x2 tiers + 4 character classes)."""
         score = 0
         feedback = []
         if len(password) >= 8:
@@ -65,22 +84,30 @@ class PasswordEngine:
             feedback.append("Use at least 8 characters")
         if len(password) >= 12:
             score += 1
-        if any(c in string.ascii_lowercase for c in password):
+        if any(c.islower() for c in password):
             score += 1
         else:
             feedback.append("Add lowercase letters")
-        if any(c in string.ascii_uppercase for c in password):
+        if any(c.isupper() for c in password):
             score += 1
         else:
             feedback.append("Add uppercase letters")
-        if any(c in string.digits for c in password):
+        if any(c.isdigit() for c in password):
             score += 1
         else:
             feedback.append("Add numbers")
-        if any(c in "!@#$%^&*()-_=+[]{}|;:,.<>?" for c in password):
+        # any other printable character (incl. space, quotes, ~ ` / \ and unicode symbols)
+        if any(not c.isalnum() for c in password):
             score += 1
         else:
             feedback.append("Add symbols")
+
+        if password.lower() in _COMMON:
+            score = min(score, 1)
+            feedback.append("This is a very common password")
+        elif len(set(password)) <= 2 and password:
+            score = min(score, 2)
+            feedback.append("Avoid repeating the same characters")
 
         levels = ["Very Weak", "Weak", "Fair", "Good", "Strong", "Very Strong", "Excellent"]
         level = levels[min(score, len(levels) - 1)]

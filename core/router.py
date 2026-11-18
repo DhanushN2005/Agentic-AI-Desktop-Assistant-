@@ -1,11 +1,13 @@
 import logging
 import re
 from difflib import get_close_matches
+from functools import lru_cache
 
 from utils.config import Config
 
 # Common typo corrections for voice/typing errors
 TYPO_MAP = {
+    "plya": "play", "paly": "play", "plae": "play",
     "nex6t": "next", "nexr": "next", "neext": "next", "nxt": "next",
     "previos": "previous", "previus": "previous",
     "fullscreen": "full screen", "fullscrn": "full screen",
@@ -82,6 +84,35 @@ TYPO_MAP = {
 # Natural language override patterns: (pattern, intent, confidence)
 # Checked BEFORE compiled triggers to intercept conversational phrasing.
 NL_OVERRIDES = [
+    # ── Bare stop-words are control words, never "close an app named <nothing>" ──
+    (r"^(?:please\s+)?(?:stop|stop\s+it|stop\s+that|stop\s+talking|stop\s+speaking|be\s+quiet|shut\s+up|enough)[.!]?$", "conversational", 0.9),
+    # ── Screen capture / weather phrasing ──
+    (r"\bsummari[sz]e\s+(?:what'?s\s+on\s+)?(?:my\s+|the\s+|this\s+)?(?:screen|display|desktop)\b", "vision_analyze", 0.98),
+    (r"\b(?:take|capture|grab)\s+(?:a\s+)?(?:picture|photo|snapshot|pic)\s+of\s+(?:my\s+|the\s+)?(?:screen|desktop|display)\b", "vision_capture", 0.97),
+    (r"\bis\s+it\s+(?:going\s+to\s+be|gonna\s+be)\s+(?:\w+\s+)?(?:hot|cold|warm|rainy|sunny|cloudy|windy|snowy)\b", "weather", 0.95),
+    # ── "open chrome and search for X" is ONE app request (browser + search), not research ──
+    (r"^(?:please\s+)?(?:open|launch|start)\s+(?:the\s+)?(?:chrome|edge|firefox|browser)\s+(?:and\s+)?(?:search\s+(?:for\s+)?|google\s+|look\s+up\s+|find\s+)\S", "app_op", 0.97),
+    # ── Download images (search words or a page URL) ──
+    (r"\b(?:download|save|get|fetch|grab)\s+(?:me\s+)?(?:(?:\d{1,2}|a|an|some|all|the|few|several|more)\s+)?(?:\w+\s+)?(?:images?|pictures?|photos?|pics|wallpapers?)\b", "image_download", 0.97),
+    # ── "wrong" only undoes when it is the whole utterance ("wrong", "that's wrong"), never inside a sentence ──
+    (r"^(?:ok(?:ay)?[, ]+)?(?:that'?s |that is |that was |it'?s )?(?:wrong|a mistake|incorrect)(?: one)?[.!]?$", "undo", 0.9),
+    # ── Screen requests: "check my screen", "open vision mode" ──
+    (r"\b(?:check|look at|view|inspect|see)\s+(?:my\s+|the\s+)?(?:screen|display|desktop)\b", "vision_analyze", 0.97),
+    # ── "vision mode" = the hand-gesture orb UI (vision/): open, start, close, stop ──
+    (r"\bvision\s+mode\b|\b(?:open|start|launch|run|enable|activate|turn on|switch to|close|stop|exit|quit|turn off|disable)\s+(?:the\s+)?(?:vision|orb)(?:\s+(?:mode|ui|app|interface))?\b", "vision_mode", 0.98),
+    # ── Dismissals: "skip that", "never mind" are acknowledged instantly (no model call) ──
+    (r"^(?:ok(?:ay)?\s+|no\s+|yeah\s+)?(?:skip(?:\s+(?:that|those|it|this))?|never\s*mind|forget\s+(?:it|that)|leave\s+it|ignore\s+(?:that|it|this))[.!]?$", "conversational", 0.9),
+    # ── Alarm / todo / memory phrasing ──
+    (r"\b(?:set|create|make|add)\s+(?:me\s+)?(?:an?\s+|the\s+)?alarm\b", "alarm", 0.97),
+    (r"\b(?:show|list|what\s+are|view)\s+(?:me\s+)?(?:all\s+)?(?:my\s+)?(?:alarms|timers)\b", "alarm", 0.95),
+    (r"\b(?:show|list|view|read)\s+(?:me\s+)?(?:all\s+)?(?:my\s+)?(?:todos?|to-?do\s+list|tasks)\b", "todo_list", 0.95),
+    (r"\b(?:clear|wipe|reset)\s+(?:your\s+|my\s+)?memory\b", "memory", 0.95),
+    (r"\b\d+(?:\.\d+)?\s*(?:%|percent)\s+of\s+\d", "calc", 0.95),
+    # ── Screen questions ("what's on my screen") must not be eaten by calc's bare "what's" ──
+    (r"\b(?:what'?s|what\s+is|describe|read|tell\s+me\s+what'?s)\s+(?:on\s+)?(?:my\s+|the\s+)?screen\b", "vision_analyze", 0.97),
+    (r"\bdescribe\s+(?:my\s+|the\s+)?screen\b", "vision_analyze", 0.97),
+    # ── "what's the weather (in X)" ──
+    (r"\bwhat'?s\s+the\s+weather\b", "weather", 0.97),
     # ── System volume/audio controls (must fire before any media/youtube fallback) ──
     (r"\b(?:(?:set|turn|increase|decrease|raise|lower|reduce|down|up|change)\s+(?:the\s+)?)?volume\b", "media", 0.99),
     (r"\b(?:volume\s*(?:up|down|to|by|\d+)|mute|unmute|quieter|louder)\b", "media", 0.99),
@@ -406,15 +437,42 @@ NL_OVERRIDES = [
 ]
 
 
+_MAX_ROUTE_CHARS = 400
+from core.self_model import SELF_QUESTION_REGEX  # noqa: E402
+
+# Bare question words that only mean 'calculate' when the sentence actually has a number.
+_CALC_WEAK = frozenset({"what is", "what's", "add", "math", "solve", "figure out", "percentage"})
+_NL_COMPILED = None  # filled below, after NL_OVERRIDES is defined
+_TYPO_KEYS: list = []
+_TYPO_MAXLEN = 0
+
+
+@lru_cache(maxsize=4096)
+def _correct_word(w: str) -> str:
+    if w in TYPO_MAP:
+        return TYPO_MAP[w]
+    if len(w) < 5 or len(w) > _TYPO_MAXLEN * 1.3 + 1:  # short real words ("that") must never be fuzzed
+        return w
+    close = get_close_matches(w, _TYPO_KEYS, n=1, cutoff=0.85)
+    return TYPO_MAP[close[0]] if close else w
+
+
+# Questions about Flexie itself are answered from live state (core/self_model.py), never by the LLM.
+NL_OVERRIDES.insert(0, (SELF_QUESTION_REGEX, "awareness", 0.97))
+_NL_COMPILED = [(re.compile(p, re.IGNORECASE), i, c) for p, i, c in NL_OVERRIDES]
+_TYPO_KEYS = list(TYPO_MAP.keys())
+_TYPO_MAXLEN = max(map(len, _TYPO_KEYS))
+
+
 class IntentRouter:
     """Enhanced Intent Routing Engine with strict priority hierarchy and advanced DOM automation."""
     def __init__(self):
         # Intent map: (tag, triggers, priority)
         self.intents = [
             ("undo", [
-                "undo", "revert", "mistake", "go back", "reverse", "cancel that",
+                "undo", "revert", "go back", "reverse", "cancel that",
                 "undo that", "take it back", "nevermind", "never mind", "scratch that",
-                "disregard", "ignore that", "my bad", "oops", "wrong"
+                "disregard", "ignore that", "my bad", "oops"
             ], 0),
 
             ("voice_macro", [
@@ -1169,6 +1227,8 @@ class IntentRouter:
             ]
             self._compiled.append((intent, compiled_triggers, priority))
 
+        self._sorted_compiled = sorted(self._compiled, key=lambda x: x[2])
+
     def route_dynamic(self, command: str, brain_instance, context: str = "") -> tuple[str, float, dict]:
         """Agentic routing using LLM with short-term context awareness."""
         prompt = f"""
@@ -1261,22 +1321,11 @@ class IntentRouter:
             return "conversational", 0.0
 
         # 0. TYPO CORRECTION: Fix common voice/typing errors
-        words = cmd.split()
-        corrected = []
-        for w in words:
-            if w in TYPO_MAP:
-                corrected.append(TYPO_MAP[w])
-            else:
-                close = get_close_matches(w, TYPO_MAP.keys(), n=1, cutoff=0.85)
-                if close:
-                    corrected.append(TYPO_MAP[close[0]])
-                else:
-                    corrected.append(w)
-        cmd = " ".join(corrected)
+        cmd = " ".join(_correct_word(w) for w in cmd[:_MAX_ROUTE_CHARS].split())
 
         # 0.1. NATURAL LANGUAGE OVERRIDES: Regex patterns for conversational phrasing
-        for pattern, intent, confidence in NL_OVERRIDES:
-            if re.search(pattern, cmd, re.IGNORECASE):
+        for pattern, intent, confidence in _NL_COMPILED:
+            if pattern.search(cmd):
                 return intent, confidence
 
         # 0.5. PERSONAL QUERY OVERRIDE: "tell me about X" should be conversational, not web search
@@ -1336,11 +1385,13 @@ class IntentRouter:
                     return "app_op", 1.0
 
         # 5. ROUTING BY PRIORITY
-        sorted_intents = sorted(self._compiled, key=lambda x: x[2])
+        sorted_intents = self._sorted_compiled
         matches = []
         for intent, compiled_triggers, priority in sorted_intents:
             for pattern, trigger in compiled_triggers:
                 if pattern.search(cmd):
+                    if intent == "calc" and trigger in _CALC_WEAK and not any(ch.isdigit() for ch in cmd):
+                        continue
                     score = 0.8
                     if cmd == trigger:
                         score = 1.0

@@ -1,8 +1,14 @@
+import itertools
 import logging
 import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
+
+from utils.config import Config
+from utils.voice_parse import TimeParseError, format_duration, parse_time, seconds_until
+
+_MAX_TRIGGERED = 100  # bound on remembered fired alarms/timers
 
 
 class AlarmEngine:
@@ -12,8 +18,11 @@ class AlarmEngine:
         self._alarms: dict[str, threading.Timer] = {}
         self._timers: dict[str, threading.Timer] = {}
         self._active_countdowns: list[dict] = []
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._alarm_ids = itertools.count(1)   # monotonic: ids never reused after cancel
+        self._timer_ids = itertools.count(1)
         self._speak = speak_callback or self._default_speak
+        self._now: Callable[[], datetime] = datetime.now  # patched in tests
 
     def _default_speak(self, text: str):
         """Default speak function if no callback provided."""
@@ -30,72 +39,80 @@ class AlarmEngine:
         """Set the speak callback (called by orchestrator)."""
         self._speak = callback
 
+    def _record(self, entry: dict):
+        with self._lock:
+            self._active_countdowns.append(entry)
+            overflow = len(self._active_countdowns) - _MAX_TRIGGERED
+            if overflow > 0:
+                del self._active_countdowns[:overflow]
+
     def set_alarm(self, time_str: str, label: str = "Alarm") -> str:
-        """Set alarm for a specific time (e.g., '7:30 AM', '14:00')."""
+        """Set alarm for a specific time ('7:30 AM', '7 am', '5pm', 'noon', '14:00')."""
         try:
-            now = datetime.now()
-            target = None
-            for fmt in ["%I:%M %p", "%I:%M%p", "%H:%M", "%I:%M"]:
-                try:
-                    target = datetime.strptime(time_str.strip(), fmt).replace(
-                        year=now.year, month=now.month, day=now.day
-                    )
-                    break
-                except ValueError as _e:
-                    logging.debug("[engines/alarm.py:42] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                    continue
+            now = self._now()
+            text = (time_str or "").strip()
+            target = parse_time(text, now)
+            if target is None and text:
+                target = parse_time("at " + text, now)
             if target is None:
                 return f"Could not understand time format: {time_str}"
-            if target <= now:
-                target += timedelta(days=1)
-            delay = (target - now).total_seconds()
-            alarm_id = f"alarm_{len(self._alarms) + 1}"
+            delay = max(seconds_until(target, now), 0.0)
+            shown = target.strftime(Config.TIME_FORMAT)
+            with self._lock:
+                alarm_id = f"alarm_{next(self._alarm_ids)}"
 
             def _ring():
-                self._speak(f"Alarm! {label}! It's {time_str}.")
-                self._active_countdowns.append({
+                with self._lock:
+                    self._alarms.pop(alarm_id, None)
+                self._record({
                     "type": "alarm",
                     "label": label,
-                    "time": time_str,
+                    "time": shown,
                     "triggered": True,
-                    "triggered_at": datetime.now().isoformat()
+                    "triggered_at": datetime.now().isoformat(),
                 })
+                self._speak(f"Alarm! {label}! It's {shown}.")
 
             timer = threading.Timer(delay, _ring)
             timer.daemon = True
+            with self._lock:
+                self._alarms[alarm_id] = timer
             timer.start()
-            self._alarms[alarm_id] = timer
-            return f"Alarm set for {time_str} ({label})."
+            return f"Alarm set for {shown} ({label})."
+        except TimeParseError as e:
+            return f"That isn't a valid time: {e}"
         except Exception as e:
             logging.debug("[engines/alarm.py:66] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Could not set alarm: {e}"
 
-    def set_timer(self, seconds: int, label: str = "Timer") -> str:
+    def set_timer(self, seconds: float, label: str = "Timer") -> str:
         """Set a countdown timer that speaks when done."""
-        if seconds <= 0:
+        if not seconds or seconds <= 0:
             return "Timer duration must be positive."
-        timer_id = f"timer_{len(self._timers) + 1}"
-        end_time = datetime.now() + timedelta(seconds=seconds)
+        seconds = float(seconds)
+        with self._lock:
+            timer_id = f"timer_{next(self._timer_ids)}"
+        end_time = self._now() + timedelta(seconds=seconds)
+        time_str = format_duration(seconds)
 
         def _ring():
-            mins, secs = divmod(seconds, 60)
-            time_str = f"{mins} minutes {secs} seconds" if mins else f"{secs} seconds"
-            self._speak(f"Timer finished! {label} of {time_str} is complete.")
-            self._active_countdowns.append({
+            with self._lock:
+                self._timers.pop(timer_id, None)
+            self._record({
                 "type": "timer",
                 "label": label,
                 "duration": time_str,
                 "ended_at": end_time.strftime("%H:%M:%S"),
                 "triggered": True,
-                "triggered_at": datetime.now().isoformat()
+                "triggered_at": datetime.now().isoformat(),
             })
+            self._speak(f"Timer finished! {label} of {time_str} is complete.")
 
         timer = threading.Timer(seconds, _ring)
         timer.daemon = True
+        with self._lock:
+            self._timers[timer_id] = timer
         timer.start()
-        self._timers[timer_id] = timer
-        mins, secs = divmod(seconds, 60)
-        time_str = f"{mins} minutes {secs} seconds" if mins else f"{secs} seconds"
         return f"Timer set for {time_str} ({label})."
 
     def cancel_alarm(self, alarm_id: str) -> str:
@@ -149,17 +166,18 @@ class AlarmEngine:
             return f"Cancelled {last_id}."
 
     def list_alarms(self) -> str:
-        if not self._alarms:
-            return "No active alarms."
-        return f"{len(self._alarms)} alarm(s) active."
+        with self._lock:
+            n = len(self._alarms)
+        return f"{n} alarm(s) active." if n else "No active alarms."
 
     def list_timers(self) -> str:
-        if not self._timers:
-            return "No active timers."
-        return f"{len(self._timers)} timer(s) active."
+        with self._lock:
+            n = len(self._timers)
+        return f"{n} timer(s) active." if n else "No active timers."
 
     def get_triggered(self) -> list[dict]:
         """Get list of triggered alarms/timers."""
-        triggered = [d for d in self._active_countdowns if d.get("triggered")]
-        self._active_countdowns = [d for d in self._active_countdowns if not d.get("triggered")]
+        with self._lock:
+            triggered = [d for d in self._active_countdowns if d.get("triggered")]
+            self._active_countdowns = [d for d in self._active_countdowns if not d.get("triggered")]
         return triggered

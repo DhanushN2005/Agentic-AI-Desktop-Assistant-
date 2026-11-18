@@ -297,12 +297,15 @@
         borderBottom: "1px solid rgba(0,242,255,0.3)",
         display: "flex", alignItems: "center", justifyContent: "space-between",
       });
-      banner.innerHTML = `
-        <span>⚡ <strong>Flexie:</strong> ${request.message || ""}</span>
-        <button onclick="this.parentElement.remove()" style="
-          background:none;border:1px solid #00f2ff;color:#00f2ff;
-          cursor:pointer;padding:3px 10px;border-radius:4px;font-size:11px;">✕</button>
-      `;
+      const label = document.createElement("span");
+      const strong = document.createElement("strong");
+      strong.textContent = "Flexie:";
+      label.append("⚡ ", strong, " " + String(request.message || ""));
+      const closeBtn = document.createElement("button");
+      closeBtn.textContent = "✕";
+      closeBtn.style.cssText = "background:none;border:1px solid #00f2ff;color:#00f2ff;cursor:pointer;padding:3px 10px;border-radius:4px;font-size:11px;";
+      closeBtn.addEventListener("click", () => banner.remove());
+      banner.append(label, closeBtn);
       document.body.prepend(banner);
       if (request.autoDismissMs) setTimeout(() => banner.remove(), request.autoDismissMs);
       sendResponse({ ok: true });

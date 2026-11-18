@@ -1,16 +1,36 @@
+import atexit
 import email
 import email.header
 import imaplib
 import logging
+import re
 import smtplib
+import threading
 import time
+from contextlib import contextmanager
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formatdate
+from email.utils import formatdate, parseaddr
 
 from utils.config import Config
 
 log = logging.getLogger("Flexie.Email")
+
+
+_ADDR_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}$")
+
+
+def validate_address(raw: str) -> str:
+    """Return a clean ASCII address or '' if the input is odd/lookalike/multi-recipient."""
+    raw = (raw or "").strip()
+    if not raw or re.search(r"[\r\n\x00,;]", raw):
+        return ""
+    _name, addr = parseaddr(raw)
+    addr = addr.strip()
+    if raw.count("@") != 1 or not addr or not addr.isascii() or not _ADDR_RE.match(addr):
+        return ""
+    return addr
+    return addr
 
 
 def _decode_header(raw: str) -> str:
@@ -51,38 +71,145 @@ def _extract_body(msg) -> str:
     return body.strip()
 
 
+_IMAP_HOST = "imap.gmail.com"
+_imap_lock = threading.RLock()
 _cached_imap = None
 _cached_imap_time = 0.0
+_IDLE_PROBE_SECS = 30.0
+
+
+def _new_connection():
+    """Open and authenticate a fresh IMAP connection (patched in tests)."""
+    m = imaplib.IMAP4_SSL(_IMAP_HOST, timeout=30)
+    m.login(Config.EMAIL_ADDRESS, Config.EMAIL_PASSWORD)
+    return m
+
+
+def _quote_mailbox(name: str) -> str:
+    """Quote a mailbox name for IMAP (idempotent for already-quoted names)."""
+    name = (name or "INBOX").strip()
+    if len(name) >= 2 and name.startswith('"') and name.endswith('"'):
+        name = name[1:-1]
+    name = re.sub(r"[\r\n\x00]", "", name)
+    return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _quote_search(text: str) -> str:
+    """Escape user text for use inside an IMAP quoted string."""
+    text = re.sub(r"[\r\n\x00]", " ", text or "").strip()
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _imap_reset() -> None:
+    """Drop the cached connection (best-effort close)."""
+    global _cached_imap
+    with _imap_lock:
+        m, _cached_imap = _cached_imap, None
+    if m is not None:
+        try:
+            m.logout()
+        except Exception as _e:
+            logging.debug("imap logout during reset: %s", _e)
+
+
+def close_connection() -> None:
+    """Close the shared IMAP connection (called at shutdown)."""
+    _imap_reset()
+
+
+atexit.register(close_connection)
 
 
 def _imap_connect():
-    """Return an authenticated IMAP4_SSL connection with 60s session reuse."""
+    """Return the ONE cached, authenticated connection (reconnects when stale)."""
     global _cached_imap, _cached_imap_time
     if not (Config.EMAIL_ADDRESS and Config.EMAIL_PASSWORD):
         raise RuntimeError("Email credentials not configured (EMAIL_ADDRESS / EMAIL_PASSWORD).")
-
-    now = time.time()
-    if _cached_imap is not None and (now - _cached_imap_time < 60):
-        try:
-            status, _ = _cached_imap.noop()
-            if status == "OK":
+    with _imap_lock:
+        now = time.time()
+        if _cached_imap is not None:
+            if now - _cached_imap_time < _IDLE_PROBE_SECS:
                 _cached_imap_time = now
                 return _cached_imap
-        except Exception:
-            _cached_imap = None
+            try:
+                status, _ = _cached_imap.noop()
+                if status == "OK":
+                    _cached_imap_time = now
+                    return _cached_imap
+            except Exception as _e:
+                logging.debug("imap noop failed, reconnecting: %s", _e)
+            _imap_reset()
+        _cached_imap = _new_connection()
+        _cached_imap_time = now
+        return _cached_imap
 
-    if _cached_imap:
+
+@contextmanager
+def _imap_session(folder: str = "INBOX", readonly: bool = True):
+    """Serialise access to the shared connection and select ``folder`` (status checked).
+
+    The connection is kept open on success; on any error it is discarded so the
+    next call reconnects.  Callers must NOT call logout().
+    """
+    with _imap_lock:
+        m = _imap_connect()
         try:
-            _cached_imap.logout()
+            typ, _data = m.select(_quote_mailbox(folder), readonly)
+            if typ != "OK":
+                raise RuntimeError(f"Could not open folder {folder}")
+            yield m
         except Exception:
-            pass
-        _cached_imap = None
+            _imap_reset()
+            raise
 
-    m = imaplib.IMAP4_SSL("imap.gmail.com")
-    m.login(Config.EMAIL_ADDRESS, Config.EMAIL_PASSWORD)
-    _cached_imap = m
-    _cached_imap_time = now
-    return m
+
+def _uid_str(email_id) -> str:
+    uid = str(email_id).strip()
+    if not uid.isdigit():
+        raise ValueError(f"Invalid email id: {email_id!r}")
+    return uid
+
+
+def _uid_search(m, *criteria) -> list[int]:
+    typ, data = m.uid("SEARCH", None, *criteria)
+    if typ != "OK":
+        raise RuntimeError("IMAP search failed")
+    raw = data[0] if data and data[0] else b""
+    return sorted(int(x) for x in raw.split())  # numeric order: newest = highest UID
+
+
+def _fetch_messages(m, uids: list[int], with_body: bool = True) -> list[dict]:
+    """ONE batched UID FETCH (BODY.PEEK so nothing is marked read); returns dicts oldest->newest."""
+    if not uids:
+        return []
+    spec = "(FLAGS BODY.PEEK[])" if with_body else "(FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])"
+    typ, data = m.uid("FETCH", ",".join(str(u) for u in uids), spec)
+    if typ != "OK":
+        raise RuntimeError("IMAP fetch failed")
+    out: dict[int, dict] = {}
+    for item in data or []:
+        if not isinstance(item, tuple):
+            continue
+        meta = item[0].decode("utf-8", "ignore") if isinstance(item[0], bytes) else str(item[0])
+        mu = re.search(r"UID (\d+)", meta)
+        if not mu:
+            continue
+        uid = int(mu.group(1))
+        mf = re.search(r"FLAGS \(([^)]*)\)", meta)
+        flags = mf.group(1) if mf else ""
+        msg = email.message_from_bytes(item[1])
+        body = _extract_body(msg) if with_body else ""
+        out[uid] = {
+            "id": str(uid),
+            "from": _decode_header(msg.get("From", "")),
+            "to": _decode_header(msg.get("To", "")),
+            "subject": _decode_header(msg.get("Subject", "(no subject)")),
+            "date": msg.get("Date", ""),
+            "preview": body[:300],
+            "body": body,
+            "read": "\\Seen" in flags,
+        }
+    return [out[u] for u in sorted(out)]
 
 
 class EmailEngine:
@@ -91,6 +218,9 @@ class EmailEngine:
         self.pwd  = Config.EMAIL_PASSWORD
         # In-session cache for last-fetched emails so handlers can reference "email 2"
         self._last_inbox: list[dict] = []
+
+    def close(self) -> None:
+        close_connection()
 
     def _is_configured(self) -> bool:
         return bool(self.addr and self.pwd)
@@ -108,29 +238,15 @@ class EmailEngine:
         return [f"From {e['from']}: {e['subject']}" for e in detailed]
 
     def get_unread_emails_detailed(self, count: int = 5) -> list[dict]:
-        """Fetch unread emails from inbox with full metadata."""
+        """Fetch unread emails (newest by UID) without marking them read."""
         if not self._is_configured():
             return [{"error": "Email credentials not configured."}]
         try:
-            m = _imap_connect()
-            m.select("INBOX")
-            _, ids = m.search(None, "UNSEEN")
-            id_list = ids[0].split()
-            results = []
-            for mid in id_list[-count:]:
-                _, data = m.fetch(mid, "(RFC822)")
-                msg = email.message_from_bytes(data[0][1])
-                results.append({
-                    "id": mid.decode() if isinstance(mid, bytes) else str(mid),
-                    "from": _decode_header(msg.get("From", "")),
-                    "to": _decode_header(msg.get("To", "")),
-                    "subject": _decode_header(msg.get("Subject", "(no subject)")),
-                    "date": msg.get("Date", ""),
-                    "preview": _extract_body(msg)[:300],
-                    "body": _extract_body(msg),
-                    "read": False,
-                })
-            m.logout()
+            with _imap_session("INBOX") as m:
+                uids = _uid_search(m, "UNSEEN")[-count:]
+                results = _fetch_messages(m, uids)
+            for r in results:
+                r["read"] = False
             self._last_inbox = results
             return results
         except Exception as e:
@@ -142,27 +258,9 @@ class EmailEngine:
         if not self._is_configured():
             return [{"error": "Email credentials not configured."}]
         try:
-            m = _imap_connect()
-            m.select(folder)
-            _, ids = m.search(None, "ALL")
-            id_list = ids[0].split()
-            results = []
-            for mid in id_list[-count:]:
-                _, data = m.fetch(mid, "(RFC822 FLAGS)")
-                raw_msg = data[0][1]
-                flags = data[0][0].decode() if isinstance(data[0][0], bytes) else str(data[0][0])
-                msg = email.message_from_bytes(raw_msg)
-                results.append({
-                    "id": mid.decode() if isinstance(mid, bytes) else str(mid),
-                    "from": _decode_header(msg.get("From", "")),
-                    "to": _decode_header(msg.get("To", "")),
-                    "subject": _decode_header(msg.get("Subject", "(no subject)")),
-                    "date": msg.get("Date", ""),
-                    "preview": _extract_body(msg)[:300],
-                    "body": _extract_body(msg),
-                    "read": "\\Seen" in flags,
-                })
-            m.logout()
+            with _imap_session(folder) as m:
+                uids = _uid_search(m, "ALL")[-count:]
+                results = _fetch_messages(m, uids)
             self._last_inbox = results
             return results
         except Exception as e:
@@ -176,35 +274,19 @@ class EmailEngine:
         return None
 
     def search_emails(self, query: str, count: int = 10) -> list[dict]:
-        """Search inbox by subject OR sender keyword."""
+        """Search inbox by subject, sender or body with ONE query and ONE batched fetch."""
         if not self._is_configured():
             return [{"error": "Email credentials not configured."}]
+        q = (query or "").strip()
+        if not q:
+            return [{"error": "Search failed: empty query."}]
         try:
-            m = _imap_connect()
-            m.select("INBOX")
-            q = query.strip()
-            # Try OR between SUBJECT and FROM searches
-            _, ids_subj = m.search(None, f'SUBJECT "{q}"')
-            _, ids_from = m.search(None, f'FROM "{q}"')
-            _, ids_body = m.search(None, f'BODY "{q}"')
-            id_set = set(
-                ids_subj[0].split() +
-                ids_from[0].split() +
-                ids_body[0].split()
-            )
-            results = []
-            for mid in list(id_set)[-count:]:
-                _, data = m.fetch(mid, "(RFC822)")
-                msg = email.message_from_bytes(data[0][1])
-                results.append({
-                    "id": mid.decode() if isinstance(mid, bytes) else str(mid),
-                    "from": _decode_header(msg.get("From", "")),
-                    "subject": _decode_header(msg.get("Subject", "(no subject)")),
-                    "date": msg.get("Date", ""),
-                    "preview": _extract_body(msg)[:200],
-                    "body": _extract_body(msg),
-                })
-            m.logout()
+            with _imap_session("INBOX") as m:
+                qq = _quote_search(q)
+                uids = _uid_search(m, "OR", "OR", "SUBJECT", qq, "FROM", qq, "BODY", qq)[-count:]
+                results = _fetch_messages(m, uids)
+            for r in results:
+                r["preview"] = r["body"][:200]
             return results
         except Exception as e:
             log.error("search_emails: %s", e)
@@ -215,7 +297,7 @@ class EmailEngine:
         folders = ["[Gmail]/Sent Mail", "Sent", "Sent Messages"]
         for folder in folders:
             try:
-                result = self.get_all_emails(count=count, folder=f'"{folder}"')
+                result = self.get_all_emails(count=count, folder=folder)
                 if result and "error" not in result[0]:
                     return result
             except Exception:
@@ -227,13 +309,13 @@ class EmailEngine:
         if not self._is_configured():
             return {"error": "Email credentials not configured."}
         try:
-            m = _imap_connect()
-            m.select("INBOX")
-            _, unread_ids = m.search(None, "UNSEEN")
-            _, all_ids = m.search(None, "ALL")
-            unread = len(unread_ids[0].split()) if unread_ids[0] else 0
-            total = len(all_ids[0].split()) if all_ids[0] else 0
-            m.logout()
+            with _imap_session("INBOX") as m:
+                typ, data = m.status(_quote_mailbox("INBOX"), "(MESSAGES UNSEEN)")
+                if typ != "OK":
+                    raise RuntimeError("STATUS failed")
+                text = data[0].decode() if isinstance(data[0], bytes) else str(data[0])
+                total = int(re.search(r"MESSAGES (\d+)", text).group(1))
+                unread = int(re.search(r"UNSEEN (\d+)", text).group(1))
             return {"unread": unread, "total": total}
         except Exception as e:
             return {"error": str(e)}
@@ -243,33 +325,41 @@ class EmailEngine:
         if not self._is_configured():
             return []
         try:
-            m = _imap_connect()
-            _, folders = m.list()
-            m.logout()
+            with _imap_lock:
+                m = _imap_connect()
+                try:
+                    _, folders = m.list()
+                except Exception:
+                    _imap_reset()
+                    raise
             names = []
-            for f in folders:
-                parts = f.decode().split('"/"')
-                if parts:
-                    names.append(parts[-1].strip().strip('"'))
+            for f in folders or []:
+                if not f:
+                    continue
+                line = f.decode() if isinstance(f, bytes) else str(f)
+                mm = re.match(r'\((?P<fl>.*?)\)\s+(?:"(?P<d>[^"]*)"|NIL)\s+(?P<n>.+)$', line)
+                if mm:
+                    names.append(mm.group("n").strip().strip('"'))
             return names
         except Exception as e:
             log.error("get_folders: %s", e)
             return []
 
     # ─────────────────────────────────────────────────────────────────
-    # STATUS CHANGES
+    # STATUS CHANGES (all keyed by UID, never by shifting sequence numbers)
     # ─────────────────────────────────────────────────────────────────
 
     def mark_as_read(self, email_id: str) -> str:
-        """Mark a specific email as read by IMAP ID."""
+        """Mark a specific email as read by IMAP UID."""
         if not self._is_configured():
             return "Email credentials not configured."
         try:
-            m = _imap_connect()
-            m.select("INBOX")
-            m.store(email_id, "+FLAGS", "\\Seen")
-            m.logout()
-            return f"Email {email_id} marked as read."
+            uid = _uid_str(email_id)
+            with _imap_session("INBOX", readonly=False) as m:
+                typ, _ = m.uid("STORE", uid, "+FLAGS", "(\\Seen)")
+                if typ != "OK":
+                    return "Failed to mark as read."
+            return f"Email {uid} marked as read."
         except Exception as e:
             return f"Failed to mark as read: {e}"
 
@@ -277,27 +367,39 @@ class EmailEngine:
         if not self._is_configured():
             return "Email credentials not configured."
         try:
-            m = _imap_connect()
-            m.select("INBOX")
-            m.store(email_id, "-FLAGS", "\\Seen")
-            m.logout()
-            return f"Email {email_id} marked as unread."
+            uid = _uid_str(email_id)
+            with _imap_session("INBOX", readonly=False) as m:
+                typ, _ = m.uid("STORE", uid, "-FLAGS", "(\\Seen)")
+                if typ != "OK":
+                    return "Failed to mark as unread."
+            return f"Email {uid} marked as unread."
         except Exception as e:
             return f"Failed: {e}"
 
+    def _move_uid(self, m, uid: str, dest: str) -> str | None:
+        """COPY then flag \\Deleted then UID EXPUNGE. Returns an error string or None."""
+        typ, _ = m.uid("COPY", uid, _quote_mailbox(dest))
+        if typ != "OK":
+            return f"copy to {dest} failed, original left untouched"
+        typ, _ = m.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
+        if typ != "OK":
+            return "could not flag the original for removal"
+        caps = getattr(m, "capabilities", ()) or ()
+        if "UIDPLUS" in {str(c).upper() for c in caps}:
+            m.uid("EXPUNGE", uid)  # removes only this message
+        else:
+            log.warning("IMAP server lacks UIDPLUS; message %s flagged but not expunged", uid)
+        return None
+
     def delete_email(self, email_id: str) -> str:
-        """Move email to Trash (Gmail) and expunge."""
+        """Copy to Trash (Gmail); flag/expunge the original only if the copy succeeded."""
         if not self._is_configured():
             return "Email credentials not configured."
         try:
-            m = _imap_connect()
-            m.select("INBOX")
-            # Gmail: move to Trash label
-            m.store(email_id, "+FLAGS", "\\Deleted")
-            m.copy(email_id, "[Gmail]/Trash")
-            m.expunge()
-            m.logout()
-            return f"Email {email_id} deleted."
+            uid = _uid_str(email_id)
+            with _imap_session("INBOX", readonly=False) as m:
+                err = self._move_uid(m, uid, "[Gmail]/Trash")
+            return f"Failed to delete: {err}" if err else f"Email {uid} deleted."
         except Exception as e:
             return f"Failed to delete: {e}"
 
@@ -306,13 +408,10 @@ class EmailEngine:
         if not self._is_configured():
             return "Email credentials not configured."
         try:
-            m = _imap_connect()
-            m.select("INBOX")
-            m.copy(email_id, "[Gmail]/All Mail")
-            m.store(email_id, "+FLAGS", "\\Deleted")
-            m.expunge()
-            m.logout()
-            return f"Email {email_id} archived."
+            uid = _uid_str(email_id)
+            with _imap_session("INBOX", readonly=False) as m:
+                err = self._move_uid(m, uid, "[Gmail]/All Mail")
+            return f"Failed to archive: {err}" if err else f"Email {uid} archived."
         except Exception as e:
             return f"Failed to archive: {e}"
 
@@ -321,13 +420,10 @@ class EmailEngine:
         if not self._is_configured():
             return "Email credentials not configured."
         try:
-            m = _imap_connect()
-            m.select("INBOX")
-            m.copy(email_id, folder)
-            m.store(email_id, "+FLAGS", "\\Deleted")
-            m.expunge()
-            m.logout()
-            return f"Email moved to {folder}."
+            uid = _uid_str(email_id)
+            with _imap_session("INBOX", readonly=False) as m:
+                err = self._move_uid(m, uid, folder)
+            return f"Failed to move: {err}" if err else f"Email moved to {folder}."
         except Exception as e:
             return f"Failed to move: {e}"
 
@@ -338,6 +434,10 @@ class EmailEngine:
     def send_email(self, to: str, subject: str, body: str) -> str:
         if not self._is_configured():
             return "Email credentials not configured."
+        to = validate_address(to)
+        if not to:
+            return "Failed to send: the recipient address is not valid."
+        subject = re.sub(r"[\r\n]+", " ", subject or "")
         try:
             msg = MIMEText(body)
             msg["Subject"] = subject
@@ -356,6 +456,10 @@ class EmailEngine:
         """Send a multi-part email with both plain text and HTML."""
         if not self._is_configured():
             return "Email credentials not configured."
+        to = validate_address(to)
+        if not to:
+            return "Failed to send: the recipient address is not valid."
+        subject = re.sub(r"[\r\n]+", " ", subject or "")
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
@@ -406,15 +510,21 @@ class EmailEngine:
         if not self._is_configured():
             return "Email credentials not configured."
         try:
-            m = _imap_connect()
             msg = MIMEText(body)
             msg["Subject"] = subject
             msg["From"] = self.addr
             msg["To"] = to
             msg["Date"] = formatdate(localtime=True)
-            draft_folder = "[Gmail]/Drafts"
-            m.append(draft_folder, "\\Draft", imaplib.Time2Internaldate(None), msg.as_bytes())
-            m.logout()
+            with _imap_lock:
+                m = _imap_connect()
+                try:
+                    typ, _ = m.append(_quote_mailbox("[Gmail]/Drafts"), "(\\Draft)",
+                                      imaplib.Time2Internaldate(time.time()), msg.as_bytes())
+                except Exception:
+                    _imap_reset()
+                    raise
+            if typ != "OK":
+                return "Failed to save draft."
             return f"Draft saved: '{subject}' to {to}."
         except Exception as e:
             return f"Failed to save draft: {e}"

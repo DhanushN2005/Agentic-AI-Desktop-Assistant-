@@ -7,7 +7,9 @@ Usage:
 
 Token counts are EXACT when the provider returns usage; otherwise they are estimated
 (~4 characters per token) and the call is flagged ``estimated``. Recording never raises:
-telemetry must not be able to break a model call. Only successful calls are recorded.
+telemetry must not be able to break a model call. Failed attempts are recorded too
+(flagged ``failed``: error class + latency, zero tokens/cost) so latency and failure
+statistics are honest; they are excluded from token and cost totals.
 
 Each call is attributed to the user command in flight (a ``ContextVar`` set by the
 orchestrator), so "what did that command cost?" has an answer.
@@ -30,7 +32,9 @@ from core.telemetry.record import TelemetryRecord
 logger = logging.getLogger("Flexie.Usage")
 
 _current_command: contextvars.ContextVar[str | None] = contextvars.ContextVar("flexie_command_id", default=None)
+_current_job: contextvars.ContextVar[str | None] = contextvars.ContextVar("flexie_job_id", default=None)
 MAX_COMMANDS = 500
+MAX_JOBS = 200
 MAX_CALLS = 2000
 
 
@@ -82,6 +86,7 @@ class CommandUsage:
     completion_tokens: int = 0
     cost_usd: float = 0.0
     latency_seconds: float = 0.0
+    failed_calls: int = 0
     providers: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -91,7 +96,7 @@ class CommandUsage:
     def to_dict(self) -> dict[str, Any]:
         return {
             "command_id": self.command_id, "query": self.query[:120], "calls": self.calls,
-            "estimated_calls": self.estimated_calls, "prompt_tokens": self.prompt_tokens,
+            "estimated_calls": self.estimated_calls, "failed_calls": self.failed_calls, "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens, "total_tokens": self.total_tokens,
             "cost_usd": round(self.cost_usd, 6), "latency_seconds": round(self.latency_seconds, 3),
             "providers": dict(self.providers), "started": self.started,
@@ -103,6 +108,7 @@ class UsageTracker:
         self._lock = threading.RLock()
         self._commands: OrderedDict[str, CommandUsage] = OrderedDict()
         self._calls: deque[dict[str, Any]] = deque(maxlen=MAX_CALLS)
+        self._jobs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._persist = (os.getenv("FLEXIE_USAGE_PERSIST", "1") != "0") if persist is None else persist
         self._db_path = db_path
         self._store = None
@@ -133,9 +139,18 @@ class UsageTracker:
             "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens, "cost_usd": cost,
             "price_source": price_source, "latency_seconds": latency_seconds, "estimated": estimated,
+            "failed": False, "error": "",
         }
+        job_id = _current_job.get()
         with self._lock:
             self._calls.append(entry)
+            if job_id:
+                j = self._jobs.setdefault(job_id, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
+                while len(self._jobs) > MAX_JOBS:
+                    self._jobs.popitem(last=False)
+                j["prompt_tokens"] += prompt_tokens
+                j["completion_tokens"] += completion_tokens
+                j["calls"] += 1
             cu = self._commands.get(command_id or "_unattributed")
             if cu is None:
                 cu = self._commands[command_id or "_unattributed"] = CommandUsage(command_id or "_unattributed")
@@ -161,6 +176,42 @@ class UsageTracker:
                 logger.debug("usage persist failed: %s", e)
         return entry
 
+    def record_failure(self, provider: str, model: str, latency_seconds: float, error: str,
+                       agent: str = "") -> dict[str, Any]:
+        """Record a failed attempt: counted in latency/failure stats, never in tokens or cost."""
+        command_id = _current_command.get() or ""
+        entry = {
+            "timestamp": time.time(), "command_id": command_id, "provider": provider, "model": model,
+            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost_usd": 0.0,
+            "price_source": "", "latency_seconds": latency_seconds, "estimated": False,
+            "failed": True, "error": error,
+        }
+        with self._lock:
+            self._calls.append(entry)
+            key = command_id or "_unattributed"
+            cu = self._commands.get(key)
+            if cu is None:
+                cu = self._commands[key] = CommandUsage(key)
+                while len(self._commands) > MAX_COMMANDS:
+                    self._commands.popitem(last=False)
+            cu.failed_calls += 1
+            cu.latency_seconds += latency_seconds
+        store = self._get_store()
+        if store is not None:
+            try:
+                store.record(TelemetryRecord(
+                    model_id=model, engine=provider, agent=agent, latency_seconds=latency_seconds,
+                    command_id=command_id, failed=True, metadata={"failed": True, "error": error},
+                ))
+            except Exception as e:
+                logger.debug("usage persist failed: %s", e)
+        return entry
+
+    def job_totals(self, job_id: str) -> dict[str, int]:
+        with self._lock:
+            j = self._jobs.get(job_id)
+            return dict(j) if j else {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0}
+
     # -- reading ------------------------------------------------------------------
     def command(self, command_id: str) -> CommandUsage | None:
         with self._lock:
@@ -173,21 +224,32 @@ class UsageTracker:
 
     def summary(self) -> dict[str, Any]:
         with self._lock:
-            calls = list(self._calls)
+            all_calls = list(self._calls)
+        calls = [c for c in all_calls if not c.get("failed")]
+        failed = [c for c in all_calls if c.get("failed")]
         by_provider: dict[str, dict[str, Any]] = {}
+
+        def _slot(name: str) -> dict[str, Any]:
+            return by_provider.setdefault(name, {"calls": 0, "tokens": 0, "cost_usd": 0.0,
+                                                 "estimated_calls": 0, "failed_calls": 0})
+
         for c in calls:
-            p = by_provider.setdefault(c["provider"], {"calls": 0, "tokens": 0, "cost_usd": 0.0, "estimated_calls": 0})
+            p = _slot(c["provider"])
             p["calls"] += 1
             p["tokens"] += c["total_tokens"]
             p["cost_usd"] += c["cost_usd"]
             p["estimated_calls"] += 1 if c["estimated"] else 0
-        lat = sorted(c["latency_seconds"] for c in calls)
+        for c in failed:
+            _slot(c["provider"])["failed_calls"] += 1
+        lat = sorted(c["latency_seconds"] for c in all_calls)  # failures cost time too
 
         def pct(q: float) -> float:
             return lat[min(len(lat) - 1, int(q * (len(lat) - 1) + 0.5))] if lat else 0.0
 
         return {
             "calls": len(calls),
+            "failed_calls": len(failed),
+            "failure_rate": round(len(failed) / len(all_calls), 4) if all_calls else 0.0,
             "estimated_calls": sum(1 for c in calls if c["estimated"]),
             "prompt_tokens": sum(c["prompt_tokens"] for c in calls),
             "completion_tokens": sum(c["completion_tokens"] for c in calls),
@@ -196,13 +258,15 @@ class UsageTracker:
             "latency_p50_s": round(pct(0.5), 3), "latency_p95_s": round(pct(0.95), 3),
             "per_provider": {k: {**v, "cost_usd": round(v["cost_usd"], 6)} for k, v in by_provider.items()},
             "note": "Cost is an estimate (see core/telemetry/pricing.py). Calls flagged estimated "
-                    "used a ~4 chars/token estimate because the provider returned no usage.",
+                    "used a ~4 chars/token estimate because the provider returned no usage. "
+                    "Failed attempts are counted in latency/failure stats only.",
         }
 
     def reset(self) -> None:
         with self._lock:
             self._commands.clear()
             self._calls.clear()
+            self._jobs.clear()
 
 
 _tracker = UsageTracker()
@@ -231,6 +295,17 @@ def end_command(token: contextvars.Token) -> None:
         _current_command.set(None)
 
 
+def begin_job(job_id: str) -> contextvars.Token:
+    return _current_job.set(job_id)
+
+
+def end_job(token: contextvars.Token) -> None:
+    try:
+        _current_job.reset(token)
+    except ValueError:
+        _current_job.set(None)
+
+
 def current_command() -> str | None:
     return _current_command.get()
 
@@ -245,7 +320,7 @@ def set_command_query(query: str) -> None:
 
 # --------------------------------------------------------------------------- the hook
 class track_llm:  # noqa: N801  (used like a function: ``with track_llm(...) as call``)
-    """Context manager that records one successful LLM call."""
+    """Context manager that records one LLM call (success, or failure with its error class)."""
 
     def __init__(self, provider: str, model: str, prompt_text: str = "",
                  messages: list | None = None, agent: str = ""):
@@ -255,19 +330,30 @@ class track_llm:  # noqa: N801  (used like a function: ``with track_llm(...) as 
         self._prompt_text = prompt_text or messages_text(messages)
         self._text: str | None = None
         self._usage: Any = None
-        self._t0 = 0.0
+        self._failed: str | None = None
+        self._t0 = time.perf_counter()
 
     def done(self, completion_text: str | None, usage: Any = None) -> None:
         self._text, self._usage = completion_text or "", usage
+
+    def fail(self, reason: str = "EmptyResponse") -> None:
+        """Mark the call failed without raising (e.g. an empty reply)."""
+        self._failed = reason or "Failed"
 
     def __enter__(self) -> track_llm:
         self._t0 = time.perf_counter()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
-        if exc_type is None and self._text is not None:
-            try:
-                latency = time.perf_counter() - self._t0
+        try:
+            latency = time.perf_counter() - self._t0
+            if exc_type is not None:
+                # GeneratorExit / KeyboardInterrupt are not provider failures
+                if issubclass(exc_type, Exception):
+                    _tracker.record_failure(self.provider, self.model, latency, exc_type.__name__, self.agent)
+            elif self._failed is not None:
+                _tracker.record_failure(self.provider, self.model, latency, self._failed, self.agent)
+            elif self._text is not None:
                 exact = extract_usage(self._usage)
                 if exact is not None:
                     prompt, completion, estimated = exact[0], exact[1], False
@@ -275,6 +361,6 @@ class track_llm:  # noqa: N801  (used like a function: ``with track_llm(...) as 
                     prompt, completion, estimated = (
                         estimate_tokens(self._prompt_text), estimate_tokens(self._text), True)
                 _tracker.record(self.provider, self.model, prompt, completion, latency, estimated, self.agent)
-            except Exception as e:  # telemetry must never break the model call
-                logger.debug("usage tracking failed: %s", e)
+        except Exception as e:  # telemetry must never break the model call
+            logger.debug("usage tracking failed: %s", e)
         return False

@@ -351,8 +351,8 @@ class WorkflowExecutor:
                 # --- PHASE 1: Recovery Agent Hook ---
                 if report.quality_score < 50.0:
                     try:
-                        from recovery.analyzer import RecoveryAnalyzer
-                        recovery_agent = RecoveryAnalyzer(orch.brain)
+                        from recovery.analyzer import get_analyzer
+                        recovery_agent = get_analyzer(orch.brain)
                         # Use diagnose_failure which takes cmd and error_msg
                         diagnosis = recovery_agent.diagnose_failure(clean_step, str(report))
                         orch.logger.info(f"[RECOVERY_AGENT] Diagnosis: {diagnosis.get('mitigation')}")

@@ -866,11 +866,32 @@ Finally, at the very end of your response, write a single short, generic sentenc
             if error is not None:
                 job.error = error
             self._persist(job)
+            if job.status in (JobStatus.FAILED, JobStatus.CANCELLED):
+                self._remove_if_nothing_built(job)
             self._live.pop(job.id, None)
             if self._running_id == job.id:
                 self._running_id = None
             if self._active_job is job:
                 self._active_job = None
+
+    @staticmethod
+    def _remove_if_nothing_built(job: BuildJob) -> None:
+        """A failed/cancelled job that produced no files leaves no folder behind.
+
+        Only a workspace that holds nothing but the bookkeeping Flexie itself created (its own
+        ``.git``, ``.gitignore`` and build log) is removed; anything else is left untouched.
+        """
+        ws = job.workspace_path
+        if not ws or not os.path.isdir(ws):
+            return
+        try:
+            entries = set(os.listdir(ws))
+            if entries - {".git", ".gitignore", ".flexie_build.log"}:
+                return
+            import shutil
+            shutil.rmtree(ws, ignore_errors=True)
+        except OSError as e:
+            logger.debug("workspace cleanup skipped: %s", e)
 
     def _stop_requested(self, job: BuildJob) -> bool:
         """Under the state lock: if cancel/pause is set, finalize the job and report True."""
@@ -911,6 +932,9 @@ Finally, at the very end of your response, write a single short, generic sentenc
 
         if self._stop_requested(job):
             return
+
+        if job.workspace_path and not os.path.isdir(job.workspace_path):
+            os.makedirs(job.workspace_path, exist_ok=True)  # an empty workspace may have been cleaned up
 
         with self._state_lock:
             job.status = JobStatus.RUNNING

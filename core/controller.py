@@ -4,14 +4,15 @@ import os
 import threading
 import time
 
-import pyautogui
-
 from core.danger_gate import DangerGate
 from core.safety import SafetyGuard
 from core.telemetry import Telemetry
 from core.tool_registry import PermissionLevel
 from engines.long_term_memory import GlobalMemory
 from utils.config import Config
+from utils.lazy import LazyModule
+
+pyautogui = LazyModule("pyautogui")  # imported on first use (~1 s)
 
 
 class FlexieController:
@@ -32,6 +33,8 @@ class FlexieController:
 
         # Danger Gate: command awaiting explicit user confirmation (or None)
         self.pending_confirmation = None
+        self.pending_request_id = None   # id of the approval request this confirmation answers
+        self.pending_since = 0.0         # monotonic time the question was asked
 
         # P0 Feature 2: Workspace Memory
         self.workspace_state = {
@@ -63,13 +66,32 @@ class FlexieController:
     def _conversation_watchdog(self):
         while True:
             time.sleep(5)
+            self._expire_pending()
             if self.orch.active and (time.time() - self.last_command_time > 30):
                 self.orch.active = False
                 # Never let a stale confirmation silently expire into an
                 # unrelated future command being mistaken for "confirm".
-                self.pending_confirmation = None
+                self._clear_pending(reject=True)
                 if not self.dictation_active and not self.meeting_active:
                     self.logger.info("Session closed due to inactivity.")
+
+    PENDING_TTL_SECONDS = 60.0
+
+    def _clear_pending(self, reject: bool = False) -> None:
+        rid = self.pending_request_id
+        self.pending_confirmation = None
+        self.pending_request_id = None
+        if reject and rid and self.permission_system:
+            self.permission_system.reject_request(rid)
+
+    def _expire_pending(self) -> bool:
+        """Drop a confirmation question nobody answered in time, so a stray 'ok' said much
+        later can never execute an old, forgotten delete."""
+        if self.pending_confirmation and time.monotonic() - self.pending_since > self.PENDING_TTL_SECONDS:
+            self.logger.info("Pending confirmation expired: %r", self.pending_confirmation)
+            self._clear_pending(reject=True)
+            return True
+        return False
 
     def _smart_followup(self, command: str) -> str:
         cmd_lower = command.lower()
@@ -101,6 +123,8 @@ class FlexieController:
         self._handler_args = (args, kwargs)
 
         # DANGER GATE: an earlier high-impact command awaits user confirmation.
+        if self.pending_confirmation and self._expire_pending():
+            self.orch.speak("That confirmation timed out, so I did not run it.")
         if self.pending_confirmation:
             return self._handle_confirmation(command)
 
@@ -236,16 +260,22 @@ class FlexieController:
         # this command (e.g. the agent executor asked the user a moment ago) — don't ask twice.
         approval_active = bool(
             perm_level and ps
-            and ps.current_level.value > ps.default_level.value
-            and ps.current_level.value >= perm_level.value
+            and (
+                (ps.current_level.value > ps.default_level.value
+                 and ps.current_level.value >= perm_level.value)
+                or ps.grant_covers(perm_level)   # approved a moment ago for THIS running action
+            )
         )
         requires_approval = (is_dangerous or needs_level) and not approval_active
         if requires_approval:
             self.pending_confirmation = command
+            self.pending_since = time.monotonic()
             self._pending_handler_args = getattr(self, "_handler_args", ((), {}))
+            self.pending_request_id = None
             if self.permission_system:
                 level_to_req = perm_level or PermissionLevel.USER_CONFIRMATION
-                self.permission_system.create_approval_request(command, level=level_to_req)
+                req = self.permission_system.create_approval_request(command, level=level_to_req)
+                self.pending_request_id = req.get("id")
             if hasattr(self.orch, "send_to_ui"):
                 self.orch.send_to_ui("APPROVAL_REQUEST", command)
             self.orch.speak(
@@ -264,24 +294,34 @@ class FlexieController:
         """
         if self.danger_gate.is_confirmation(command):
             confirmed = self.pending_confirmation
+            rid = self.pending_request_id
             self.pending_confirmation = None
+            self.pending_request_id = None
+            approved = True
             if self.permission_system:
-                self.permission_system.approve_request()
+                # Approve exactly the request this question was about (never "whatever is pending").
+                approved = bool(rid) and self.permission_system.approve_request(rid)
+            if not approved:
+                self.orch.speak("That request expired, so I did not run it.")
+                if hasattr(self.orch, "send_to_ui"):
+                    self.orch.send_to_ui("APPROVAL_RESOLVED", "expired")
+                return "cancelled"
             if hasattr(self.orch, "send_to_ui"):
                 self.orch.send_to_ui("APPROVAL_RESOLVED", "approved")
             self.orch.speak("Confirmed. Executing now.", silent=True)
-            # Dispatch with a fresh trace; danger gate already approved.
-            # The approval covers THIS command only — drop the escalation after.
+            # Dispatch with a fresh trace; the approval is a grant for THIS command only, active
+            # only while it runs, and dropped afterwards.
             try:
                 self._handler_args = getattr(self, "_pending_handler_args", ((), {}))
+                if self.permission_system:
+                    with self.permission_system.grant_scope(rid):
+                        return self._invoke(confirmed)
                 return self._invoke(confirmed)
             finally:
                 if self.permission_system:
                     self.permission_system.consume_approval()
         elif self.danger_gate.is_cancellation(command):
-            self.pending_confirmation = None
-            if self.permission_system:
-                self.permission_system.reject_request()
+            self._clear_pending(reject=True)
             if hasattr(self.orch, "send_to_ui"):
                 self.orch.send_to_ui("APPROVAL_RESOLVED", "rejected")
             self.orch.speak("Cancelled. No action was taken.")

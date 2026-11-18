@@ -1,5 +1,4 @@
 import logging
-import queue
 import threading
 import time
 
@@ -22,46 +21,23 @@ class YouTubeController(BrowserEngine):
         self.last_query = None
         self._ad_monitor_active = False
 
-        self._task_queue: queue.Queue = queue.Queue()
-        self._yt_thread = threading.Thread(
-            target=self._yt_worker, daemon=True, name="flexie_yt_worker"
-        )
-        self._yt_thread.start()
+        # The ONE Playwright worker thread is shared with BrowserEngine (see
+        # engines.browser._PlaywrightWorker): every Playwright object lives on it.
+        threading.Thread(target=self._prewarm, daemon=True, name="flexie_yt_prewarm").start()
 
-    # ── persistent worker ────────────────────────────────────────────────────
+    # ── persistent worker (shared with BrowserEngine) ────────────────────────
 
-    def _yt_worker(self):
-        """Single long-lived thread that owns all Playwright calls."""
+    def _prewarm(self):
         time.sleep(3)  # let orchestrator finish startup
         try:
-            self._ensure_session()
+            self._ensure_session()   # marshalled onto the Playwright worker thread
             self.logger.info("[YT Worker] Browser session pre-warmed and ready.")
         except Exception as e:
             self.logger.debug("[YT Worker] Pre-warm skipped: %s", e)
 
-        while True:
-            try:
-                fn, holder = self._task_queue.get(timeout=120)
-            except queue.Empty:
-                continue
-            try:
-                holder["result"] = fn()
-                holder["error"] = None
-            except Exception as e:
-                holder["result"] = None
-                holder["error"] = e
-            finally:
-                holder["event"].set()
-
     def _run(self, fn, timeout: float = 45.0):
-        """Submit fn() to the YT worker thread and block until it completes."""
-        holder = {"result": None, "error": None, "event": threading.Event()}
-        self._task_queue.put((fn, holder))
-        if not holder["event"].wait(timeout=timeout):
-            raise TimeoutError(f"YT worker did not complete within {timeout}s")
-        if holder["error"]:
-            raise holder["error"]
-        return holder["result"]
+        """Run fn() on the shared Playwright worker thread and block until it completes."""
+        return self._worker().call(fn, timeout=timeout)
 
     # ── public API (all dispatched to worker) ────────────────────────────────
 

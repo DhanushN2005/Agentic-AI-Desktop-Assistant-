@@ -98,11 +98,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--suite", default="routing", choices=["routing"])
     parser.add_argument("--tasks", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument("--min-accuracy", type=float, default=0.0)
+    parser.add_argument("--min-accuracy", type=float, default=0.9)
     args = parser.parse_args(argv)
 
     tasks_path = args.tasks or (TASKS_DIR / f"{args.suite}.jsonl")
     tasks = load_tasks(tasks_path)
+    if not tasks:
+        print(f"No tasks found in {tasks_path}")
+        return 2
     results = run_routing(IntentRouter(), tasks)
     summary = summarize(results)
 

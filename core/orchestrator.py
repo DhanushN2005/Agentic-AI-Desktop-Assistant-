@@ -25,6 +25,7 @@ from core.dag_planner import DAGPlanner
 from core.execution_graph import ExecutionGraph
 from core.handlers import dispatch_intent, handle_context_command
 from core.router import IntentRouter
+from core.safety import contains_restricted
 from core.task_classifier import TaskClassifier, TaskType
 from core.task_critic import TaskCritic
 from core.telemetry.usage import begin_command, end_command, get_tracker, set_command_query
@@ -233,6 +234,8 @@ class FlexieOrchestrator:
         self.email = EmailEngine()
         self.browser = BrowserEngine(self)
         self.vision = VisionEngine()
+        from engines.vision_mode import VisionMode
+        self.vision_mode = VisionMode()
         self.music = MusicEngine()
         self.dev = DeveloperEngine(self)
         self.knowledge = KnowledgeEngine(self)
@@ -275,6 +278,11 @@ class FlexieOrchestrator:
         self.clipboard_mgr = ClipboardManagerEngine()
         self.summarizer = TextSummarizerEngine()
         self.awareness = SelfAwareness()
+        from core.self_model import CommandLog, SelfModel
+        self.command_log = CommandLog()
+        self.self_model = SelfModel(self)
+        self._last_intent = None
+        self._cmd_replies: list[str] = []
         self.memory_system = MemorySystem()
         self.wiki = WikiEngine()
         self.jokes = JokesEngine()
@@ -295,6 +303,13 @@ class FlexieOrchestrator:
         self.body_metrics = BodyMetricsEngine()
         self.age_calc = AgeCalculatorEngine()
 
+        # Hourly retention pruning rides the brain's existing maintenance thread (MM-8).
+        try:
+            self.brain.add_maintenance_task(self._prune_stores, every_seconds=3600.0)
+            self.brain.ensure_maintenance_thread()
+        except Exception as _e:
+            logging.debug("[core/orchestrator.py:prune-schedule] %s: %s", type(_e).__name__, _e)
+
         # Connect alarm to speak callback
         self.alarm.set_speak_callback(self.speak)
 
@@ -305,15 +320,42 @@ class FlexieOrchestrator:
         # Register cleanup for Playwright and other engines
         atexit.register(self.cleanup)
 
+    def _prune_stores(self):
+        """Run every store's retention prune; one failing store never blocks the others."""
+        vs = getattr(getattr(self, "brain", None), "vector_store", None)
+        targets = (
+            ("memory", getattr(self, "memory", None), "prune"),
+            ("memory_system", getattr(self, "memory_system", None), "prune"),
+            ("awareness", getattr(self, "awareness", None), "prune"),
+            ("memory_manager", getattr(self, "memory_manager", None), "cleanup_expired"),
+            ("vector_store", vs, "prune_older_than"),
+        )
+        for name, obj, method in targets:
+            fn = getattr(obj, method, None) if obj is not None else None
+            if not callable(fn):
+                continue
+            try:
+                fn()
+            except Exception as _e:
+                logging.debug("[core/orchestrator.py:prune] %s.%s failed: %s: %s", name, method, type(_e).__name__, _e)
+
     def cleanup(self):
-        """Universal cleanup on exit."""
+        """Universal cleanup on exit. Each step is isolated so one failure cannot skip the rest."""
         self.logger.info("Flexie orchestrator cleaning up...")
-        if hasattr(self, 'mcp_manager') and self.mcp_manager:
-            self.mcp_manager.shutdown()
-        if hasattr(self, 'yt'):
-            self.yt.cleanup()
-        if hasattr(self, 'browser'):
-            self.browser.cleanup()
+        steps = (
+            ("mcp_manager", "shutdown"),
+            ("yt", "cleanup"),
+            ("browser", "cleanup"),
+            ("email", "close"),   # drops the cached IMAP connection
+        )
+        for attr, method in steps:
+            obj = getattr(self, attr, None)
+            fn = getattr(obj, method, None) if obj else None
+            if callable(fn):
+                try:
+                    fn()
+                except Exception as e:
+                    self.logger.warning("cleanup: %s.%s failed: %s", attr, method, e)
         if hasattr(self, 'voice'):
             self.voice.stop_speech = True
 
@@ -341,11 +383,19 @@ class FlexieOrchestrator:
             self.logger.error(f"Networking bind error: {e}")
 
     def send_to_ui(self, tag: str, value: str):
+        """Send a signed UI update to every registered UI port (Qt UI + web bridge)."""
         try:
-            msg = f"{tag}:{value}"
-            self._udp_out.sendto(msg.encode('utf-8'), ('127.0.0.1', Config.UDP_PORT_UI))
+            from utils import udp_auth
+            now = time.monotonic()
+            cache = getattr(self, "_ui_ports_cache", None)
+            if cache is None or now - cache[0] > 2.0:
+                cache = (now, udp_auth.ui_ports())
+                self._ui_ports_cache = cache
+            payload = udp_auth.pack(f"{tag}:{value}").encode("utf-8")
+            for port in cache[1]:
+                self._udp_out.sendto(payload, ("127.0.0.1", port))
         except Exception as _e:
-            logging.debug("[core/orchestrator.py:290] Swallowed exception: %s: %s", type(_e).__name__, _e)
+            logging.debug("send_to_ui failed: %s: %s", type(_e).__name__, _e)
 
     def get_conversation_history(self, current_query=None, limit=None):
         getter = getattr(self.memory, "get_conversation_messages", None)
@@ -379,12 +429,8 @@ class FlexieOrchestrator:
             add_turn = getattr(self.memory, "add_conversation_turn", None)
             if callable(add_turn):
                 add_turn("assistant", text)
-        if hasattr(self, 'memory_manager') and self.memory_manager:
-            try:
-                from core.memory_manager import MemoryCategory
-                self.memory_manager.remember(text[:60], text, MemoryCategory.CONVERSATION, importance=0.2)
-            except Exception as _e:
-                logging.debug("[core/orchestrator.py:325] Swallowed exception: %s: %s", type(_e).__name__, _e)
+        # Assistant replies are deliberately NOT stored as CONVERSATION memories (MM-8):
+        # they are already in chat_history/conversation_turns and only polluted recall.
 
     def record_response(self, text: str):
         self._record_text(text, conversation=True)
@@ -441,6 +487,11 @@ class FlexieOrchestrator:
         self.send_to_ui("STATE", "SPEAKING")
         self.send_to_ui("SAY", full_text)
         self.logger.info(f"Speaking: {text}")
+        try:
+            self._cmd_replies.append(full_text)
+            del self._cmd_replies[:-5]
+        except AttributeError:
+            pass
         if record_chat:
             self._record_text(full_text)
         if not silent:
@@ -485,6 +536,11 @@ class FlexieOrchestrator:
             engine=getattr(Config, "ENGINE", "auto"),
         )
         started = time.perf_counter()
+        record = not is_subcommand and depth == 0
+        if record:
+            self._cmd_replies = []
+            self._last_intent = None
+        outcome = {"ok": True, "error": None}
         # Attribute every LLM call made while serving a USER command to that command.
         # Planned sub-steps run inside the outer command and share its id.
         usage_token = None
@@ -493,6 +549,8 @@ class FlexieOrchestrator:
             set_command_query(cmd)
         try:
             result = self._handle_command_impl(cmd, is_subcommand, silent, source, depth)
+            if result is False or (isinstance(result, str) and result in ("failed", "blocked")):
+                outcome["ok"] = False
             self.trace_collector.step(
                 trace,
                 StepType.RESPOND,
@@ -503,13 +561,22 @@ class FlexieOrchestrator:
             self.trace_collector.finish(trace, result=str(result)[:1000],
                                         outcome="failure" if result is False else "success")
             return result
-        except Exception:
+        except Exception as exc:
+            outcome.update(ok=False, error=f"{type(exc).__name__}: {exc}")
             self._attach_usage(trace)
             self.trace_collector.finish(trace, outcome="failure")
             raise
         finally:
             if usage_token is not None:
                 end_command(usage_token)
+            if record and getattr(self, "command_log", None) is not None:
+                # never record the self-awareness questions themselves, or "what did you just do"
+                # would only ever describe itself
+                from core.self_model import classify as _self_q
+                if not (self._last_intent == "awareness" and _self_q(cmd)):
+                    self.command_log.add(cmd, self._last_intent, outcome["ok"], outcome["error"],
+                                         self._cmd_replies[-1] if self._cmd_replies else None,
+                                         (time.perf_counter() - started) * 1000)
 
     def _attach_usage(self, trace) -> None:
         """Record the command's token/cost totals on its trace and log one summary line."""
@@ -595,6 +662,12 @@ class FlexieOrchestrator:
         classification = self.workflow_gatekeeper.classify(cmd)
 
         is_simple, parsed_steps = self.workflow_parser.parse_simple_workflow(cmd)
+        if is_simple and re.match(
+                r"^(?:please\s+)?(?:open|launch|start)\s+(?:the\s+)?(?:chrome|edge|firefox|browser)\s+(?:and\s+)?"
+                r"(?:search\s+(?:for\s+)?|google\s+|look\s+up\s+|find\s+)\S", cmd.strip().lower()):
+            # one request ("open chrome and search for X"): the app handler opens the search in that
+            # browser; splitting it would send the second half to the slow multi-tab research path
+            is_simple, parsed_steps = False, [cmd]
 
         if not is_subcommand and classification == ClassificationType.DETERMINISTIC and is_simple:
             # Fast-path: Check if all subcommands are already explicit Tier-1 commands
@@ -697,7 +770,7 @@ class FlexieOrchestrator:
                     self.speak(f"Saved the response to your {reg_name} register.")
                 return
 
-        if any(word in c for word in Config.RESTRICTED_WORDS):
+        if contains_restricted(c):
             feedback("Content filtered for safety.")
             return
 
@@ -814,6 +887,7 @@ class FlexieOrchestrator:
         self.logger.info(f"[{task_type.name}] {cmd} (Intent: {intent})")
 
         self.logger.info(f"[ROUTING] Input: '{c}' | Intent: {intent} | Confidence: {confidence:.2f} | Silent: {silent}")
+        self._last_intent = intent
 
         # 4b. PRE-EMPTIVE FEEDBACK: Speak immediately for long-running tools
         confirmations = {
@@ -976,8 +1050,10 @@ class FlexieOrchestrator:
         while True:
             try:
                 text = self._speech_queue.get(timeout=1)
-                self.voice.speak(text)
-                self._speech_queue.task_done()
+                try:
+                    self.voice.speak(text)
+                finally:
+                    self._speech_queue.task_done()
             except queue.Empty as _e:
                 logging.debug("[core/orchestrator.py:730] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 continue
@@ -1058,6 +1134,14 @@ class FlexieOrchestrator:
                             final_cmd = follow
                 elif self.active:
                     final_cmd = text
+                else:
+                    # Asleep and no wake word: say so (rarely) instead of silently dropping the
+                    # command, which looked like "Flexie heard me but did nothing".
+                    self.logger.info("[WAKE] Ignored (asleep, no wake word): %r", text)
+                    now = time.monotonic()
+                    if len(text.split()) >= 2 and now - getattr(self, "_last_sleep_hint", -1e9) > 60:
+                        self._last_sleep_hint = now
+                        self.speak("I'm asleep. Say 'Flexie' first, then your command.")
 
                 if final_cmd:
                     print(f"[User]: \"{final_cmd}\"")
@@ -1078,6 +1162,53 @@ class FlexieOrchestrator:
             # browser using JS setInterval. This background thread is kept as a lightweight no-op
             # to preserve architecture while eliminating Playwright thread-safety conflicts.
             time.sleep(10)
+
+    def _process_queue_item(self, item):
+        """Run one cmd_queue item. Always balances task_done() and always releases a waiter.
+
+        An empty command or a malformed tuple used to skip task_done()/done_event.set(), so a
+        blocking caller sat out its whole timeout and queue.join() could never finish.
+        """
+        cmd, done_event, result_holder = None, None, None
+        try:
+            # FIX 3: support both plain string and blocking tuple
+            if isinstance(item, tuple):
+                cmd, done_event, result_holder = item
+            else:
+                cmd = item
+            if not cmd:
+                if result_holder is not None:
+                    result_holder.append(ActionResult.fail(message="empty command", intent=""))
+                return
+            self.is_processing = True
+            self.last_command_time = time.time()
+            self.last_command_name = cmd
+            self.stop_event.clear()
+            print(f"\n[Orchestrator]: Processing Command: \"{cmd}\"")
+            try:
+                result = self.handle_command(cmd)
+                # FIX 3: deferred (awaiting confirmation) or blocked commands must NOT be
+                # marked as executed for DAG/blocking callers.
+                if result_holder is not None:
+                    status = result if isinstance(result, str) else "executed"
+                    if result is False or status in ("blocked", "awaiting_confirmation", "failed", "delegated"):
+                        result_holder.append(ActionResult.fail(message=status, intent=cmd))
+                    else:
+                        result_holder.append(ActionResult.ok(message="Executed", intent=cmd))
+            except Exception as e:
+                self.logger.error(f"Action Worker Error: {e}")
+                if result_holder is not None:
+                    result_holder.append(ActionResult.fail(message=str(e), intent=cmd))
+            finally:
+                self.is_processing = False
+        finally:
+            try:
+                self.cmd_queue.task_done()
+            except ValueError as _e:
+                logging.debug("[core/orchestrator.py:task_done] %s", _e)
+            # FIX 8: Signal threading.Event — no busy-waiting on caller side
+            if done_event is not None:
+                done_event.set()
 
     def _action_worker(self):
         """Dedicated thread to process commands one by one.
@@ -1100,41 +1231,7 @@ class FlexieOrchestrator:
                     logging.debug("[core/orchestrator.py:840] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     continue
 
-                # FIX 3: Unpack item — support both plain string and blocking tuple
-                if isinstance(item, tuple):
-                    cmd, done_event, result_holder = item
-                else:
-                    cmd, done_event, result_holder = item, None, None
-
-                if cmd:
-                    self.is_processing = True
-                    self.last_command_time = time.time()
-                    self.last_command_name = cmd
-                    self.stop_event.clear()
-                    print(f"\n[Orchestrator]: Processing Command: \"{cmd}\"")
-                    try:
-                        result = self.handle_command(cmd)
-                        # FIX 3: Only report success when the command actually ran.
-                        # The controller overlay returns a status string; deferred
-                        # (awaiting confirmation) or blocked commands must NOT be
-                        # marked as executed for DAG/blocking callers.
-                        if result_holder is not None:
-                            status = result if isinstance(result, str) else "executed"
-                            if result is False or status in ("blocked", "awaiting_confirmation", "failed", "delegated"):
-                                result_holder.append(ActionResult.fail(message=status, intent=cmd))
-                            else:
-                                result_holder.append(ActionResult.ok(message="Executed", intent=cmd))
-                    except Exception as e:
-                        self.logger.error(f"Action Worker Error: {e}")
-                        # Signal completion with a failure ActionResult (FIX 3)
-                        if result_holder is not None:
-                            result_holder.append(ActionResult.fail(message=str(e), intent=cmd))
-                    finally:
-                        self.is_processing = False
-                        self.cmd_queue.task_done()
-                        # FIX 8: Signal threading.Event — no busy-waiting on caller side
-                        if done_event is not None:
-                            done_event.set()
+                self._process_queue_item(item)
             except Exception as e:
                 self.logger.critical(f"Action Worker Loop Crash: {e}")
                 time.sleep(0.5)
@@ -1378,7 +1475,8 @@ class FlexieOrchestrator:
         while True:
             try:
                 if not self.is_processing:
-                    for task in self.memory.due_reminders():
+                    # Each due reminder is claimed (marked done) by its own id.
+                    for _rid, task in self.memory.due_reminder_items():
                         self.speak(f"Reminder: {task}")
             except Exception as _e:
                 logging.debug("[core/orchestrator.py:1037] Swallowed exception: %s: %s", type(_e).__name__, _e)

@@ -9,6 +9,45 @@ from engines.system import SystemCtrl
 
 class ContextMemory:
     """Advanced context memory for DOM, workflows, and multi-step tasks with dynamic session expiration."""
+
+    PENDING_TTL = 120.0      # a pending follow-up question expires after 2 minutes (MM-11)
+    REFERENCE_TTL = 60.0     # "delete it/that" only resolves to a path shown within 60 s (MM-12)
+    # Every volatile register wiped when the session expires (MM-11).
+    _VOLATILE_FIELDS = (
+        "last_app", "last_query", "last_cmd", "last_screenshot", "last_url", "last_selector",
+        "active_engine", "last_yt_query", "last_path", "last_response", "active_document",
+        "last_search", "current_topic", "active_goal", "last_sdd", "active_artifact",
+    )
+
+    _pending_action = None
+    _pending_at = 0.0
+    _last_path = None
+    _active_document = None
+    _ref_time = 0.0          # when last_path / active_document was last set explicitly
+    _ref_path = None
+
+    # Registers that identify a file the user was just shown; setting one stamps the time.
+    def _set_ref(self, name, value):
+        setattr(self, "_" + name, value)
+        if value:
+            self._ref_path, self._ref_time = value, time.time()
+
+    last_path = property(lambda self: self._last_path, lambda self, v: self._set_ref("last_path", v))
+    active_document = property(lambda self: self._active_document,
+                               lambda self, v: self._set_ref("active_document", v))
+
+    @property
+    def pending_action(self):
+        if self._pending_action is not None and time.time() - self._pending_at > self.PENDING_TTL:
+            self._pending_action = None
+            self.pending_action_data = {}
+        return self._pending_action
+
+    @pending_action.setter
+    def pending_action(self, value):
+        self._pending_action = value
+        self._pending_at = time.time()
+
     def __init__(self, memory_engine=None):
         self.mem = memory_engine
         self.last_app = self._load("last_app")
@@ -20,11 +59,11 @@ class ContextMemory:
         self.last_selector = self._load("last_selector")
         self.active_engine = self._load("active_engine")
         self.last_yt_query = self._load("last_yt_query")
-        self.last_path = self._load("last_path")
+        self._last_path = self._load("last_path")
 
         # Stateful session workflow parameters
         self.last_response = self._load("last_response")
-        self.active_document = self._load("active_document")
+        self._active_document = self._load("active_document")
         self.last_search = self._load("last_search")
 
         # Browser situational context
@@ -83,25 +122,43 @@ class ContextMemory:
             pass
 
     def clear_session(self):
-        """Soft session clean up to discard temporary stale references."""
-        self.last_response = None
+        """Soft session clean up: discard ALL volatile references (not just a few)."""
+        for name in self._VOLATILE_FIELDS:
+            if name in ("last_path", "active_document"):
+                setattr(self, "_" + name, None)
+            else:
+                setattr(self, name, None)
         self.last_generated_content = None
-        self.last_search = None
-        self.active_document = None
-        self.last_app = None
-        self.last_path = None
-        self.current_topic = None
-        self.active_goal = None
-        self.last_sdd = None
-        self.active_artifact = None
+        self._ref_path, self._ref_time = None, 0.0
+        self.clear_pending_action()
         self.session_time = time.time()
         if self.mem:
-            for k in ["last_response", "last_search", "active_document", "last_app", "last_path", "session_time", "current_topic", "active_goal", "last_sdd", "active_artifact"]:
+            for k in (*self._VOLATILE_FIELDS, "session_time"):
                 try:
                     self.mem.store(f"ctx_{k}", "")
                 except Exception as _e:
                     logging.debug("[core/context_memory.py:90] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                    pass
+
+    def forget_matching(self, text: str) -> int:
+        """Drop in-memory and saved registers whose value contains ``text`` (for "forget ...")."""
+        needle = (text or "").lower().strip()
+        if not needle:
+            return 0
+        n = 0
+        for name in (*self._VOLATILE_FIELDS, "last_generated_content"):
+            val = getattr(self, name, None)
+            if val is not None and needle in str(val).lower():
+                if name in ("last_path", "active_document"):
+                    setattr(self, "_" + name, None)
+                else:
+                    setattr(self, name, None)
+                if self.mem and name != "last_generated_content":
+                    try:
+                        self.mem.store(f"ctx_{name}", "")
+                    except Exception as _e:
+                        logging.debug("ctx forget: %s", _e)
+                n += 1
+        return n
 
     def _load(self, key, default=None):
         if not self.mem:
@@ -319,7 +376,7 @@ class ContextMemory:
         if any(x == c for x in ["paste it", "paste the answer", "paste answer", "write it", "write the answer", "write that in the file", "write that", "paste that", "paste it there", "paste that there", "write that there", "write it there", "type it", "type that", "paste response", "paste it here", "paste that here"]) or \
            re.search(r"\b(paste|type)\b.*\b(result|response|answer|that|it)\b.*\b(document|file|notepad|editor|here|there)\b", c) or \
            re.search(r"\b(paste|type)\b.*\b(result|response|answer)\b", c) or \
-           re.search(r"\bwrite\b.*\b(result|response|answer|that|it)\b", c):
+           re.fullmatch(r"write (?:it|that|the (?:answer|result|response))(?: (?:there|here|down))?", reference):
             return "paste_context_response"
 
         # "copy that", "copy the answer", "copy it"
@@ -332,7 +389,9 @@ class ContextMemory:
 
         # Delete / Remove Pronoun Resolution
         if any(x == c for x in ["delete it", "delete that", "delete this file", "remove it", "remove that", "delete the file", "delete that file", "delete the folder", "delete that folder", "erase it", "erase that"]):
-            target = self.active_document or self.last_path
+            # Only an explicit, recent (<= 60 s) reference the user was just shown; otherwise
+            # leave the command unresolved so the assistant asks which file is meant.
+            target = self._ref_path if time.time() - self._ref_time <= self.REFERENCE_TTL else None
             if target and os.path.exists(target):
                 if os.path.isdir(target):
                     return f"delete folder {target}"
@@ -373,8 +432,8 @@ class ContextMemory:
             # Use focused window if available, fallback to cached last app
             app_to_close = None
             if self.focused_app and self.focused_app != "Unknown":
-                # Extract first word of window title as target app
-                app_to_close = self.focused_app.split()[0].strip()
+                # Whole window/app name ("Visual Studio Code"), never just its first word
+                app_to_close = self.focused_app.strip()
             if not app_to_close:
                 app_to_close = self.last_app
             if app_to_close:

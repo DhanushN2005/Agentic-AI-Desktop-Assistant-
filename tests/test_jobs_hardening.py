@@ -197,8 +197,9 @@ class TestQueuedRecovery:
     def test_queued_job_recovered_to_resumable(self, tmp_path, out_root):
         storage = str(tmp_path / "jobs")
         store = JobStore(storage)
+        (tmp_path / "w_queued").mkdir()
         job = BuildJob(title="queued at crash", status=JobStatus.QUEUED,
-                       phase_list=[JobPhase("p1")])
+                       phase_list=[JobPhase("p1")], workspace_path=str(tmp_path / "w_queued"))
         store.save(job)
         m = JobManager(storage_dir=storage)
         try:
@@ -1286,13 +1287,131 @@ class TestLauncher:
         assert "GROQ_API_KEY" not in seen["env"]
 
 
+# ================================================ git must never act on a parent repo
+def _g(cwd, *args):
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                          cwd=cwd, capture_output=True, text=True)
+
+
+@pytest.mark.skipif(not git_ops.is_git_available(), reason="git not installed")
+class TestGitParentIsolation:
+    @pytest.fixture
+    def parent(self, tmp_path):
+        repo = tmp_path / "parent"
+        repo.mkdir()
+        _g(repo, "init")
+        (repo / "tracked.txt").write_text("1", encoding="utf-8")
+        _g(repo, "add", "-A")
+        _g(repo, "commit", "-m", "base")
+        (repo / "dirty.txt").write_text("uncommitted", encoding="utf-8")  # must stay uncommitted
+        return repo
+
+    def _snapshot(self, repo):
+        return (_g(repo, "rev-list", "--count", "HEAD").stdout.strip(),
+                _g(repo, "status", "--porcelain", "--untracked-files=no").stdout,
+                _g(repo, "config", "--local", "--get", "user.name").stdout,
+                _g(repo, "ls-files", "--others", "--exclude-standard", "dirty.txt").stdout.strip(),
+                _g(repo, "ls-files").stdout)
+
+    def test_workspace_without_own_repo_never_touches_parent(self, parent):
+        ws = parent / "ws"
+        ws.mkdir()
+        (ws / "new.py").write_text("x = 1\n", encoding="utf-8")
+        before = self._snapshot(parent)
+        res = git_ops.commit_job_phase_ex(str(ws), "p1", "m")
+        assert res.sha is None and not res.committed and res.error
+        assert git_ops.commit_job_phase(str(ws), "p1", "m") is None
+        ok, msg = git_ops.undo_last_phase(str(ws))
+        assert not ok and "git repository" in msg
+        assert git_ops._git(["config", "user.name", "evil"], str(ws)).returncode == 128
+        assert git_ops._git(["add", "-A"], str(ws)).returncode == 128
+        assert git_ops._git(["reset", "--hard", "HEAD~1"], str(ws)).returncode == 128
+        assert not git_ops.clean_stale_index_lock(str(ws), force=True)
+        assert self._snapshot(parent) == before
+        assert before[3] == "dirty.txt"  # still uncommitted
+
+    def test_init_inside_parent_creates_own_repo_only(self, parent):
+        ws = parent / "deep" / "ws"
+        ws.mkdir(parents=True)
+        before = self._snapshot(parent)
+        assert git_ops.init_job_repo(str(ws)) is True
+        assert (ws / ".git").exists() and git_ops.owns_repo(str(ws))
+        assert git_ops.commit_job_phase(str(ws), "p1", "m")  # commits in the NESTED repo
+        assert self._snapshot(parent) == before
+
+    def test_empty_or_missing_workspace_never_uses_cwd(self, parent, monkeypatch):
+        monkeypatch.chdir(parent)
+        before = self._snapshot(parent)
+        for bad in ("", "   ", None, str(parent / "missing")):
+            assert git_ops.commit_job_phase(bad, "p", "m") is None
+            assert git_ops.undo_last_phase(bad)[0] is False
+            assert git_ops.init_job_repo(bad) is False
+            assert git_ops.get_job_git_history(bad) == []
+        assert git_ops.owns_repo("") is False
+        assert self._snapshot(parent) == before
+        assert not (parent / ".gitignore").exists()
+
+    def test_phase_with_stub_job_without_workspace_does_not_commit_outer_repo(self, parent, monkeypatch, tmp_path):
+        monkeypatch.chdir(parent)
+        before = self._snapshot(parent)
+        m = JobManager(storage_dir=str(tmp_path / "jobs"))
+        try:
+            m.register_phase_executor("p1", lambda j, p: True)
+            job = BuildJob(title="no ws", phase_list=[JobPhase("p1")])  # workspace_path == ""
+            m.store.save(job)
+            assert m.submit_job(job)
+            assert _wait(lambda: m.store.load(job.id).status == JobStatus.DONE)
+        finally:
+            m.shutdown()
+        assert self._snapshot(parent) == before
+
+    def test_normal_workspace_still_commits_and_path_variants(self, tmp_path):
+        ws = tmp_path / "Own_WS"
+        ws.mkdir()
+        assert git_ops.init_job_repo(str(ws))
+        (ws / "a.txt").write_text("1", encoding="utf-8")
+        assert git_ops.commit_job_phase(str(ws) + os.sep, "p1", "trailing slash")
+        (ws / "a.txt").write_text("2", encoding="utf-8")
+        assert git_ops.commit_job_phase(str(ws).swapcase(), "p2", "case variant") or os.name != "nt"
+        (ws / "a.txt").write_text("3", encoding="utf-8")
+        assert git_ops.commit_job_phase(str(ws / "." / "..") + os.sep + "Own_WS", "p3", "dotdot")
+
+    def test_symlink_or_junction_variants(self, tmp_path, parent):
+        own = tmp_path / "own"
+        own.mkdir()
+        git_ops.init_job_repo(str(own))
+        inner = parent / "inner"  # no repo of its own, inside the parent repo
+        inner.mkdir()
+        links = {}
+        for name, target in (("to_own", own), ("to_inner", inner)):
+            link = tmp_path / name
+            try:
+                os.symlink(target, link, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                if os.name != "nt":
+                    pytest.skip("symlinks unavailable")
+                r = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True)
+                if r.returncode != 0:
+                    pytest.skip("junctions unavailable")
+            links[name] = link
+        (own / "f.txt").write_text("1", encoding="utf-8")
+        assert git_ops.commit_job_phase(str(links["to_own"]), "p", "via link")
+        (inner / "g.txt").write_text("1", encoding="utf-8")
+        before = self._snapshot(parent)
+        assert git_ops.commit_job_phase(str(links["to_inner"]), "p", "via link") is None
+        assert git_ops.undo_last_phase(str(links["to_inner"]))[0] is False
+        assert self._snapshot(parent) == before
+
+
 # ============================================================ auto-resume idempotency
 class TestAutoResume:
     def test_concurrent_set_ai_context_resumes_once(self, tmp_path, out_root, monkeypatch):
         storage = str(tmp_path / "jobs")
         store = JobStore(storage)
         runs = []
-        job = BuildJob(title="int", status=JobStatus.RUNNING, phase_list=[JobPhase("p1")])
+        (tmp_path / "w_int").mkdir()
+        job = BuildJob(title="int", status=JobStatus.RUNNING, phase_list=[JobPhase("p1")],
+                       workspace_path=str(tmp_path / "w_int"))
         store.save(job)
         monkeypatch.setattr(Config, "JOB_AUTO_RESUME_ON_STARTUP", True, raising=False)
         m = JobManager(storage_dir=storage)
@@ -1306,3 +1425,49 @@ class TestAutoResume:
             assert runs == [1]
         finally:
             m.shutdown()
+
+
+# ---------------------------------------------------------------- added by main-session verification
+class TestPathWhitespaceEdgeCases:
+    """Windows drops trailing spaces/dots, so these would alias other names or collapse to a parent."""
+
+    @pytest.mark.parametrize("rel", ["dir/ ", "a.txt ", " a.txt", "a.txt.", "dir /f.py", "a/ /b.py", "\ta.txt", "x.py\n"])
+    def test_whitespace_and_trailing_dot_names_are_rejected(self, rel):
+        from core.jobs.safe_paths import is_safe_rel
+        assert not is_safe_rel(rel), repr(rel)
+
+    @pytest.mark.parametrize("rel", ["src/app.py", "my file.txt", "a/b/c.js", "README.md", ".gitignore", "dir.v2/x.py"])
+    def test_ordinary_names_still_pass(self, rel):
+        from core.jobs.safe_paths import is_safe_rel
+        assert is_safe_rel(rel), repr(rel)
+
+
+class TestEveryJobIntentIsRouted:
+    """The router emits job_fix / fix_build, the job handler handles them, so the dispatcher must forward them."""
+
+    def test_every_intent_the_job_handler_handles_is_forwarded_by_the_dispatcher(self):
+        import re
+
+        handler_src = open(os.path.join(os.path.dirname(__file__), "..", "core", "jobs", "handler.py"), encoding="utf-8").read()
+        dispatcher_src = open(os.path.join(os.path.dirname(__file__), "..", "core", "handlers", "dispatcher.py"), encoding="utf-8").read()
+        handled = set(re.findall(r'"([a-z_]+)"', " ".join(re.findall(r'intent (?:==|in) \(?((?:"[a-z_]+",?\s*)+)', handler_src))))
+        start = dispatcher_src.index('"dev_build", "build_project"')
+        forwarded = set(re.findall(r'"([a-z_]+)"', dispatcher_src[start - 60:start + 520]))
+        assert {"job_fix", "fix_build"} <= handled
+        assert handled <= forwarded, f"handled but never reached: {sorted(handled - forwarded)}"
+
+    def test_a_fix_request_reaches_the_job_handler(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from core.handlers import dispatcher
+
+        seen = []
+        monkeypatch.setattr(dispatcher, "handle_job_intent", lambda orch, intent, c: seen.append(intent) or True)
+        orch = SimpleNamespace(logger=__import__("logging").getLogger("t"),
+                               capability_registry=SimpleNamespace(get_capability_for_intent=lambda i: None))
+        for intent in ("job_fix", "fix_build"):
+            try:
+                dispatcher.dispatch_intent(orch, intent, "fix the bugs in my app", False)
+            except Exception:
+                pass  # later handlers may need a fuller orchestrator; only the routing matters here
+        assert seen == ["job_fix", "fix_build"]

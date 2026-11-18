@@ -1,13 +1,11 @@
-import re
-
 from utils.config import Config
+from utils.voice_parse import strip_wake
 
 
 def handle_news(orch, c):
     """Handle news-related commands."""
     orch.send_to_ui("STATE", "PROCESSING")
-    cmd = c.lower().strip()
-    cmd = re.sub(r"^(flexi|flexie|hey flexie|ok flexie)\b", "", cmd).strip()
+    cmd = strip_wake(c).lower()
 
     category = Config.DEFAULT_NEWS_CATEGORY
     if "tech" in cmd or "technology" in cmd:

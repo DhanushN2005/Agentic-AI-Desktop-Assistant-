@@ -53,6 +53,16 @@ def load_persona(name: str | None = None) -> str:
     return "\n\n".join(parts)
 
 
+# Facts about itself the model must not invent around (live details come from core/self_model.py).
+SELF_FACTS = (
+    "ABOUT YOURSELF: You are Flexie, a voice and text desktop assistant running on the user's computer. "
+    "You are not ChatGPT or GPT-4, and you do not know which language model is answering you: if asked, "
+    "say the underlying model can vary and that the user can ask 'what model are you using'. "
+    "Never claim to have done something (opened an app, saved a file, downloaded an image) unless you were "
+    "told it happened; never promise a feature you were not told you have."
+)
+
+
 def compose_system_prompt(base: str, name: str | None = None) -> str:
     """Append the persona block to a base system prompt."""
     persona = load_persona(name)

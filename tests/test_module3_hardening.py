@@ -285,7 +285,7 @@ class TestTimeouts:                                                             
         seen = {}
         reg = ToolRegistry()
         reg.register(ToolSpec(name="b", description="b", params=[], permission=PermissionLevel.READ_ONLY,
-                              tags=["browser"], timeout=0.05,
+                              tags=["browser"], timeout=0.05, capabilities=["network:fetch"],
                               execute_fn=lambda: (seen.setdefault("t", threading.get_ident()),
                                                   time.sleep(0.2), ActionResult.ok(message="ok", intent="b"))[2]))
         res = reg.execute("b", {})
@@ -433,7 +433,7 @@ class TestPermissionWording:                                                    
 
     @pytest.mark.parametrize("text", [
         "search the web for how to delete a file", "read about how to remove a stain",
-        "what is a good python tutorial", "buy milk reminder", "remind me to delete temp files at 5",
+        "what is a good python tutorial", "remind me to buy milk", "remind me to delete temp files at 5",
         "how do I format a drive", "explain what delete does", "Flexie, how to uninstall chrome?",
     ])
     def test_harmless_wording_needs_no_approval(self, ps, text):
@@ -443,6 +443,7 @@ class TestPermissionWording:                                                    
         "search for old files and delete them", "can you delete all my files", "delete the old report",
         "buy bitcoin and set a reminder", "tell me how to wipe a disk and then wipe it", "format c:",
         "what time is it, then shut down", "shut down the pc",
+        "delete everything reminder", "buy milk reminder",   # a trailing word "reminder" is NOT a free pass
     ])
     def test_real_actions_still_need_approval(self, ps, text):
         assert ps.check_permission(text, text)[0] is False, text

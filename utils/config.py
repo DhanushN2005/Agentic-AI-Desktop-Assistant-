@@ -2,20 +2,23 @@ import getpass
 import logging
 import os
 import re
+import secrets
 import tempfile
+import threading
 
 from dotenv import load_dotenv
 
 from utils.paths import data_file
 
-# Load .env file from project root
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'), override=True)
+# Load .env file from project root. override=False: real environment variables win
+# over a stale .env (settings-UI writes also update os.environ, see _write_env_file).
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'), override=False)
 
 SUPPORTED_PROVIDERS = {
     "groq":      {"env": "GROQ_API_KEY",      "model_env": "GROQ_MODEL",      "label": "Groq",              "placeholder": "gsk_...", "help": "console.groq.com/keys", "prefix": "gsk_", "default_model": "openai/gpt-oss-20b",
                  "models": ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3-32b", "moonshotai/kimi-k2-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct", "groq/compound", "groq/compound-mini"]},
-    "gemini":    {"env": "GEMINI_API_KEY",    "model_env": "GEMINI_MODEL",    "label": "Google Gemini",     "placeholder": "AIza...", "help": "aistudio.google.com/app/apikey", "prefix": "AIza", "default_model": "gemini-2.0-flash",
-                 "models": ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]},
+    "gemini":    {"env": "GEMINI_API_KEY",    "model_env": "GEMINI_MODEL",    "label": "Google Gemini",     "placeholder": "AIza...", "help": "aistudio.google.com/app/apikey", "prefix": "AIza", "default_model": "gemini-flash-latest",
+                 "models": ["gemini-flash-latest", "gemini-3.8-flash", "gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]},
     "openai":    {"env": "OPENAI_API_KEY",    "model_env": "OPENAI_MODEL",    "label": "OpenAI (GPT)",      "placeholder": "sk-...", "help": "platform.openai.com/api-keys", "prefix": "sk-", "default_model": "gpt-4o-mini",
                  "models": ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-5-mini", "gpt-5", "gpt-4-turbo", "o1-mini", "o3-mini"]},
     "deepseek":  {"env": "DEEPSEEK_API_KEY",  "model_env": "DEEPSEEK_MODEL",  "label": "DeepSeek",          "placeholder": "sk-...", "help": "platform.deepseek.com/api_keys", "prefix": "sk-", "default_model": "deepseek-chat",
@@ -121,6 +124,26 @@ def _is_allowed_env_key(key: str) -> bool:
 def _is_safe_env_value(value: str) -> bool:
     return isinstance(value, str) and "\n" not in value and "\r" not in value
 
+_env_write_lock = threading.Lock()
+
+
+def _quote_env_value(value: str) -> str:
+    """Quote a .env value when a bare write would be re-read differently
+    (spaces, ' #' comments, quotes, leading/trailing blanks, '=' is fine)."""
+    if value == "" or not (re.search(r"[\s#\"'\\]", value)):
+        return value
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _unquote_env_value(v: str) -> str:
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] == '"':
+        return re.sub(r'\\(["\\])', r"\1", v[1:-1])
+    if len(v) >= 2 and v[0] == v[-1] == "'":
+        return v[1:-1]
+    return v
+
+
 def _read_env_file() -> dict:
     """Read .env into dict (preserves comments handling)."""
     path = _env_path()
@@ -134,14 +157,23 @@ def _read_env_file() -> dict:
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, v = line.split("=", 1)
-                data[k.strip()] = v.strip().strip('"').strip("'")
+                data[k.strip()] = _unquote_env_value(v)
     except Exception as _e:
         logging.debug("[utils/config.py:67] Swallowed exception: %s: %s", type(_e).__name__, _e)
         pass
     return data
 
 def _write_env_file(updates: dict) -> bool:
-    """Merge updates into .env file atomically (temp + fsync + os.replace)."""
+    """Merge updates into .env file atomically (temp + fsync + os.replace).
+
+    The read-modify-write runs under a process-wide lock so concurrent settings
+    changes cannot lose each other's keys; os.environ is updated too (the .env
+    no longer overrides the environment at load time)."""
+    with _env_write_lock:
+        return _write_env_file_locked(updates)
+
+
+def _write_env_file_locked(updates: dict) -> bool:
     # Fail closed: reject unknown keys or multiline values before touching disk.
     for k, v in updates.items():
         if not _is_allowed_env_key(k):
@@ -173,14 +205,14 @@ def _write_env_file(updates: dict) -> bool:
         if s and not s.startswith("#") and "=" in s:
             k = s.split("=", 1)[0].strip()
             if k in updates:
-                new_lines.append(f"{k}={updates[k]}\n")
+                new_lines.append(f"{k}={_quote_env_value(updates[k])}\n")
                 updated.add(k)
                 continue
         new_lines.append(line)
     # Append new keys
     for k, v in updates.items():
         if k not in updated and k not in existing_keys:
-            new_lines.append(f"{k}={v}\n")
+            new_lines.append(f"{k}={_quote_env_value(v)}\n")
     try:
         # Atomic write: temp file in the same folder, fsync, then os.replace.
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
@@ -248,7 +280,7 @@ class Config:
     CHEAP_FIRST_ENABLED = _env_bool("FLEXIE_CHEAP_FIRST_ENABLED", True)
     LOCAL_FIRST = _env_bool("FLEXIE_LOCAL_FIRST", True)
     ENGINE = os.getenv("FLEXIE_ENGINE", "auto")
-    ARTIFACT_BACKUP_DIR = os.getenv("FLEXIE_ARTIFACT_BACKUP_DIR", os.path.join(os.getcwd(), "context", "artifact_backups"))
+    ARTIFACT_BACKUP_DIR = os.getenv("FLEXIE_ARTIFACT_BACKUP_DIR", data_file(os.path.join("context", "artifact_backups")))
     # Build / Job pipeline tunables (all overridable via .env)
     JOB_MAX_FILES         = _env_number("FLEXIE_JOB_MAX_FILES", 60, int)
     JOB_MAX_FILE_SIZE_KB  = _env_number("FLEXIE_JOB_MAX_FILE_SIZE_KB", 300, int)
@@ -258,15 +290,16 @@ class Config:
     JOB_BUILD_TIMEOUT     = _env_number("FLEXIE_JOB_BUILD_TIMEOUT", 120, int)
     JOB_SMOKE_WAIT        = _env_number("FLEXIE_JOB_SMOKE_WAIT", 12.0, float)
     JOB_VOICE_CLARIFY_TIMEOUT = _env_number("FLEXIE_JOB_VOICE_CLARIFY_TIMEOUT", 20, int)
-    JOB_BRIDGE_API_KEY    = os.getenv("FLEXIE_JOB_BRIDGE_API_KEY", "flexie-local-bridge")
+    # No hard-coded shared secret: unless configured, a random per-process key is used.
+    JOB_BRIDGE_API_KEY    = os.getenv("FLEXIE_JOB_BRIDGE_API_KEY") or secrets.token_urlsafe(24)
     JOB_DEFAULT_STACK     = os.getenv("FLEXIE_JOB_DEFAULT_STACK", "python-flask")
     JOB_AUTO_RESUME_ON_STARTUP = _env_bool("FLEXIE_JOB_AUTO_RESUME_ON_STARTUP", True)
     GIT_USER_NAME         = os.getenv("FLEXIE_GIT_USER_NAME", "Flexie Dev Assistant")
     GIT_USER_EMAIL        = os.getenv("FLEXIE_GIT_USER_EMAIL", "flexie@local")
-    SNAP_PATH  = os.path.join(os.getcwd(), "captures", "flexie_snap.png")
-    CAPTURE_DIR = os.path.join(os.getcwd(), "captures")
+    SNAP_PATH  = data_file(os.path.join("captures", "flexie_snap.png"))
+    CAPTURE_DIR = data_file("captures")
     TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe" # Default Windows path
-    VECTOR_DB_PATH = os.path.join(os.getcwd(), "knowledge_index.json")
+    VECTOR_DB_PATH = data_file("knowledge_index.json")
 
     # API Keys & Secrets — all providers (hot-reloadable via set_api_key)
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -279,6 +312,8 @@ class Config:
     TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
     # Per-provider models (hot-reloadable via set_model)
     GROQ_MODEL      = os.getenv("GROQ_MODEL", SUPPORTED_PROVIDERS["groq"]["default_model"])
+    # Tried in order when the main Groq model is rate-limited or errors (limits are per model)
+    GROQ_FALLBACK_MODELS = tuple(m.strip() for m in os.getenv("GROQ_FALLBACK_MODELS", "openai/gpt-oss-120b,qwen/qwen3.8-27b").split(",") if m.strip())
     GEMINI_MODEL    = os.getenv("GEMINI_MODEL", SUPPORTED_PROVIDERS["gemini"]["default_model"])
     # Groq legacy alias cleanup: old installs may have GROQ_MODEL=llama-* which is now decommissioned
     if GROQ_MODEL in ("llama-3.1-8b-instant", "llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"):
@@ -386,7 +421,7 @@ class Config:
         from dotenv import load_dotenv
         # Read raw file to know what is actually persisted vs lingering env
         file_data = _read_env_file()
-        load_dotenv(_env_path(), override=True)
+        load_dotenv(_env_path(), override=False)
         for _pid, meta in SUPPORTED_PROVIDERS.items():
             # Key
             if meta["env"] in file_data:
@@ -574,6 +609,10 @@ class Config:
         "transfer", "confirm payment", "logout", "sign out", "deactivate",
         "terminate", "erase", "clear all"
     ]
+
+    # Opt-in clipboard history and knowledge-index roots (empty = Documents/Desktop/Downloads)
+    CLIPBOARD_MONITOR  = False
+    KNOWLEDGE_ROOTS: list = []
 
     # Networking
     UDP_PORT_UI        = 9886

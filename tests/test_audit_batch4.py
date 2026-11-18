@@ -65,12 +65,12 @@ def test_major_upgrade_notes_present():
 # --- 14. docs drift ---
 def test_readme_counts_models_ports():
     text = pathlib.Path("README.md").read_text(encoding="utf-8")
-    assert "test cases across" in text and "test files" in text
+    assert "tests across" in text and "test files" in text
     assert "385" not in text
     assert "1.5-flash" not in text
-    assert "2.0-flash" in text
+    assert "gemini-flash-latest" in text          # current Gemini default (2.0-flash is retired)
     assert "openai/gpt-oss-20b" in text
-    assert "8765" in text and "9886/9887" in text
+    assert "8765" in text and "9886" in text and "9887" in text
 
 
 def test_readme_license_and_agpl_note():
@@ -79,7 +79,7 @@ def test_readme_license_and_agpl_note():
 
 
 def test_features_ports_and_providers():
-    text = pathlib.Path("README_FEATURES.md").read_text(encoding="utf-8")
+    text = pathlib.Path("docs/README_FEATURES.md").read_text(encoding="utf-8")
     assert "10000" not in text
     assert "9886" in text and "8765" in text
     assert "DeepSeek" in text and "Anthropic" in text

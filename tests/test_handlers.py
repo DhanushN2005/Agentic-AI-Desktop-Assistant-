@@ -232,7 +232,7 @@ class FakeVision:
     def show_last_screenshot(self):
         return "showing last screenshot"
 
-    def analyze_screen(self, brain):
+    def analyze_screen(self, brain, prompt=""):
         return "screen analysis"
 
     def launch_camera(self):
@@ -681,10 +681,17 @@ def test_dispatch_volume_relative(monkeypatch):
 
 
 def test_dispatch_app_op_redirects_to_search(monkeypatch):
+    # "open chrome search X" now opens the search straight in the browser (no slow research redirect)
+    import core.handlers.system as sysh
+    launched = []
+    monkeypatch.setattr(sysh.subprocess, "Popen", lambda argv, **k: launched.append(argv))
+    monkeypatch.setattr(sysh.webbrowser, "open", lambda url: launched.append(url) or True)
     orch = make_orch()
     handled = dispatch_intent(orch, "app_op", "open chrome search cats", False)
     assert handled is True
-    assert orch.redirected == [("search for cats", True)]
+    assert launched and "q=cats" in launched[0][-1]
+    assert orch.redirected == []
+    assert any("Searching Google for cats" in t for t in orch.spoken)
 
 
 def test_dispatch_media_stop(monkeypatch):
@@ -1193,7 +1200,7 @@ def test_gmail():
 def test_vision_capture():
     orch = make_orch()
     assert handle_vision(orch, "vision_capture", "take a screenshot") is True
-    assert "Snap saved." in orch.spoken
+    assert any("snap.png" in t and "screenshot" in t for t in orch.spoken)
     assert orch.ctx.updated.get("screenshot") == r"C:\temp\snap.png"
 
 

@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ _DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "telemetry.db"
 
 
 class TelemetryStore:
-    def __init__(self, db_path: str | os.PathLike | None = None):
+    def __init__(self, db_path: str | os.PathLike | None = None, retention_days: float | None = None):
         path = Path(db_path or os.getenv(_DB_ENV) or _DEFAULT_DB)
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db_path = str(path)
@@ -28,6 +29,24 @@ class TelemetryStore:
         except sqlite3.DatabaseError:
             pass
         self._ensure_schema()
+        if retention_days is None:
+            try:
+                retention_days = float(os.getenv("FLEXIE_RETENTION_DAYS", "30"))
+            except ValueError:
+                retention_days = 30.0
+        self.prune(retention_days)
+
+    def prune(self, retention_days: float | None = 30.0) -> int:
+        """Delete rows older than ``retention_days`` (<= 0 / None disables). Returns rows removed."""
+        if not retention_days or retention_days <= 0:
+            return 0
+        try:
+            with self._lock, self._conn:
+                cur = self._conn.execute("DELETE FROM telemetry WHERE timestamp < ?",
+                                         (time.time() - retention_days * 86400.0,))
+                return int(cur.rowcount or 0)
+        except sqlite3.DatabaseError:
+            return 0
 
     def _ensure_schema(self) -> None:
         with self._conn:
@@ -55,6 +74,9 @@ class TelemetryStore:
             columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(telemetry)")}
             if "command_id" not in columns:
                 self._conn.execute("ALTER TABLE telemetry ADD COLUMN command_id TEXT")
+            if "failed" not in columns:
+                self._conn.execute("ALTER TABLE telemetry ADD COLUMN failed INTEGER DEFAULT 0")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry(timestamp)")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_command ON telemetry(command_id)")
 
     def record(self, record: TelemetryRecord) -> int:
@@ -64,8 +86,8 @@ class TelemetryStore:
                 INSERT INTO telemetry (
                     timestamp, model_id, engine, agent, prompt_tokens,
                     completion_tokens, total_tokens, latency_seconds, ttft,
-                    cost_usd, energy_joules, power_watts, metadata, command_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cost_usd, energy_joules, power_watts, metadata, command_id, failed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.timestamp,
@@ -82,6 +104,7 @@ class TelemetryStore:
                     record.power_watts,
                     json.dumps(record.metadata),
                     record.command_id or None,
+                    1 if record.failed else 0,
                 ),
             )
             return int(cursor.lastrowid)
@@ -104,21 +127,28 @@ class TelemetryStore:
         rows = self._rows(since, until)
         per_model: dict[str, dict[str, Any]] = {}
         per_engine: dict[str, dict[str, Any]] = {}
-        for row in rows:
+        failed_rows = [r for r in rows if r["failed"]]
+        rows = [r for r in rows if not r["failed"]]  # tokens / cost / call counts: successes only
+        for row in rows + failed_rows:
             for bucket, key in ((per_model, row["model_id"]), (per_engine, row["engine"])):
                 key = key or "unknown"
                 stats = bucket.setdefault(
-                    key, {"calls": 0, "tokens": 0, "cost": 0.0, "latency": 0.0}
+                    key, {"calls": 0, "tokens": 0, "cost": 0.0, "latency": 0.0, "failures": 0}
                 )
+                if row["failed"]:
+                    stats["failures"] += 1
+                    stats["latency"] += row["latency_seconds"] or 0.0
+                    continue
                 stats["calls"] += 1
                 stats["tokens"] += row["total_tokens"] or 0
                 stats["cost"] += row["cost_usd"] or 0.0
                 stats["latency"] += row["latency_seconds"] or 0.0
         return {
             "total_calls": len(rows),
+            "failed_calls": len(failed_rows),
             "total_tokens": sum((row["total_tokens"] or 0) for row in rows),
             "total_cost": sum((row["cost_usd"] or 0.0) for row in rows),
-            "total_latency": sum((row["latency_seconds"] or 0.0) for row in rows),
+            "total_latency": sum((row["latency_seconds"] or 0.0) for row in rows + failed_rows),
             "per_model": per_model,
             "per_engine": per_engine,
         }
@@ -127,6 +157,7 @@ class TelemetryStore:
         out = []
         for row in self._rows(since, until):
             item = dict(row)
+            item["failed"] = bool(item.get("failed"))
             item["metadata"] = json.loads(item.get("metadata") or "{}")
             out.append(item)
         return out
@@ -150,12 +181,15 @@ class TelemetryStore:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM telemetry WHERE command_id = ?", (command_id,)).fetchall()
+        failed = [r for r in rows if r["failed"]]
+        rows = [r for r in rows if not r["failed"]]
         return {
             "command_id": command_id,
             "calls": len(rows),
+            "failed_calls": len(failed),
             "tokens": sum((r["total_tokens"] or 0) for r in rows),
             "cost_usd": sum((r["cost_usd"] or 0.0) for r in rows),
-            "latency_seconds": sum((r["latency_seconds"] or 0.0) for r in rows),
+            "latency_seconds": sum((r["latency_seconds"] or 0.0) for r in rows + failed),
         }
 
     def top_commands(self, limit: int = 10, by: str = "cost_usd") -> list[dict[str, Any]]:
@@ -165,6 +199,6 @@ class TelemetryStore:
             rows = self._conn.execute(
                 "SELECT command_id, COUNT(*) AS calls, SUM(total_tokens) AS tokens, "
                 "SUM(cost_usd) AS cost_usd, SUM(latency_seconds) AS latency_seconds "
-                "FROM telemetry WHERE command_id IS NOT NULL AND command_id != '' "
+                "FROM telemetry WHERE command_id IS NOT NULL AND command_id != '' AND COALESCE(failed, 0) = 0 "
                 f"GROUP BY command_id ORDER BY {order} DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]

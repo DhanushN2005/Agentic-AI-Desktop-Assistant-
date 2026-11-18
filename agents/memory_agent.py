@@ -1,7 +1,25 @@
+import threading
 from typing import Any
 
 from adapters.memory_adapter import LegacyMemoryAdapter
 from agents.base import BaseAgent
+
+_STORE_LOCK = threading.Lock()
+_STORE: Any = None
+
+
+def get_vector_store():
+    """One process-wide VectorStore (building one per task re-opened the client each time).
+
+    Failures are not cached, so a later task can retry.
+    """
+    global _STORE
+    if _STORE is None:
+        with _STORE_LOCK:
+            if _STORE is None:
+                from core.vector_store import VectorStore
+                _STORE = VectorStore()
+    return _STORE
 
 
 class MemoryAgent(BaseAgent):
@@ -20,8 +38,7 @@ class MemoryAgent(BaseAgent):
 
         # Try to use semantic memory v2 (Phase 2 vector index)
         try:
-            from core.vector_store import VectorStore
-            vector_store = VectorStore()
+            vector_store = get_vector_store()
         except Exception as ve:
             self.logger.warning(f"Vector V2 store unavailable: {ve}")
             vector_store = None

@@ -9,6 +9,13 @@ def handle_awareness(orch, c):
     cmd = c.lower().strip()
     cmd = re.sub(r"^(flexi|flexie|hey flexie|ok flexie)\b", "", cmd).strip()
 
+    # ---------------- live self-model: grounded answers about what I am / did / can do ----------------
+    grounded = orch.self_model.answer(cmd) if getattr(orch, "self_model", None) else None
+    if grounded:
+        orch.ctx.update(last_response=grounded, query=c)
+        orch.speak(grounded)
+        return True
+
     # ---------------- "who am I" - USER identity ----------------
     if re.search(r"\bwho\s+am\s+i\b", cmd):
         user_name = getattr(Config, "USER_NAME", "you")

@@ -1,93 +1,59 @@
 import re
-import threading
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from utils.config import Config
+from utils.voice_parse import (
+    TimeParseError,
+    format_duration,
+    is_relative,
+    parse_time,
+    remove_time_phrases,
+    seconds_until,
+    strip_wake,
+)
 
 
-def _parse_time(text: str):
-    """Parse time from text like '5 pm', '14:00', 'in 10 minutes'."""
-    now = datetime.now()
+def _now() -> datetime:
+    """Current local time (patched in tests)."""
+    return datetime.now()
 
-    # Try "at 5 pm", "at 5:30 pm", "at 14:00"
-    m = re.search(r"at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", text)
-    if m:
-        hour = int(m.group(1))
-        minute = int(m.group(2) or 0)
-        ampm = m.group(3)
-        if ampm == "pm" and hour < 12:
-            hour += 12
-        elif ampm == "am" and hour == 12:
-            hour = 0
-        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if target <= now:
-            target += timedelta(days=1)
-        return target
 
-    # Try "in 10 minutes", "in 2 hours"
-    m = re.search(r"in\s+(?:about\s+)?(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|hrs?|hour(?:s)?|sec(?:ond)?s?)", text)
-    if m:
-        val = float(m.group(1))
-        unit = m.group(2)
-        if unit.startswith("h"):
-            return now + timedelta(hours=val)
-        elif unit.startswith("s"):
-            return now + timedelta(seconds=val)
-        else:
-            return now + timedelta(minutes=val)
+def _parse_time(text: str, now: datetime | None = None):
+    """Absolute target datetime for a spoken time, or None (shared parser)."""
+    return parse_time(text, now or _now())
 
-    if re.search(r"in\s+(?:a|one)\s+minute", text):
-        return now + timedelta(minutes=1)
-    if re.search(r"in\s+(?:an|one)\s+hour", text):
-        return now + timedelta(hours=1)
 
-    return None
+def _parse_minutes(text: str, now: datetime | None = None) -> float:
+    """Minutes from now until the time spoken in `text` (default if none)."""
+    now = now or _now()
+    target = parse_time(text, now)
+    if target is None:
+        return float(Config.DEFAULT_REMINDER_MINUTES)
+    return max(seconds_until(target, now), 0.0) / 60.0
+
+
+_PREFIXES = [
+    r"^remind me to\s+",
+    r"^remind me\s+",
+    r"^set (?:a )?reminder (?:to|for)\s+",
+    r"^set (?:an )?alarm (?:to|for)\s+",
+    r"^remember to\s+",
+    r"^schedule (?:a )?reminder (?:to|for)\s+",
+    r"^set a reminder\s+",
+]
 
 
 def _extract_task(text: str) -> str:
-    """Extract the reminder task from text."""
-    task = text.lower().strip()
-    # Remove common prefixes
-    prefixes = [
-        r"^remind me to\s+",
-        r"^remind me\s+",
-        r"^set (?:a )?reminder (?:to|for)\s+",
-        r"^set (?:an )?alarm (?:to|for)\s+",
-        r"^remember to\s+",
-        r"^schedule (?:a )?reminder (?:to|for)\s+",
-        r"^set a reminder\s+",
-    ]
-    for prefix in prefixes:
-        task = re.sub(prefix, "", task).strip()
-    task = re.sub(r"^(?:to|that)\s+", "", task).strip()
-    # Remove time phrases
-    task = re.sub(r"\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b", "", task).strip()
-    task = re.sub(r"\bin\s+(?:about\s+)?\d+(?:\.\d+)?\s*(?:min(?:ute)?s?|hrs?|hour(?:s)?|sec(?:ond)?s?)\b", "", task).strip()
-    task = re.sub(r"\bin\s+(?:a|one)\s+(?:minute|hour)\b", "", task).strip()
+    """Extract the reminder task from text, preserving its original case."""
+    task = text.strip()
+    for prefix in _PREFIXES:
+        task = re.sub(prefix, "", task, flags=re.IGNORECASE).strip()
+    task = remove_time_phrases(task)
     task = re.sub(r"\s+", " ", task).strip()
-    # Clean leading connector words
-    task = re.sub(r"^(?:to|that|and)\s+", "", task).strip()
-    return task
-
-
-def _parse_minutes(text: str) -> float:
-    """Parse minutes from text."""
-    # Try "in 10 minutes"
-    m = re.search(r"in\s+(?:about\s+)?(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|hrs?|hour(?:s)?|sec(?:ond)?s?)", text)
-    if m:
-        val = float(m.group(1))
-        unit = m.group(2)
-        if unit.startswith("h"):
-            return val * 60
-        elif unit.startswith("s"):
-            return val / 60
-        return val
-    if re.search(r"in\s+(?:a|one)\s+minute", text):
-        return 1.0
-    if re.search(r"in\s+(?:an|one)\s+hour", text):
-        return 60.0
-    return Config.DEFAULT_REMINDER_MINUTES  # default
+    # dangling connectors left behind by removed time phrases
+    task = re.sub(r"\s+(?:at|in|on|by|for|and)$", "", task, flags=re.IGNORECASE).strip()
+    task = re.sub(r"^(?:to|that|and|at|in|on)\s+", "", task, flags=re.IGNORECASE).strip()
+    return task.strip(" ,.;")
 
 
 def _speak_reminders(orch):
@@ -100,48 +66,49 @@ def _speak_reminders(orch):
     return True
 
 
+def _describe(target: datetime, now: datetime, secs: float, relative: bool) -> str:
+    if relative:
+        return f"in {format_duration(secs)}"
+    time_str = target.strftime(Config.TIME_FORMAT)
+    day_delta = (target.date() - now.date()).days
+    if day_delta == 1:
+        return f"tomorrow at {time_str}"
+    if day_delta > 1:
+        return f"on {target.strftime('%B %d')} at {time_str}"
+    return f"at {time_str}"
+
+
 def handle_remind(orch, c):
-    text = c.lower().strip()
+    original = strip_wake(c)
+    text = original.lower()
     if any(x in text for x in ["list reminders", "show reminders", "what reminders", "list my reminders", "pending reminders"]):
         return _speak_reminders(orch)
 
-    target = _parse_time(text)
-    task = _extract_task(text)
+    now = _now()
+    try:
+        target = parse_time(original, now)
+    except TimeParseError as e:
+        orch.speak(f"That doesn't look like a valid time. {e}")
+        return True
+    task = _extract_task(original)
 
     if not task:
         orch.speak("What should I remind you about?")
         return True
 
-    minutes = _parse_minutes(text)
-
-    # Store in database
-    orch.memory.add_reminder(task, minutes)
-
-    # Schedule the reminder to actually speak
-    delay = minutes * 60
-    def _trigger():
-        time.sleep(delay)
-        orch.speak(f"Reminder: You asked me to remind you to {task}.")
-        orch.memory.mark_reminder_done(task)
-
-    t = threading.Thread(target=_trigger, daemon=True)
-    t.start()
-
-    # Check if it's a relative time ("in X minutes") or absolute ("at 5 PM")
-    is_relative = re.search(r"\bin\s+(?:about\s+)?\d+", text)
-    if is_relative:
-        mins = int(minutes)
-        if minutes == 60:
-            orch.speak(f"Got it. I'll remind you in 1 hour to {task}.")
-        elif minutes == 1:
-            orch.speak(f"Got it. I'll remind you in 1 minute to {task}.")
-        else:
-            orch.speak(f"Got it. I'll remind you in {mins} minutes to {task}.")
-    elif target:
-        time_str = target.strftime(Config.TIME_FORMAT)
-        orch.speak(f"Got it. I'll remind you at {time_str} to {task}.")
+    if target is None:
+        secs = float(Config.DEFAULT_REMINDER_MINUTES) * 60
+        when = f"in {format_duration(secs)}"
     else:
-        orch.speak(f"Got it. I'll remind you in {Config.DEFAULT_REMINDER_MINUTES:.0f} minutes to {task}.")
+        secs = max(seconds_until(target, now), 0.0)
+        relative = is_relative(original)
+        when = _describe(target, now, secs, relative)
+
+    # Single mechanism: the orchestrator's DB poller fires due reminders.
+    # (No sleeping thread here - that spoke every reminder twice.)
+    orch.memory.add_reminder(task, secs / 60.0)
+
+    orch.speak(f"Got it. I'll remind you {when} to {task}.")
     return True
 
 

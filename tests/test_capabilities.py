@@ -38,6 +38,7 @@ def test_read_only_tool_still_runs_under_denied_shell_policy():
             permission=PermissionLevel.READ_ONLY,
             execute_fn=lambda: ActionResult.ok("content"),
             tags=["file"],
+            capabilities=["filesystem:read"],  # deny-by-default: tools must declare what they need
         )
     )
     result = registry.execute("file.read", {})

@@ -2,7 +2,7 @@
 import logging
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ---- Compatibility shims for orchestrator (fixes ImportError: cannot import name 'GoalExecutor') ----
 # Original repo exported GoalExecutor/RuleEngine; current file only has AutomationScheduler.
@@ -148,81 +148,214 @@ class RuleEngine:
                 self.logger.error(f"RuleEngine rule {rid} error: {e}")
 
 class AutomationScheduler:
-    """Simple in-process scheduler for recurring tasks."""
-    def __init__(self, orchestrator):
+    """In-process scheduler: stored ``next_run`` per job, persisted, sleeps until the next due time."""
+
+    CATCH_UP_GRACE = 6 * 3600     # fire a missed daily/once job once if within this window
+    MAX_SLEEP = 3600.0
+
+    def __init__(self, orchestrator, *, clock=None, store_path: str | None = None, autoload: bool = True):
         self.orch = orchestrator
         self.jobs: dict[str, dict] = {}
         self._running = False
         self._thread = None
+        self._lock = threading.RLock()
+        self._wake = threading.Event()
+        self._clock = clock or time.time
+        self._store_path = store_path
+        self._defaults_seeded = False
         self.logger = logging.getLogger("Flexie.Automation")
+        if autoload:
+            self._load()
 
-    def add_job(self, job_id: str, command: str, trigger: str = "daily", hour: int = 9, minute: int = 0, interval: int = 3600):
-        """Add a scheduled job.
-        trigger: daily, interval, once
-        """
-        self.jobs[job_id] = {
-            "command": command,
-            "trigger": trigger,
-            "hour": hour,
-            "minute": minute,
-            "interval": interval,
-            "last_run": 0,
+    # ------------------------------------------------------------------ persistence
+    def _path(self) -> str:
+        if self._store_path:
+            return self._store_path
+        from utils.paths import data_file
+        return data_file("automation_jobs.json")
+
+    def _save(self) -> None:
+        import json
+        import os
+        try:
+            # Serialise AND write under the lock: concurrent savers must not interleave on the
+            # shared temp file or dump a dict another thread is mutating.
+            with self._lock:
+                payload = {"jobs": self.jobs, "defaults_seeded": self._defaults_seeded}
+                tmp = self._path() + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(payload, f)
+                os.replace(tmp, self._path())
+        except Exception as e:
+            self.logger.debug("automation save failed: %s", e)
+
+    def _load(self) -> None:
+        import json
+        import os
+        if not os.path.exists(self._path()):
+            return
+        try:
+            with open(self._path(), encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            self.logger.debug("automation load failed: %s", e)
+            return
+        now = self._clock()
+        with self._lock:
+            self._defaults_seeded = bool(data.get("defaults_seeded", False))
+            for jid, job in (data.get("jobs") or {}).items():
+                job.setdefault("enabled", True)
+                job.setdefault("last_run", 0)
+                nxt = job.get("next_run")
+                if nxt is None:
+                    job["next_run"] = self._next_after(job, now)
+                elif nxt <= now:
+                    missed_by = now - nxt
+                    keep = job.get("trigger") in ("daily", "once") and missed_by <= self.CATCH_UP_GRACE
+                    if job.get("trigger") == "once" and not keep:
+                        continue                      # expired one-shot
+                    if not keep:
+                        job["next_run"] = self._next_after(job, now)
+                self.jobs[jid] = job
+
+    # ------------------------------------------------------------------ time math
+    def _next_after(self, job: dict, after: float):
+        trig = job.get("trigger", "daily")
+        if trig == "daily":
+            base = datetime.fromtimestamp(after).replace(
+                hour=int(job.get("hour", 9)), minute=int(job.get("minute", 0)), second=0, microsecond=0)
+            if base.timestamp() <= after:
+                base += timedelta(days=1)
+            return base.timestamp()
+        if trig == "hourly":
+            return after + 3600
+        if trig == "interval":
+            return after + max(1, int(job.get("interval", 3600)))
+        if trig == "once":
+            return job.get("run_at")
+        return None
+
+    # ------------------------------------------------------------------ job api
+    def add_job(self, job_id: str, command: str, trigger: str = "daily", hour: int = 9, minute: int = 0,
+                interval: int = 3600, run_at: float | None = None, enabled: bool = True):
+        """Add a scheduled job. trigger: daily, hourly, interval, once (needs run_at epoch seconds)."""
+        if trigger not in ("daily", "hourly", "interval", "once"):
+            raise ValueError(f"Unknown trigger: {trigger}")
+        if trigger == "once" and run_at is None:
+            raise ValueError("A 'once' job needs run_at")
+        job = {
+            "command": command, "trigger": trigger, "hour": hour, "minute": minute,
+            "interval": interval, "run_at": run_at, "last_run": 0, "enabled": enabled,
         }
+        job["next_run"] = self._next_after(job, self._clock())
+        with self._lock:
+            self.jobs[job_id] = job
+        self._save()
+        self._wake.set()
         self.logger.info(f"Automation: Added job {job_id} -> {command} [{trigger}]")
         return True
 
     def remove_job(self, job_id: str) -> bool:
-        if job_id in self.jobs:
-            del self.jobs[job_id]
-            return True
-        return False
+        with self._lock:
+            existed = self.jobs.pop(job_id, None) is not None
+        if existed:
+            self._save()
+            self._wake.set()
+        return existed
+
+    def set_enabled(self, job_id: str, enabled: bool) -> bool:
+        with self._lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return False
+            job["enabled"] = enabled
+            if enabled:
+                job["next_run"] = self._next_after(job, self._clock())
+        self._save()
+        self._wake.set()
+        return True
 
     def list_jobs(self) -> list[str]:
-        if not self.jobs:
-            return ["No scheduled automations."]
-        return [f"{jid}: {j['command']} [{j['trigger']}]" for jid, j in self.jobs.items()]
+        with self._lock:
+            if not self.jobs:
+                return ["No scheduled automations."]
+            out = []
+            for jid, j in self.jobs.items():
+                nxt = j.get("next_run")
+                when = datetime.fromtimestamp(nxt).strftime("%a %H:%M") if nxt else "never"
+                state = "" if j.get("enabled", True) else " (disabled)"
+                out.append(f"{jid}: {j['command']} [{j['trigger']}] next {when}{state}")
+            return out
 
+    # ------------------------------------------------------------------ run loop
     def start(self):
         if self._running:
             return
-        # Add built-in automations if none exist
-        if not self.jobs:
+        with self._lock:
+            seed = not self.jobs and not self._defaults_seeded
+        if seed:
             self.add_job("daily_briefing", "daily briefing", trigger="daily", hour=9, minute=0)
-            self.add_job("auto_organize", "organize desktop", trigger="daily", hour=18, minute=0)
-            self.logger.info("Automation: Added built-in daily jobs")
+            # Unattended file moves are OFF by default (EN-21); enable explicitly.
+            self.add_job("auto_organize", "organize desktop", trigger="daily", hour=18, minute=0, enabled=False)
+            self._defaults_seeded = True
+            self._save()
+            self.logger.info("Automation: Added built-in jobs (auto_organize disabled by default)")
         self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._wake.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="automation")
         self._thread.start()
         self.logger.info("Automation scheduler started")
 
     def stop(self):
         self._running = False
+        self._wake.set()
+
+    def run_due(self, now: float | None = None) -> list[tuple[str, str]]:
+        """Fire every enabled job whose next_run <= now, then advance it.
+
+        Returns ``[(job_id, command), ...]`` for the jobs that fired.
+        """
+        now = self._clock() if now is None else now
+        fired: list[tuple[str, str]] = []
+        with self._lock:
+            for job_id, job in list(self.jobs.items()):
+                nxt = job.get("next_run")
+                if not job.get("enabled", True) or nxt is None or nxt > now:
+                    continue
+                fired.append((job_id, job["command"]))
+                job["last_run"] = now
+                if job["trigger"] == "once":
+                    del self.jobs[job_id]
+                else:
+                    job["next_run"] = self._next_after(job, now)   # one catch-up, then advance past now
+        return fired
+
+    def _seconds_until_next(self, now: float) -> float:
+        with self._lock:
+            times = [j["next_run"] for j in self.jobs.values()
+                     if j.get("enabled", True) and j.get("next_run") is not None]
+        if not times:
+            return self.MAX_SLEEP
+        return min(self.MAX_SLEEP, max(0.0, min(times) - now))
 
     def _loop(self):
         while self._running:
             try:
-                now = datetime.now()
-                for job_id, job in list(self.jobs.items()):
-                    should_run = False
-                    if job["trigger"] == "daily":
-                        # Run once per day at hour:minute
-                        if now.hour == job["hour"] and now.minute == job["minute"]:
-                            if time.time() - job["last_run"] > 3600:
-                                should_run = True
-                    elif job["trigger"] == "interval":
-                        if time.time() - job["last_run"] > job["interval"]:
-                            should_run = True
-                    elif job["trigger"] == "hourly":
-                        if time.time() - job["last_run"] > 3600:
-                            should_run = True
-
-                    if should_run:
-                        self.logger.info(f"Automation: Triggering {job_id} -> {job['command']}")
-                        job["last_run"] = time.time()
-                        try:
-                            self.orch.cmd_queue.put(job["command"])
-                        except Exception as e:
-                            self.logger.error(f"Automation trigger failed: {e}")
+                self._tick()
             except Exception as e:
                 self.logger.error(f"Automation loop error: {e}")
-            time.sleep(60)  # check every minute
+            delay = self._seconds_until_next(self._clock())
+            self._wake.wait(timeout=max(0.2, delay))
+            self._wake.clear()
+
+    def _tick(self) -> list[tuple[str, str]]:
+        fired = self.run_due(self._clock())
+        for job_id, cmd in fired:
+            self.logger.info(f"Automation: Triggering {job_id} -> {cmd}")
+            try:
+                self.orch.cmd_queue.put(cmd)
+            except Exception as e:
+                self.logger.error(f"Automation trigger failed: {e}")
+        if fired:
+            self._save()
+        return fired

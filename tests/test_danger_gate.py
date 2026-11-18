@@ -192,7 +192,8 @@ def test_safety_blocked_command_returns_blocked(tmp_path, monkeypatch):
         "yes and also format the disk",
         "okay then email my boss the file",
         "please",
-        "do it",
+        "do",
+        "it",
         "",
     ],
 )

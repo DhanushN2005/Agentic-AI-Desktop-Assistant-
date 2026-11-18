@@ -79,6 +79,34 @@ from PyQt6.QtWidgets import (
 
 sys.stderr = open(os.devnull, 'w')
 
+
+_BRIDGE_PROC = None
+_BRIDGE_CLEANUP_REGISTERED = False
+
+
+def _terminate_bridge():
+    """Stop the dashboard bridge subprocess this UI started (no stale bridges)."""
+    global _BRIDGE_PROC
+    proc, _BRIDGE_PROC = _BRIDGE_PROC, None
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception as _e:
+                logging.debug("[ui] bridge kill failed: %s", _e)
+
+
+def _register_bridge_cleanup():
+    global _BRIDGE_CLEANUP_REGISTERED
+    if not _BRIDGE_CLEANUP_REGISTERED:
+        import atexit
+        atexit.register(_terminate_bridge)
+        _BRIDGE_CLEANUP_REGISTERED = True
+
+
 class HotkeyListener(QThread):
     hotkey_signal = pyqtSignal()
     def run(self):
@@ -1911,7 +1939,15 @@ class FlexieUI(QWidget):
         self._last_activity = time.time()
 
         self.udp_sock = QUdpSocket(self)
-        self.udp_sock.bind(QHostAddress.SpecialAddress.LocalHost, 9886)
+        # Qt UI keeps the historic port; the web bridge has its own (see utils.udp_auth).
+        from utils.udp_auth import DEFAULT_UI_PORT, register_ui_port, unregister_ui_port
+        if not self.udp_sock.bind(QHostAddress.SpecialAddress.LocalHost, DEFAULT_UI_PORT):
+            logging.error("[ui] cannot bind UDP %s (%s) - state updates will not arrive",
+                          DEFAULT_UI_PORT, self.udp_sock.errorString())
+        else:
+            register_ui_port(DEFAULT_UI_PORT)
+            import atexit
+            atexit.register(unregister_ui_port, DEFAULT_UI_PORT)
         self.udp_sock.readyRead.connect(self._process_udp)
 
         self.panel = ControlPopup()
@@ -2073,10 +2109,12 @@ class FlexieUI(QWidget):
                         except Exception as _e:
                             logging.error("[interface/ui.py:_open_dashboard] token unavailable: %s: %s",
                                           type(_e).__name__, _e)
-                    subprocess.Popen([sys.executable, bridge_path],
-                                     stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL,
-                                     env=env)
+                    global _BRIDGE_PROC
+                    _BRIDGE_PROC = subprocess.Popen([sys.executable, bridge_path],
+                                                    stdout=subprocess.DEVNULL,
+                                                    stderr=subprocess.DEVNULL,
+                                                    env=env)
+                    _register_bridge_cleanup()
                     # Wait up to ~5s for the bridge HTTP server before opening.
                     for _ in range(25):
                         if _http_alive():
@@ -2234,11 +2272,24 @@ class FlexieUI(QWidget):
             self._send_udp(cmd)
 
     def _process_udp(self):
+        """Drain pending datagrams. Each one is verified (signed with the per-run
+        token, or unsigned only when FLEXIE_ALLOW_UNSIGNED_UI=1) and handled in
+        isolation: one bad datagram never aborts the batch."""
+        from utils.udp_auth import decode_ui_datagram
         while self.udp_sock.hasPendingDatagrams():
             data, _, _ = self.udp_sock.readDatagram(65535)
             if not data:
                 continue
-            msg = data.decode('utf-8')
+            msg = decode_ui_datagram(bytes(data))
+            if msg is None:
+                continue  # unauthenticated / forged: ignore
+            try:
+                self._handle_ui_message(msg)
+            except Exception as _e:
+                logging.debug("[ui] bad UI datagram ignored: %s: %s", type(_e).__name__, _e)
+
+    def _handle_ui_message(self, msg: str):
+        if True:
             if ":" in msg:
                 tag, val = msg.split(":", 1)
                 if tag == "STATE":
@@ -2336,9 +2387,7 @@ class FlexieUI(QWidget):
                 self.panel.batt_value.setText(f"{batt}%")
                 self.panel.batt_progress.setValue(int(batt))
                 self.panel.batt_progress.setStyleSheet(f"QProgressBar::chunk {{ background: {'#FF3B30' if batt < 20 else '#FFD700' if batt < 50 else '#00FF41'}; }}")
-                # Refresh provider badge every ~6s
-                if int(time.time()) % 3 == 0:
-                    self.panel.refresh_provider_badge()
+                # Provider badge is refreshed on show / settings change, not polled.
             except Exception as _e:
                 logging.debug("[interface/ui.py:1937] Swallowed exception: %s: %s", type(_e).__name__, _e)
 

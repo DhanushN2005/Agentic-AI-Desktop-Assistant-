@@ -1,18 +1,54 @@
 import re
 
+from utils.voice_parse import strip_wake
+
+_COMMAND_PREFIX = re.compile(
+    r"^(?:word count|character count|count words|count chars|reverse|uppercase|lowercase|title case|"
+    r"sentence case|snake case|camel case|kebab case|remove duplicates?|sort lines|slugify|"
+    r"wrap(?:\s+(?:at\s+)?\d+)?|extract emails|extract urls|extract numbers|find and replace)\b[\s:,-]*",
+    re.IGNORECASE,
+)
+_OPEN_TO_CLOSE = {'"': '"', "“": "”", "‘": "’", "'": "'"}
+
+
+def _edge_unquote(s: str):
+    """Inner text when the WHOLE string is delimited by matching quote characters
+    at both edges.  Apostrophes inside words (don't) are never quotes."""
+    s = s.strip()
+    if len(s) >= 2 and s[0] in _OPEN_TO_CLOSE and s[-1] == _OPEN_TO_CLOSE[s[0]]:
+        return s[1:-1]
+    return None
+
+
+def _split_command(original: str):
+    """(payload, keyword_scan_text): payload keeps its original case and quotes
+    inside it; keywords are matched only against the text outside the payload."""
+    # 1. a double-quoted (or curly-quoted) span anywhere
+    m = re.search(r'(?<!\w)"([^"]*)"(?!\w)|“([^”]*)”', original)
+    if m:
+        payload = m.group(1) if m.group(1) is not None else m.group(2)
+        return payload, (original[:m.start()] + " " + original[m.end():])
+    # 2. leading command phrase, then the rest (possibly edge-quoted)
+    pm = _COMMAND_PREFIX.match(original.strip())
+    if pm:
+        rest = original.strip()[pm.end():]
+        inner = _edge_unquote(rest)
+        return (inner if inner is not None else rest.strip()), pm.group(0)
+    # 3. 'make this uppercase: hello'
+    if ":" in original:
+        head, _, tail = original.partition(":")
+        inner = _edge_unquote(tail)
+        return (inner if inner is not None else tail.strip()), head
+    return original.strip(), original
+
 
 def handle_text_tools(orch, c):
     """Handle text manipulation commands."""
     orch.send_to_ui("STATE", "PROCESSING")
-    cmd = c.lower().strip()
-    cmd = re.sub(r"^(flexi|flexie|hey flexie|ok flexie)\b", "", cmd).strip()
+    original = strip_wake(c)
 
-    # Extract text from quotes or after command
-    text = re.sub(r"^(word count|character count|count words|count chars|reverse|uppercase|lowercase|title case|sentence case|snake case|camel case|kebab case|remove duplicate|sort lines|slugify|wrap|extract emails|extract urls|extract numbers|find and replace)\s*", "", cmd, flags=re.IGNORECASE).strip()
-    # Try to get text in quotes
-    quote_match = re.search(r'["\'](.+?)["\']', cmd)
-    if quote_match:
-        text = quote_match.group(1)
+    text, scan_raw = _split_command(original)
+    cmd = scan_raw.lower()
 
     if not text and "count" not in cmd and "extract" not in cmd:
         orch.speak("What text should I process? Put it in quotes.")

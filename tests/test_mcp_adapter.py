@@ -46,7 +46,7 @@ class TestMCPAdapter:
 
         spec = manager._adapt_mcp_tool_to_spec("test_server", mock_client, mcp_tool)
         assert spec is not None
-        assert spec.name == "mcp_test_server_read_file"
+        assert spec.name == "mcp__test_server__read_file"
         assert "[test_server] Read file contents from disk" in spec.description
         assert len(spec.params) == 2
 
@@ -59,8 +59,11 @@ class TestMCPAdapter:
         assert lines_param.required is False
         assert lines_param.default == 100
 
-        # Read tool should be READ_ONLY
-        assert spec.permission == PermissionLevel.READ_ONLY
+        # TL-5: MCP tools default to USER_CONFIRMATION; only an explicit readOnlyTools entry downgrades
+        assert spec.permission == PermissionLevel.USER_CONFIRMATION
+        mock_client.config.read_only_tools = ["read_file"]
+        spec_ro = manager._adapt_mcp_tool_to_spec("test_server", mock_client, mcp_tool)
+        assert spec_ro.permission == PermissionLevel.READ_ONLY
 
         # Test dangerous tool heuristic
         delete_tool = {"name": "delete_database", "inputSchema": {"type": "object"}}
@@ -92,9 +95,9 @@ class TestMCPAdapter:
         spec = manager._adapt_mcp_tool_to_spec("mock", mock_client, mcp_tool)
         registry.register(spec)
 
-        result = registry.execute("mcp_mock_read_file", {"path": "test.txt"})
+        result = registry.execute("mcp__mock__read_file", {"path": "test.txt"})
         assert result.success is True
-        assert result.message == "Mock file contents"
+        assert result.message == "Mock file contents"  # call_tool is mocked: no wrapping here
         mock_client.call_tool.assert_called_once_with("read_file", {"path": "test.txt"})
 
     def test_mcp_client_call_tool_formatting(self):
@@ -108,7 +111,7 @@ class TestMCPAdapter:
             }
             res = client.call_tool("test_tool", {"arg1": "val1"})
             assert res.success is True
-            assert res.message == "Execution successful output"
+            assert "Execution successful output" in res.message and "<untrusted_tool_output" in res.message
 
             # Test error response
             mock_send.return_value = {

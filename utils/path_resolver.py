@@ -72,22 +72,27 @@ class PathResolver:
         Returns:
             Resolved absolute path string
         """
-        path_str = path_str.strip().lower()
+        path_str = (path_str or "").strip()
 
-        # Check for natural language folder references
+        # Known folder aliases are honoured only as the FIRST path component;
+        # the remainder (file name, sub-folders, CASE) is preserved.
         resolved = self._resolve_natural_language(path_str)
         if resolved:
+            if default_extension and not os.path.splitext(resolved)[1] and resolved != str(self.home):
+                known = {str(self.home / v) for v in FOLDER_SUBPATHS.values()}
+                if resolved not in known:
+                    resolved += default_extension
             return resolved
 
-        # Check for relative path with ~ expansion
-        if "~" in path_str:
+        # Leading ~ expansion only
+        if path_str.startswith("~"):
             return str(Path(path_str).expanduser())
 
         # Check for absolute path
         if os.path.isabs(path_str):
             return path_str
 
-        # Relative path — resolve against workspace
+        # Relative path — resolve against workspace (case preserved)
         result = os.path.join(self.workspace, path_str)
 
         # Add extension if specified and not present
@@ -97,27 +102,25 @@ class PathResolver:
         return result
 
     def _resolve_natural_language(self, path_str: str) -> str | None:
-        """Resolve natural language folder references."""
-        path_lower = path_str.lower().strip()
+        """Resolve a leading known-folder alias ("downloads", "my desktop",
+        "documents folder", "in the downloads folder") plus any remainder."""
+        text = path_str.strip()
+        parts = [p for p in re.split(r"[\\/]+", text) if p]
+        if not parts:
+            return None
 
-        # Check exact matches first
-        if path_lower in FOLDER_SUBPATHS:
-            subpath = FOLDER_SUBPATHS[path_lower]
-            return str(self.home / subpath)
-
-        # Check partial matches
-        for key, subpath in FOLDER_SUBPATHS.items():
-            if key in path_lower:
-                return str(self.home / subpath)
-
-        # Check for "in the Downloads" pattern
-        match = re.search(r"in\s+(?:the\s+)?(\w+)\s*(?:folder)?", path_lower)
-        if match:
-            folder_name = match.group(1)
-            if folder_name in FOLDER_SUBPATHS:
-                return str(self.home / FOLDER_SUBPATHS[folder_name])
-
-        return None
+        head = parts[0].strip().lower()
+        rest = parts[1:]
+        key = None
+        if head in FOLDER_SUBPATHS:
+            key = head
+        else:
+            m = re.fullmatch(r"in\s+(?:the\s+)?(\w+)(?:\s+folder)?", head)
+            if m and m.group(1) in FOLDER_SUBPATHS:
+                key = m.group(1)
+        if key is None:
+            return None
+        return str(self.home.joinpath(FOLDER_SUBPATHS[key], *rest))
 
     def resolve_filename(self, filename: str, content_hint: str = "") -> str:
         """

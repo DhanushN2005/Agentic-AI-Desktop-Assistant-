@@ -10,28 +10,52 @@ import webbrowser
 
 from utils.config import Config
 from utils.helpers import find_executable
+from utils.name_index import get_shared_index
+
+_LEADING_WORDS = {"delete", "remove", "erase", "trash", "the", "file", "folder", "please", "rename"}
+
+
+def clean_target(query: str) -> str:
+    """Strip only LEADING verb/article/'file'/'folder' tokens; preserve case and the rest."""
+    toks = query.strip().split()
+    while toks and toks[0].lower() in _LEADING_WORDS:
+        toks.pop(0)
+    return " ".join(toks).strip().strip("'\"")
+
+
+class RecycleBinError(RuntimeError):
+    """The Recycle Bin call failed; nothing was deleted."""
 
 
 class FileManager:
     def __init__(self):
         self._cache: dict[str, str] = {}
-        self._all_names: list[str] = []
-        threading.Thread(target=self._index, daemon=True).start()
+        self._cache_lock = threading.Lock()
+        self.last_candidates: list[str] = []
+        self.last_opened_path = None
+        self.last_created_path = None
+        self._index_obj = get_shared_index()
+        self._index_obj.refresh_async()
 
-    def _index(self):
-        names = list(Config.FOLDER_SHORTCUTS) + list(Config.APPS)
-        for root in Config.SEARCH_ROOTS:
-            if not os.path.exists(root):
-                continue
-            for r, dirs, _ in os.walk(root):
-                bad = ["Windows", "Program Files", "AppData", "node_modules", ".git", "$"]
-                if any(b in r for b in bad):
-                    dirs.clear()
-                    continue
-                names += [d.lower() for d in dirs]
-                if r.count(os.sep) - root.count(os.sep) > 4:
-                    dirs.clear()
-        self._all_names = list(set(names))
+    # ---- thread-safe, validated cache (EN-2)
+    def _cache_get(self, key: str):
+        with self._cache_lock:
+            path = self._cache.get(key)
+        if path is None:
+            return None
+        if os.path.exists(path) or path.startswith("http"):
+            return path
+        with self._cache_lock:
+            self._cache.pop(key, None)
+        return None
+
+    def _cache_set(self, key: str, path: str) -> None:
+        with self._cache_lock:
+            self._cache[key] = path
+
+    @property
+    def _all_names(self) -> list[str]:
+        return list(set(Config.FOLDER_SHORTCUTS) | set(Config.APPS) | self._index_obj.names())
 
     def _suggest(self, q, n=3):
         return difflib.get_close_matches(q.lower(), self._all_names, n=n, cutoff=0.4)
@@ -47,23 +71,34 @@ class FileManager:
         else:
             os.startfile(path)
 
+    def open_path(self, path: str) -> str:
+        """Open exactly this (already chosen) path."""
+        try:
+            self._launch_path(path)
+            self.last_opened_path = path
+            return f"Opened {os.path.basename(path)}."
+        except Exception as e:
+            return f"I couldn't open it: {e}"
+
     def open_item(self, query: str, target_path: str = None) -> str:
         is_run = "run" in query.lower()
         q = re.sub(r"\b(open|run|launch|start|the|folder|app|application)\b", "", query).strip().lower()
         if not q:
             return "I heard you say open, but I didn't catch what you want me to open. Could you repeat that?"
 
-        if q in self._cache:
+        self.last_candidates = []
+        cached = self._cache_get(q)
+        if cached:
             try:
-                path = self._cache[q]
                 if target_path:
-                    subprocess.Popen([path, target_path])
+                    subprocess.Popen([cached, target_path])
                 else:
-                    os.startfile(path)
+                    os.startfile(cached)
                 return f"Opening {q}."
             except Exception as _e:
-                logging.debug("[engines/files.py:48] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                del self._cache[q]
+                logging.debug("cached open failed: %s", _e)
+                with self._cache_lock:
+                    self._cache.pop(q, None)
 
         # Check if q corresponds to a directory or project on desktop or search roots
         clean_q = re.sub(r"\b(created|my|the|new|project)\b", "", q).strip()
@@ -80,7 +115,7 @@ class FileManager:
                                 self._launch_path(entry_path, is_run)
                             else:
                                 os.startfile(entry_path)
-                            self._cache[q] = entry_path
+                            self._cache_set(q, entry_path)
                             self.last_opened_path = entry_path
                             return f"Opening project folder {entry}."
                         except Exception as _e:
@@ -100,7 +135,7 @@ class FileManager:
                                 subprocess.Popen([resolved_path, target_path])
                             else:
                                 os.startfile(resolved_path)
-                            self._cache[q] = resolved_path
+                            self._cache_set(q, resolved_path)
                         else:
                             # Use os.startfile instead of shell for safety
                             try:
@@ -113,7 +148,7 @@ class FileManager:
                                 # Fail closed: 'start' is a cmd.exe builtin and
                                 # would need a shell to run — do not shell out.
                                 return f"Error opening {app}: {type(_e).__name__}"
-                            self._cache[q] = path
+                            self._cache_set(q, path)
                     return f"Opening {app}."
                 except Exception as e:
                     logging.debug("[engines/files.py:79] Swallowed exception: %s: %s", type(e).__name__, e)
@@ -128,30 +163,34 @@ class FileManager:
                     if os.path.isfile(candidate):
                         try:
                             self._launch_path(candidate, is_run)
-                            self._cache[q] = candidate
+                            self._cache_set(q, candidate)
                             self.last_opened_path = candidate
                             return f"{'Ran' if is_run else 'Found and opened'} {os.path.basename(candidate)}."
                         except Exception as e:
                             logging.debug("[engines/files.py:87] Swallowed exception: %s: %s", type(e).__name__, e)
                             return f"I found it, but couldn't open it: {e}"
 
-            path = self._find_item_path(q) or self._find_item_path(file_name)
+            path = self._find_item_path(q)
+            if not path and not self.last_candidates:
+                path = self._find_item_path(file_name)
             if path:
                 try:
                     self._launch_path(path, is_run)
-                    self._cache[q] = path
+                    self._cache_set(q, path)
                     self.last_opened_path = path
                     return f"{'Ran' if is_run else 'Found and opened'} {os.path.basename(path)}."
                 except Exception as e:
                     logging.debug("[engines/files.py:104] Swallowed exception: %s: %s", type(e).__name__, e)
                     return f"I found it, but couldn't open it: {e}"
+            if self.last_candidates:
+                return self._ambiguous_reply(self.last_candidates)
             return f"I couldn't find '{file_name}' on your system."
 
         # Folder lookup
         for name, path in Config.FOLDER_SHORTCUTS.items():
             if name in q and os.path.exists(path):
                 os.startfile(path)
-                self._cache[q] = path
+                self._cache_set(q, path)
                 return f"Opening {name}."
 
         # Stop-words and length guards for fuzzy/deep lookups
@@ -171,13 +210,13 @@ class FileManager:
 
         # Folder/File deep lookup (new robust method)
         path = self._find_item_path(q)
-        if not path:
+        if not path and not self.last_candidates:
             path = self._find_item_path(keyword)
 
         if path:
             try:
                 self._launch_path(path, is_run)
-                self._cache[q] = path
+                self._cache_set(q, path)
                 self.last_opened_path = path
                 verb = "Ran" if is_run else "Found and opened"
                 return f"{verb} {os.path.basename(path)}."
@@ -185,6 +224,9 @@ class FileManager:
                 logging.debug("[engines/files.py:115] Swallowed exception: %s: %s", type(e).__name__, e)
                 self.last_opened_path = None
                 return f"I found it, but couldn't open it: {e}"
+
+        if self.last_candidates:
+            return self._ambiguous_reply(self.last_candidates)
 
         # Fuzzy suggestion (only for safe keywords)
         sugg = self._suggest(keyword)
@@ -333,7 +375,8 @@ class FileManager:
         if not name.endswith(ext):
             name += ext
 
-        path = os.path.join(loc, name)
+        path = self._unique_path(os.path.join(loc, name))
+        name = os.path.basename(path)
 
         # Priority 1: Execution verification and self-healing loop
         success = False
@@ -355,7 +398,7 @@ class FileManager:
 
         if success:
             # Update cache/context
-            self._cache[name.lower()] = path
+            self._cache_set(name.lower(), path)
             self.last_created_path = path
 
             # Automatically open the newly created document!
@@ -378,38 +421,32 @@ class FileManager:
                 return f"Failed to create document: {err_msg}"
 
     def find_files(self, name: str) -> list[str]:
-        name = name.lower()
-        results = []
-        for root in Config.SEARCH_ROOTS:
-            if not os.path.exists(root):
-                continue
-            for r, dirs, files in os.walk(root):
-                bad = ["Windows", "Program Files", "AppData", ".git", "$"]
-                if any(b in r for b in bad):
-                    dirs.clear()
-                    continue
-                for f in files:
-                    if name in f.lower():
-                        results.append(os.path.join(r, f))
-                if len(results) >= 5:
-                    return results
-        return results
+        """Return up to 5 files whose name contains ``name`` (uses the shared bounded index)."""
+        return [p for p in self._index_obj.partial(name, limit=25) if os.path.isfile(p)][:5]
+
+
+
+    # ------------------------------------------------------------------ organize (EN-21)
+    def _undo_log_path(self) -> str:
+        from utils.paths import data_file
+        return data_file("organize_undo.json")
 
     def organize_desktop(self) -> str:
         desk = Config.FOLDER_SHORTCUTS["desktop"]
         cats = {
-            "Images": {".jpg",".jpeg",".png",".gif",".bmp",".svg"},
-            "Documents": {".pdf",".docx",".doc",".txt",".pptx",".xlsx"},
-            "Videos": {".mp4",".mkv",".avi",".mov"},
-            "Music": {".mp3",".wav",".flac"},
-            "Code": {".py",".js",".ts",".html",".css",".java",".cpp"},
-            "Archives": {".zip",".rar",".7z",".tar",".gz"},
+            "Images": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg"},
+            "Documents": {".pdf", ".docx", ".doc", ".txt", ".pptx", ".xlsx"},
+            "Videos": {".mp4", ".mkv", ".avi", ".mov"},
+            "Music": {".mp3", ".wav", ".flac"},
+            "Code": {".py", ".js", ".ts", ".html", ".css", ".java", ".cpp"},
+            "Archives": {".zip", ".rar", ".7z", ".tar", ".gz"},
             "Others": set()
         }
         moved = 0
+        moves: list[dict] = []
         for item in os.listdir(desk):
             src = os.path.join(desk, item)
-            if os.path.isdir(src):
+            if os.path.isdir(src) or item.lower() == "desktop.ini" or item.lower().endswith(".lnk"):
                 continue
             ext = os.path.splitext(item)[1].lower()
             for cat, exts in cats.items():
@@ -419,88 +456,233 @@ class FileManager:
                     dst = os.path.join(dst_dir, item)
                     if not os.path.exists(dst):
                         shutil.move(src, dst)
+                        moves.append({"src": src, "dst": dst})
                         moved += 1
                     break
-        return f"Organized {moved} files on your Desktop."
+        if moves:
+            try:
+                import json
+                with open(self._undo_log_path(), "w", encoding="utf-8") as f:
+                    json.dump({"time": time.time(), "moves": moves}, f)
+            except Exception as e:
+                logging.debug("organize undo log failed: %s", e)
+        return f"Organized {moved} files on your Desktop." + (" Say undo organize to put them back." if moved else "")
 
+    def undo_organize(self) -> str:
+        import json
+        try:
+            with open(self._undo_log_path(), encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return "I have no desktop organizing to undo."
+        restored = 0
+        for mv in reversed(data.get("moves", [])):
+            src, dst = mv["src"], mv["dst"]
+            try:
+                if os.path.exists(dst) and not os.path.exists(src):
+                    shutil.move(dst, src)
+                    restored += 1
+                    parent = os.path.dirname(dst)
+                    if not os.listdir(parent):
+                        os.rmdir(parent)
+            except Exception as e:
+                logging.debug("undo move failed: %s", e)
+        try:
+            os.remove(self._undo_log_path())
+        except OSError:
+            pass
+        return f"Restored {restored} files to your Desktop."
+
+    # ------------------------------------------------------------------ resolver (EN-1/2)
+    def _user_dirs(self) -> list[str]:
+        dirs = [Config.FOLDER_SHORTCUTS.get("desktop"), Config.FOLDER_SHORTCUTS.get("documents"),
+                Config.FOLDER_SHORTCUTS.get("downloads") or os.path.join(Config.USER_HOME, "Downloads")]
+        return [d for d in dirs if d and os.path.isdir(d)]
+
+    @staticmethod
+    def _dedupe(paths: list[str]) -> list[str]:
+        seen, uniq = set(), []
+        for p in paths:
+            n = os.path.normcase(os.path.abspath(p))
+            if n not in seen:
+                seen.add(n)
+                uniq.append(p)
+        return uniq
+
+    def _exact_matches(self, key: str) -> list[str]:
+        out: list[str] = []
+        for d in self._user_dirs():
+            try:
+                for item in os.listdir(d):
+                    if item.lower() == key:
+                        out.append(os.path.join(d, item))
+            except OSError:
+                continue
+        out.extend(self._index_obj.exact(key))
+        return self._dedupe(out)
+
+    def _partial_matches(self, key: str, limit: int = 6) -> list[str]:
+        out: list[str] = []
+        for d in self._user_dirs():
+            try:
+                for item in os.listdir(d):
+                    if key in item.lower():
+                        out.append(os.path.join(d, item))
+            except OSError:
+                continue
+        if len(key) > 3:
+            out.extend(self._index_obj.partial(key, limit=limit))
+        return self._dedupe(out)[:limit]
+
+    def resolve_item(self, query: str, exact_only: bool = False):
+        """Resolve a spoken name ONCE. Returns (path, candidates).
+
+        path is set only for one unambiguous target; otherwise candidates lists
+        the choices the user must pick from (empty list = nothing found).
+        """
+        name = clean_target(query)
+        if not name:
+            return None, []
+        if os.path.isabs(name) and os.path.exists(name):
+            return name, []
+        key = name.lower()
+        cached = self._cache_get(key)
+        if cached and (not exact_only or os.path.basename(cached).lower() == key):
+            return cached, []
+        for s_name, s_path in Config.FOLDER_SHORTCUTS.items():
+            if key == s_name and os.path.exists(s_path):
+                return s_path, []
+        exact = self._exact_matches(key)
+        if len(exact) == 1:
+            self._cache_set(key, exact[0])
+            return exact[0], []
+        if len(exact) > 1:
+            return None, exact[:6]
+        partial = self._partial_matches(key)
+        if exact_only:
+            return None, partial
+        if len(partial) == 1:
+            self._cache_set(key, partial[0])
+            return partial[0], []
+        return None, partial
+
+    def _find_item_path(self, name: str):
+        path, cands = self.resolve_item(name)
+        self.last_candidates = [] if path else cands
+        return path
+
+    def _ambiguous_reply(self, cands: list[str]) -> str:
+        lines = [f"{i + 1}. {os.path.basename(p)} in {os.path.basename(os.path.dirname(p)) or os.path.dirname(p)}"
+                 for i, p in enumerate(cands)]
+        return "I found several matches: " + "; ".join(lines) + ". Please tell me which number you mean."
+
+    # ------------------------------------------------------------------ rename (EN-11)
     def rename_item(self, cmd: str) -> str:
         """Renames a file or folder. Syntax: rename [old] to [new]"""
-        parts = re.split(r"\s+to\s+|\s+as\s+", cmd.lower())
+        parts = re.split(r"\s+(?:to|as)\s+", cmd.strip(), maxsplit=1, flags=re.IGNORECASE)
         if len(parts) < 2:
             return "Please say 'rename [old name] to [new name]'."
 
-        old_name = re.sub(r"^(rename|folder|file|the)\s+", "", parts[0]).strip()
-        new_name = parts[1].strip()
+        old_name = clean_target(parts[0])
+        new_name = parts[1].strip().strip("'\"").rstrip(".").strip()  # case preserved
         from utils.path_jail import is_basename_safe, is_system_location
-        if not is_basename_safe(new_name):
+        if not new_name or not is_basename_safe(new_name):
             return f"Rename failed: '{new_name}' is not a plain file/folder name."
 
-        path = self._find_item_path(old_name)
+        path, cands = self.resolve_item(old_name)
         if not path:
+            self.last_candidates = cands
+            if cands:
+                return self._ambiguous_reply(cands)
             return f"I couldn't find '{old_name}' on your system."
         if is_system_location(path):
             return f"Rename failed: '{old_name}' is a protected system location."
 
-        parent = os.path.dirname(path)
-        # If renaming a file, try to keep the extension if the user didn't provide one
+        parent = os.path.dirname(os.path.abspath(path))
         if os.path.isfile(path):
             old_ext = os.path.splitext(path)[1]
             if "." not in new_name and old_ext:
                 new_name += old_ext
 
         new_path = os.path.join(parent, new_name)
+        if os.path.exists(new_path) and os.path.normcase(new_path) != os.path.normcase(os.path.abspath(path)):
+            return f"Rename failed: '{new_name}' already exists."
         try:
             os.rename(path, new_path)
-            return f"Successfully renamed '{old_name}' to '{new_name}'."
+            with self._cache_lock:
+                self._cache.clear()
+            return f"Successfully renamed '{os.path.basename(path)}' to '{new_name}'."
         except Exception as e:
-            logging.debug("[engines/files.py:350] Swallowed exception: %s: %s", type(e).__name__, e)
+            logging.debug("rename failed: %s: %s", type(e).__name__, e)
             return f"Rename failed: {e}"
 
-    def delete_item(self, query: str) -> str:
-        """Deletes a file or folder. (Safe check should be in orchestrator)"""
-        name = re.sub(r"^(delete|remove|erase|the)\s+", "", query.lower()).strip()
-        path = self._find_item_path(name)
-        if not path:
-            return f"I couldn't find '{name}' to delete."
+    # ------------------------------------------------------------------ delete (EN-1/2/22)
+    def delete_path(self, path: str) -> str:
+        """Delete exactly ``path`` (Recycle Bin only; refuses if that fails)."""
         from utils.path_jail import is_system_location
+        if not path or not os.path.exists(path):
+            return "That item no longer exists."
         if is_system_location(path):
-            return f"Delete failed: '{name}' is a protected system location."
-
+            return f"Delete failed: '{os.path.basename(path)}' is a protected system location."
         try:
             self._recycle_or_remove(path)
-            return f"Successfully deleted '{name}'."
+            with self._cache_lock:
+                self._cache.clear()
+            return f"Moved '{os.path.basename(path)}' to the Recycle Bin."
+        except RecycleBinError as e:
+            return f"I could not move it to the Recycle Bin, so I did NOT delete it ({e})."
         except Exception as e:
-            logging.debug("[engines/files.py:365] Swallowed exception: %s: %s", type(e).__name__, e)
+            logging.debug("delete failed: %s: %s", type(e).__name__, e)
             return f"Delete failed: {e}"
 
+    def delete_item(self, query: str) -> str:
+        """Deletes ONE exactly-named file or folder; never guesses among partial matches."""
+        path, cands = self.resolve_item(query, exact_only=True)
+        if not path:
+            self.last_candidates = cands
+            if cands:
+                return self._ambiguous_reply(cands) + " Nothing was deleted."
+            return f"I couldn't find '{clean_target(query)}' to delete."
+        return self.delete_path(path)
+
     def _recycle_or_remove(self, path: str):
-        """Send item to Windows Recycle Bin with undo capability, falling back to standard delete."""
-        if os.name == "nt":
-            try:
-                import ctypes
-                from ctypes import wintypes
-                class _SHFILEOPSTRUCTW(ctypes.Structure):
-                    _fields_ = [
-                        ("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT),
-                        ("pFrom", wintypes.LPCWSTR), ("pTo", wintypes.LPCWSTR),
-                        ("fFlags", wintypes.WORD), ("fAnyOperationsAborted", wintypes.BOOL),
-                        ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR),
-                    ]
-                fileop = _SHFILEOPSTRUCTW(
-                    None, 3, os.path.abspath(path) + "\0\0", None,
-                    0x0040 | 0x0010 | 0x0004, False, None, None
-                )
-                if ctypes.windll.shell32.SHFileOperationW(ctypes.byref(fileop)) == 0 and not os.path.exists(path):
-                    return
-            except Exception as e:
-                logging.debug("Recycle bin delete failed, falling back: %s", e)
-        if os.path.isdir(path):
-            shutil.rmtree(path)
-        else:
-            os.remove(path)
+        """Send item to the Windows Recycle Bin; raise RecycleBinError (never delete permanently) on failure."""
+        if os.name != "nt":
+            raise RecycleBinError("no Recycle Bin on this platform")
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _SHFILEOPSTRUCTW(ctypes.Structure):
+                _fields_ = [
+                    ("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT),
+                    ("pFrom", wintypes.LPCWSTR), ("pTo", wintypes.LPCWSTR),
+                    ("fFlags", wintypes.WORD), ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR),
+                ]
+            fileop = _SHFILEOPSTRUCTW(
+                None, 3, os.path.abspath(path) + "\0\0", None,
+                0x0040 | 0x0010 | 0x0004, False, None, None
+            )
+            rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(fileop))
+        except Exception as e:
+            raise RecycleBinError(f"{type(e).__name__}") from e
+        if rc != 0 or os.path.exists(path):
+            raise RecycleBinError(f"shell error {rc}")
+
+    # ------------------------------------------------------------------ save (EN-23)
+    @staticmethod
+    def _unique_path(path: str) -> str:
+        if not os.path.exists(path):
+            return path
+        base, ext = os.path.splitext(path)
+        n = 2
+        while os.path.exists(f"{base} ({n}){ext}"):
+            n += 1
+        return f"{base} ({n}){ext}"
 
     def save_file(self, content: str, filename: str) -> str:
-        """Saves content to a file in the Documents folder by default with strict verification."""
+        """Saves content in Documents; never overwrites an existing file (uses a unique name)."""
         from utils.path_jail import is_basename_safe
         clean_name = os.path.basename(filename.strip().replace("\\", "/"))
         if not is_basename_safe(clean_name):
@@ -509,116 +691,32 @@ class FileManager:
         if not clean_name.endswith((".txt", ".md", ".py", ".js")):
             clean_name += ".txt"
 
-        path = os.path.join(loc, clean_name)
+        path = self._unique_path(os.path.join(loc, clean_name))
+        saved_name = os.path.basename(path)
 
         success = False
         err_msg = ""
-        for _ in range(2):
+        for _ in range(3):
             try:
-                with open(path, "w", encoding="utf-8") as f:
+                with open(path, "x", encoding="utf-8") as f:
                     f.write(content)
-                # Verification Check
                 if os.path.exists(path) and (len(content) == 0 or os.path.getsize(path) > 0):
                     success = True
                     break
+            except FileExistsError:
+                path = self._unique_path(path)
+                saved_name = os.path.basename(path)
             except Exception as e:
-                logging.debug("[engines/files.py:386] Swallowed exception: %s: %s", type(e).__name__, e)
+                logging.debug("save failed: %s: %s", type(e).__name__, e)
                 err_msg = str(e)
                 time.sleep(0.2)
 
         if success:
-            return f"File '{filename}' saved successfully in your Documents."
-        else:
-            # Self-healing fallback
-            try:
-                import pyperclip
-                pyperclip.copy(content)
-                return f"Verification Alert: Failed to save file '{filename}'. Stored content on clipboard as fallback. Details: {err_msg}"
-            except Exception as _e:
-                logging.debug("[engines/files.py:398] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                return f"Failed to save file: {err_msg}"
-
-    def _find_item_path(self, name: str) -> str:
-        """Helper to find the full path of an item by name with performance tiers."""
-        name = name.lower()
-        if os.path.exists(name):
-            return name
-        if name in self._cache:
-            return self._cache[name]
-
-        # Tier 1: Shortcuts (Instant)
-        for s_name, s_path in Config.FOLDER_SHORTCUTS.items():
-            if name == s_name:
-                return s_path
-
-        # Tier 2: Common User Folders (Fast)
-        search_dirs = [
-            Config.FOLDER_SHORTCUTS.get("desktop"),
-            Config.FOLDER_SHORTCUTS.get("documents"),
-            os.path.join(Config.USER_HOME, "Downloads")
-        ]
-        # Exact match first
-        for d in search_dirs:
-            if d and os.path.exists(d):
-                try:
-                    for item in os.listdir(d):
-                        if item.lower() == name:
-                            p = os.path.join(d, item)
-                            self._cache[name] = p
-                            return p
-                except Exception as _e:
-                    logging.debug("[engines/files.py:426] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                    continue
-
-        # Substring match second
-        for d in search_dirs:
-            if d and os.path.exists(d):
-                try:
-                    for item in os.listdir(d):
-                        if name in item.lower():
-                            p = os.path.join(d, item)
-                            self._cache[name] = p
-                            return p
-                except Exception as _e:
-                    logging.debug("[engines/files.py:437] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                    continue
-
-        # Tier 3: Limited Deep Search (Moderate)
-        # Exact match first
-        for root in Config.SEARCH_ROOTS:
-            if not os.path.exists(root):
-                continue
-            for r, dirs, files in os.walk(root):
-                bad = ["Windows", "Program Files", "AppData", ".git", "$", "node_modules"]
-                if any(b in r for b in bad):
-                    dirs.clear()
-                    continue
-                depth = r.count(os.sep) - root.count(os.sep)
-                if depth > 3:
-                    dirs.clear()
-                    continue
-                for item in dirs + files:
-                    if item.lower() == name:
-                        p = os.path.join(r, item)
-                        self._cache[name] = p
-                        return p
-
-        # Substring match second
-        for root in Config.SEARCH_ROOTS:
-            if not os.path.exists(root):
-                continue
-            for r, dirs, files in os.walk(root):
-                bad = ["Windows", "Program Files", "AppData", ".git", "$", "node_modules"]
-                if any(b in r for b in bad):
-                    dirs.clear()
-                    continue
-                depth = r.count(os.sep) - root.count(os.sep)
-                if depth > 3:
-                    dirs.clear()
-                    continue
-                for item in dirs + files:
-                    if len(name) > 3 and name in item.lower():
-                        p = os.path.join(r, item)
-                        self._cache[name] = p
-                        return p
-        return None
+            return f"File '{saved_name}' saved successfully in your Documents."
+        try:
+            import pyperclip
+            pyperclip.copy(content)
+            return f"Verification Alert: Failed to save file '{filename}'. Stored content on clipboard as fallback. Details: {err_msg}"
+        except Exception as _e:
+            logging.debug("clipboard fallback failed: %s", _e)
+            return f"Failed to save file: {err_msg}"

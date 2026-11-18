@@ -15,6 +15,7 @@ import re
 import threading
 
 from utils.config import Config
+from utils.paths import data_dir
 
 logger = logging.getLogger("flexie.jobs.lessons")
 
@@ -37,7 +38,8 @@ _INJECTION = re.compile(
 
 
 def _path() -> str:
-    return os.path.join(getattr(Config, "DATA_DIR", "."), _FILE_NAME)
+    # Config.DATA_DIR is only set by tests; otherwise use the project data directory (never the cwd)
+    return os.path.join(getattr(Config, "DATA_DIR", None) or data_dir(), _FILE_NAME)
 
 
 def sanitize_lesson(text: object) -> str | None:

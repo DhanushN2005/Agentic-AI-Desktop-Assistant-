@@ -1,26 +1,31 @@
 import re
 
 
+def _has(cmd: str, *words: str) -> bool:
+    """Whole-word match so 'weekend' / 'send' never trigger 'end'."""
+    return any(re.search(rf"\b{re.escape(w)}\b", cmd) for w in words)
+
+
+def _reply(orch, c, response):
+    orch.ctx.update(last_response=response, query=c)
+    orch.speak(response)
+    return True
+
+
 def handle_pomodoro(orch, c):
     """Handle pomodoro timer commands."""
     orch.send_to_ui("STATE", "PROCESSING")
     cmd = c.lower().strip()
     cmd = re.sub(r"^(flexi|flexie|hey flexie|ok flexie)\b", "", cmd).strip()
 
-    if "stop" in cmd or "cancel" in cmd or "end" in cmd or "pause" in cmd:
+    if _has(cmd, "stop", "cancel", "end", "pause"):
         orch.pomodoro.stop()
-        response = "Pomodoro stopped."
-        orch.ctx.update(last_response=response, query=c)
-        orch.speak(response)
-        return True
+        return _reply(orch, c, "Pomodoro stopped.")
 
-    if "status" in cmd or "check" in cmd or "sessions" in cmd:
-        response = orch.pomodoro.status()
-        orch.ctx.update(last_response=response, query=c)
-        orch.speak(response)
-        return True
+    if _has(cmd, "status", "check", "sessions"):
+        return _reply(orch, c, orch.pomodoro.status())
 
-    if "start" in cmd or "begin" in cmd or "start focus" in cmd or "pomodoro" in cmd:
+    if _has(cmd, "start", "begin", "pomodoro"):
         work_match = re.search(r"(\d+)\s*(?:min|work)", cmd)
         break_match = re.search(r"break\s*(?:of\s+)?(\d+)", cmd)
         work_mins = int(work_match.group(1)) if work_match else None
@@ -30,13 +35,11 @@ def handle_pomodoro(orch, c):
             orch.speak(msg)
 
         orch.pomodoro.set_callback(cb)
-        orch.pomodoro.start(work_minutes=work_mins, break_minutes=break_mins)
-        response = f"Pomodoro started! {orch.pomodoro.work_duration // 60} min work, {orch.pomodoro.break_duration // 60} min break."
-        orch.ctx.update(last_response=response, query=c)
-        orch.speak(response)
-        return True
+        started = orch.pomodoro.start(work_minutes=work_mins, break_minutes=break_mins)
+        if started is False:
+            return _reply(orch, c, "A pomodoro is already running. Say 'stop pomodoro' first.")
+        response = (f"Pomodoro started! {orch.pomodoro.work_duration // 60} min work, "
+                    f"{orch.pomodoro.break_duration // 60} min break.")
+        return _reply(orch, c, response)
 
-    response = "Say 'start pomodoro', 'pomodoro status', or 'stop pomodoro'."
-    orch.ctx.update(last_response=response, query=c)
-    orch.speak(response)
-    return True
+    return _reply(orch, c, "Say 'start pomodoro', 'pomodoro status', or 'stop pomodoro'.")

@@ -12,7 +12,10 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from urllib.parse import urlsplit
 
 logger = logging.getLogger("flexie.preflight")
 
@@ -33,6 +36,24 @@ def _resolve_code_cli() -> str | None:
     return None
 
 
+_DEFAULT_OLLAMA = "http://localhost:11434"
+_version_cache: dict[str, str | None] = {}
+_version_lock = threading.Lock()
+
+
+def _ollama_base(raw: str | None = None) -> str:
+    """Ollama host (scheme://host:port) from OLLAMA_URL.
+
+    OLLAMA_URL defaults to ``http://localhost:11434/api/generate``; appending
+    ``/api/tags`` to that probed ``/api/generate/api/tags``. Only scheme+netloc count.
+    """
+    raw = (raw if raw is not None else os.environ.get("OLLAMA_URL", "")) or _DEFAULT_OLLAMA
+    parts = urlsplit(raw if "://" in raw else f"http://{raw}")
+    if not parts.scheme or not parts.netloc:
+        return _DEFAULT_OLLAMA
+    return f"{parts.scheme}://{parts.netloc}"
+
+
 def _check_binary(name: str, alias_cmd: str | None = None) -> dict[str, Any]:
     """Check if a CLI binary is installed and executable without raising."""
     try:
@@ -46,22 +67,32 @@ def _check_binary(name: str, alias_cmd: str | None = None) -> dict[str, Any]:
                 "spoken": f"{name} is not installed.",
             }
         version = None
+        with _version_lock:
+            cached = resolved in _version_cache
+            if cached:
+                version = _version_cache[resolved]
         try:
-            cmd = [resolved, "--version"]
+            if cached:
+                cmd = None
+            else:
+                cmd = [resolved, "--version"]
             # Avoid shell=True. On Windows .cmd/.bat need cmd.exe invocation
-            if sys.platform == "win32" and resolved.lower().endswith((".cmd", ".bat")):
+            if cmd and sys.platform == "win32" and resolved.lower().endswith((".cmd", ".bat")):
                 cmd = ["cmd.exe", "/c", resolved, "--version"]
-            res = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=3,
-                shell=False,
-            )
-            if res.returncode == 0:
-                first_line = res.stdout.strip().splitlines()
-                if first_line:
-                    version = first_line[0].strip()
+            if cmd:
+                res = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    shell=False,
+                )
+                if res.returncode == 0:
+                    first_line = res.stdout.strip().splitlines()
+                    if first_line:
+                        version = first_line[0].strip()
+                with _version_lock:
+                    _version_cache[resolved] = version
         except Exception as ve:
             logger.debug("Failed getting %s version: %s", name, ve)
 
@@ -82,6 +113,53 @@ def _check_binary(name: str, alias_cmd: str | None = None) -> dict[str, Any]:
             "message": f"Failed checking {name}: {e}",
             "spoken": f"{name} check failed.",
         }
+
+
+def _probe_ollama() -> dict[str, Any]:
+    ollama_url = _ollama_base()
+    try:
+        import json
+        import urllib.request
+        tags_url = f"{ollama_url}/api/tags"
+        req = urllib.request.Request(tags_url, headers={"User-Agent": "FlexiePreflight/2.0"})
+        models: list[str] = []
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            if resp.status == 200:
+                payload = json.loads(resp.read().decode("utf-8"))
+                for m in payload.get("models", []):
+                    name = m.get("name")
+                    if name:
+                        models.append(name)
+        return {
+            "ok": True,
+            "reachable": True,
+            "url": ollama_url,
+            "models": models,
+            "message": f"Ollama reachable at {ollama_url}. Models found: {len(models)}.",
+            "spoken": f"Ollama is online with {len(models)} models." if models else "Ollama is online but has no models pulled.",
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "reachable": False,
+            "url": ollama_url,
+            "models": [],
+            "message": f"Ollama unreachable: {e}",
+            "spoken": "Ollama local server is not running.",
+        }
+
+
+def _probe_internet() -> bool:
+    try:
+        from utils.helpers import is_online
+        return bool(is_online())
+    except Exception:
+        try:
+            s = socket.create_connection(("8.8.8.8", 53), timeout=2)
+            s.close()
+            return True
+        except Exception:
+            return False
 
 
 def run_preflight(workspace_root: str | None = None) -> dict[str, Any]:
@@ -122,9 +200,18 @@ def run_preflight(workspace_root: str | None = None) -> dict[str, Any]:
         }
         errors.append("Python check error")
 
+    # Slow probes (tool --version subprocesses, Ollama HTTP, connectivity) run
+    # in parallel; results are consumed in the original order below.
+    tool_specs = [("git", None), ("node", None), ("npm", "npm.cmd"), ("pip", "pip3"), ("docker", None)]
+    pool = ThreadPoolExecutor(max_workers=len(tool_specs) + 2, thread_name_prefix="flexie_preflight")
+    tool_futs = {n: pool.submit(_check_binary, n, a) for n, a in tool_specs}
+    ollama_fut = pool.submit(_probe_ollama)
+    net_fut = pool.submit(_probe_internet)
+    pool.shutdown(wait=False)
+
     # 2. CLI Toolchains
-    for tool_name, alias in [("git", None), ("node", None), ("npm", "npm.cmd"), ("pip", "pip3"), ("docker", None)]:
-        tool_res = _check_binary(tool_name, alias)
+    for tool_name, _alias in tool_specs:
+        tool_res = tool_futs[tool_name].result()
         checks[tool_name] = {
             "ok": tool_res["installed"],
             "installed": tool_res["installed"],
@@ -173,51 +260,12 @@ def run_preflight(workspace_root: str | None = None) -> dict[str, Any]:
         missing_tools.append("code")
 
     # 4. Ollama reachable & pulled models
-    try:
-        import json
-        import urllib.request
-        ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
-        tags_url = f"{ollama_url}/api/tags"
-        req = urllib.request.Request(tags_url, headers={"User-Agent": "FlexiePreflight/2.0"})
-        models: list[str] = []
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
-            if resp.status == 200:
-                payload = json.loads(resp.read().decode("utf-8"))
-                for m in payload.get("models", []):
-                    name = m.get("name")
-                    if name:
-                        models.append(name)
-        checks["ollama"] = {
-            "ok": True,
-            "reachable": True,
-            "url": ollama_url,
-            "models": models,
-            "message": f"Ollama reachable at {ollama_url}. Models found: {len(models)}.",
-            "spoken": f"Ollama is online with {len(models)} models." if models else "Ollama is online but has no models pulled.",
-        }
-    except Exception as e:
-        checks["ollama"] = {
-            "ok": False,
-            "reachable": False,
-            "url": os.environ.get("OLLAMA_URL", "http://localhost:11434"),
-            "models": [],
-            "message": f"Ollama unreachable: {e}",
-            "spoken": "Ollama local server is not running.",
-        }
+    checks["ollama"] = ollama_fut.result()
+    if not checks["ollama"]["ok"]:
         warnings.append("Ollama server unreachable")
 
     # 5. Internet connectivity
-    try:
-        from utils.helpers import is_online
-        online = is_online()
-    except Exception:
-        try:
-            s = socket.create_connection(("8.8.8.8", 53), timeout=2)
-            s.close()
-            online = True
-        except Exception:
-            online = False
-
+    online = net_fut.result()
     checks["internet"] = {
         "ok": online,
         "online": online,

@@ -1,9 +1,15 @@
+import contextvars
+import itertools
 import logging
 import queue
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
+
+# The trace the *publishing* code is working on. Events are dispatched on the bus worker
+# thread (which does not inherit context), so Event captures the id when it is created.
+current_trace_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("flexie_trace_id", default=None)
 
 
 class Event:
@@ -13,9 +19,10 @@ class Event:
         self.payload = payload or {}
         self.priority = priority  # Lower is higher priority (0 = urgent, 3 = trace)
         self.timestamp = time.time()
+        self.trace_id = self.payload.get("trace_id") or current_trace_id.get()
 
     def __lt__(self, other):
-        # Comparison for PriorityQueue
+        # Kept for callers that compare events; the bus itself orders (priority, sequence).
         return self.priority < other.priority
 
 class EventBus:
@@ -36,6 +43,7 @@ class EventBus:
         self.history_lock = threading.Lock()
         self.sub_lock = threading.Lock()
         self.queue = queue.PriorityQueue()
+        self._seq = itertools.count()  # FIFO tie-break for equal priorities
         self.stop_event = threading.Event()
 
         # Start async worker thread
@@ -63,14 +71,14 @@ class EventBus:
             self.event_history.append(event)
             if len(self.event_history) > 1000:  # Keep buffer reasonable
                 self.event_history.pop(0)
-        self.queue.put(event)
+        self.queue.put((event.priority, next(self._seq), event))
 
     def _worker(self):
         """Dedicated queue worker for dispatching events to subscribers."""
         while not self.stop_event.is_set():
             try:
                 # Priority get with short timeout
-                event = self.queue.get(timeout=0.1)
+                _prio, _seq, event = self.queue.get(timeout=0.1)
                 self._dispatch(event)
                 self.queue.task_done()
             except queue.Empty as _e:

@@ -23,12 +23,15 @@ translate convert calculate add check schedule book order buy pay export import 
 shutdown lock unlock sleep wake enable disable bookmark share post browse visit watch listen ask
 explain describe list count compare git commit push pull merge debug fix test refactor deploy
 research please also
+wipe nuke uninstall shred trash overwrite clear erase kill terminate reply forward wire donate
+tweet publish deploy withdraw transfer sign log reboot purge destroy drop truncate
+mail dm whatsapp
 """.split())
 
 # Sequencers that always start a new step when real text follows them.
 _ALWAYS_SPLIT = ("and then", "after that", "afterwards", "then", "finally")
 # "next" is only a sequencer when a command verb follows ("... next play jazz"), not in "next song".
-_VERB_GATED = ("and", "next")
+_VERB_GATED = ("and", "next", "also", "plus")
 
 IDIOMS = (
     "rock and roll", "salt and pepper", "black and white", "bread and butter", "pros and cons",
@@ -52,7 +55,7 @@ _QUOTE_RE = re.compile(
 _IDIOM_RE = re.compile("|".join(r"\b" + re.escape(p) + r"\b" for p in IDIOMS), re.I)
 _SEP_RE = re.compile(
     r"\s*(?:,|;)\s*(?:(?P<c1>and then|and|then|after that|finally)\s+)?"
-    r"|\s+(?P<c2>and then|after that|afterwards|then|finally|and|next)\s+",
+    r"|\s+(?P<c2>and then|after that|afterwards|then|finally|and|next|also|plus)\s+",
     re.I,
 )
 _WORD_RE = re.compile(r"[A-Za-z']+")

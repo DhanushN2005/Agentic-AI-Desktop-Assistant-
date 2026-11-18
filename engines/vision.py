@@ -1,14 +1,14 @@
 import datetime
 import logging
 import os
-import subprocess
 import time
 
-import pyautogui
-import pytesseract
-from PIL import Image
-
 from utils.config import Config
+from utils.lazy import LazyModule
+
+pyautogui = LazyModule("pyautogui")
+pytesseract = LazyModule("pytesseract")
+Image = LazyModule("PIL", "Image")
 
 
 class VisionEngine:
@@ -20,15 +20,19 @@ class VisionEngine:
         if not os.path.exists(self.capture_dir):
             os.makedirs(self.capture_dir, exist_ok=True)
 
-        # Set Tesseract binary path from config
+        self._ocr_checked = False
+
+    def _ensure_ocr(self) -> None:
+        """Locate/verify Tesseract on first OCR use (importing it and spawning it at startup was slow)."""
+        if self._ocr_checked:
+            return
+        self._ocr_checked = True
         if hasattr(Config, 'TESSERACT_PATH'):
             pytesseract.pytesseract.tesseract_cmd = Config.TESSERACT_PATH
-
-        # Verify Tesseract installation
         try:
             pytesseract.get_tesseract_version()
         except Exception as _e:
-            logging.debug("[engines/vision.py:29] Swallowed exception: %s: %s", type(_e).__name__, _e)
+            logging.debug("Tesseract check failed: %s: %s", type(_e).__name__, _e)
             print(f"[Vision Warning]: Tesseract-OCR not found at {Config.TESSERACT_PATH}. OCR features will be disabled.")
 
     def capture_screen(self, path: str = None) -> str:
@@ -96,32 +100,72 @@ class VisionEngine:
             if "ERROR" in path:
                 return "I couldn't capture the screen to read the text."
 
+            self._ensure_ocr()
             text = pytesseract.image_to_string(Image.open(path)).strip()
             return text if text else "I scanned the screen but couldn't detect any readable text."
         except Exception as e:
             logging.debug("[engines/vision.py:94] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"I ran into an issue while analyzing the screen: {str(e)}"
 
-    def launch_camera(self) -> str:
-        """Launches the built-in Windows Camera app."""
+    @staticmethod
+    def _active_window_title() -> str:
         try:
-            # start microsoft.windows.camera:
-            subprocess.Popen('start microsoft.windows.camera:', shell=True)
-            time.sleep(1.0)
-            # Press enter to capture photo
-            pyautogui.press('enter')
-            return "Opening camera and capturing photo."
+            import pygetwindow as gw
+            win = gw.getActiveWindow()
+            return (win.title or "") if win else ""
+        except Exception as _e:
+            logging.debug("active window probe failed: %s", _e)
+            return ""
+
+    def launch_camera(self, wait_seconds: float = 6.0) -> str:
+        """Launch the Windows Camera app (no shell). Enter is sent only once the
+        Camera window is really in the foreground; otherwise the photo is left to the user."""
+        try:
+            os.startfile("microsoft.windows.camera:")
         except Exception as e:
-            logging.debug("[engines/vision.py:106] Swallowed exception: %s: %s", type(e).__name__, e)
+            logging.debug("camera launch failed: %s: %s", type(e).__name__, e)
             return f"Failed to launch camera: {e}"
+        deadline = time.monotonic() + wait_seconds
+        while time.monotonic() < deadline:
+            if "camera" in self._active_window_title().lower():
+                time.sleep(0.5)  # let the preview initialise
+                if "camera" in self._active_window_title().lower():
+                    try:
+                        pyautogui.press('enter')
+                    except Exception as e:
+                        return f"Camera opened but I couldn't press capture: {e}"
+                    return "Opening camera and capturing photo."
+            time.sleep(0.25)
+        return "I opened the Camera app, but it didn't come to the front, so I didn't press anything. Tap capture yourself."
 
     def analyze_screen(self, brain_instance, prompt: str = "Describe what is on my screen right now.") -> str:
-        """Captures screen and gets an AI description."""
+        """Captures the screen and gets an AI description.
+
+        If no vision model can answer, falls back to reading the text on screen (OCR) and says so,
+        instead of guessing or searching the web.
+        """
         try:
             path = self.capture_screen()
             if "ERROR" in path:
                 return "I'm unable to see your screen right now due to a capture error."
-            return brain_instance.ask(prompt, img_path=path)
+            reply = brain_instance.ask(prompt, img_path=path)
+            from core.brain import VISION_UNAVAILABLE_MSG
+            if not reply or str(reply).startswith(VISION_UNAVAILABLE_MSG[:40]):
+                text = self._ocr_path(path)
+                if text:
+                    return ("My vision model isn't responding, so I can't describe the picture, "
+                            f"but this is the text I can read on your screen: {text[:600]}")
+                return VISION_UNAVAILABLE_MSG
+            return reply
         except Exception as e:
-            logging.debug("[engines/vision.py:116] Swallowed exception: %s: %s", type(e).__name__, e)
+            logging.debug("vision analysis error: %s: %s", type(e).__name__, e)
             return f"I encountered a vision analysis error: {str(e)}"
+
+    def _ocr_path(self, path: str) -> str:
+        """OCR text of an image file, or '' if OCR is unavailable."""
+        try:
+            self._ensure_ocr()
+            return " ".join(pytesseract.image_to_string(Image.open(path)).split())
+        except Exception as e:
+            logging.debug("OCR unavailable: %s: %s", type(e).__name__, e)
+            return ""

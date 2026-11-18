@@ -12,14 +12,15 @@ import json
 import logging
 import os
 import sys
+import threading
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT_DIR not in sys.path:
@@ -33,11 +34,41 @@ logger = logging.getLogger("Flexie.APIServer")
 security = HTTPBearer(auto_error=False)
 
 
+# Only the dashboard origin may receive the API token by default. Anything else
+# (dev servers, other localhost apps) must be listed explicitly in
+# FLEXIE_EXTRA_ORIGINS (comma-separated, e.g. "http://localhost:5173").
 _DEFAULT_ORIGINS = (
     "http://localhost:8766", "http://127.0.0.1:8766",
-    "http://localhost:5173", "http://127.0.0.1:5173",
-    "http://localhost:8000", "http://127.0.0.1:8000",
 )
+
+MAX_QUEUED_COMMANDS = 50
+MAX_SSE_CLIENTS = 8
+_sse_lock = threading.Lock()
+_sse_clients = 0
+_brain_lock = threading.Lock()
+_shared_brain: Any = None
+
+
+def _get_shared_brain() -> Any:
+    """Build the fallback Brain once (not per request)."""
+    global _shared_brain
+    with _brain_lock:
+        if _shared_brain is None:
+            from core.brain import Brain
+
+            _shared_brain = Brain()
+        return _shared_brain
+
+
+def _active_model() -> tuple[str, str]:
+    """(provider, model) for the status endpoint; handles 'auto' and unknown providers."""
+    provider = (Config.get_active_provider() or "auto").strip().lower()
+    if provider in ("", "auto"):
+        return "auto", ""
+    try:
+        return provider, Config.get_model(provider)
+    except Exception:
+        return provider, ""
 
 
 def _allowed_origins() -> set[str]:
@@ -48,11 +79,15 @@ def _allowed_origins() -> set[str]:
         ext_id = ext_id.strip()
         if ext_id and ext_id != "*":
             origins.add(f"chrome-extension://{ext_id}")
+    for origin in os.getenv("FLEXIE_EXTRA_ORIGINS", "").split(","):
+        origin = origin.strip().rstrip("/")
+        if origin.startswith(("http://", "https://")) and "*" not in origin:
+            origins.add(origin)
     return origins
 
 
 class CommandRequest(BaseModel):
-    command: str
+    command: str = Field(max_length=4000)
     params: dict[str, Any] | None = None
 
 
@@ -72,8 +107,8 @@ class MailReplyRequest(BaseModel):
 
 
 class MailSearchRequest(BaseModel):
-    query: str
-    count: int = 10
+    query: str = Field(max_length=1000)
+    count: int = Field(default=10, ge=1, le=50)
 
 
 class MailActionRequest(BaseModel):
@@ -87,30 +122,30 @@ class MailComposeRequest(BaseModel):
 
 
 class ApprovalRequestPayload(BaseModel):
-    request_id: str | None = None
+    request_id: str | None = Field(default=None, max_length=128)
     action: str = "confirm"  # "confirm" or "cancel"
 
 
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    role: str = Field(max_length=32)
+    content: str = Field(max_length=50000)
 
 
 class ChatCompletionRequest(BaseModel):
     model: str = "flexie"
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(max_length=100)
     stream: bool = False
     temperature: float = 0.3
     max_tokens: int | None = None
 
 
 class PageAssistRequest(BaseModel):
-    query: str
-    url: str | None = None
-    title: str | None = None
-    page_content: str | None = None
-    selected_text: str | None = None
-    action: str = "ask"  # "ask", "summarize", "explain_code", "extract"
+    query: str = Field(max_length=4000)
+    url: str | None = Field(default=None, max_length=2048)
+    title: str | None = Field(default=None, max_length=500)
+    page_content: str | None = Field(default=None, max_length=200000)
+    selected_text: str | None = Field(default=None, max_length=20000)
+    action: str = Field(default="ask", max_length=64)  # "ask", "summarize", "explain_code", "extract"
 
 
 def verify_token(credentials: HTTPAuthorizationCredentials | None = Security(security)) -> bool:
@@ -175,9 +210,7 @@ def create_app(orch: Any = None) -> FastAPI:
                 answer = f"Error consulting brain: {e}"
         else:
             try:
-                from core.brain import Brain
-                brain = Brain()
-                answer = brain.ask(prompt)
+                answer = _get_shared_brain().ask(prompt)
             except Exception:
                 answer = f"Page analysis completed: {payload.query}"
 
@@ -191,9 +224,7 @@ def create_app(orch: Any = None) -> FastAPI:
             if orch and getattr(orch, "brain", None):
                 answer = orch.brain.ask(prompt, max_tokens=payload.max_tokens)
             else:
-                from core.brain import Brain
-
-                answer = Brain().ask(prompt, max_tokens=payload.max_tokens)
+                answer = _get_shared_brain().ask(prompt, max_tokens=payload.max_tokens)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Inference failed: {exc}") from exc
 
@@ -232,15 +263,19 @@ def create_app(orch: Any = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="Command cannot be empty")
 
         if orch:
+            try:
+                depth = int(orch.cmd_queue.qsize())
+            except Exception:
+                depth = 0
+            if depth >= MAX_QUEUED_COMMANDS:
+                raise HTTPException(status_code=429, detail="Command queue is full; try again shortly")
             orch.cmd_queue.put(cmd)
             return {"status": "queued", "command": cmd}
 
         # Standalone mode: relay over authenticated UDP
         import socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        msg = udp_pack(cmd)
-        sock.sendto(msg.encode("utf-8"), ("127.0.0.1", Config.UDP_PORT_ASSISTANT))
-        sock.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(udp_pack(cmd).encode("utf-8"), ("127.0.0.1", Config.UDP_PORT_ASSISTANT))
         return {"status": "dispatched", "command": cmd}
 
     @app.get("/api/flexie/status", dependencies=[Depends(verify_token)])
@@ -249,8 +284,8 @@ def create_app(orch: Any = None) -> FastAPI:
         info: dict[str, Any] = {
             "mode": getattr(orch, "current_mode", "general") if orch else "unknown",
             "active": getattr(orch, "active", False) if orch else False,
-            "provider": Config.ACTIVE_PROVIDER,
-            "model": Config.get_model(),
+            "provider": _active_model()[0],
+            "model": _active_model()[1],
         }
         if orch and hasattr(orch, "job_manager") and orch.job_manager:
             info["job_status"] = orch.job_manager.get_status_summary()
@@ -258,7 +293,7 @@ def create_app(orch: Any = None) -> FastAPI:
 
     @app.get("/api/flexie/usage", dependencies=[Depends(verify_token)])
     @app.get("/api/jarvis/usage", dependencies=[Depends(verify_token)])
-    def usage(limit: int = 20):
+    def usage(limit: int = Query(20, ge=1, le=100)):
         """Token / cost / latency totals for LLM calls, plus the most recent commands."""
         from core.telemetry.usage import get_tracker
 
@@ -273,39 +308,40 @@ def create_app(orch: Any = None) -> FastAPI:
             return {"jobs": [j.to_dict() for j in jobs]}
         return {"jobs": []}
 
+    def _resolve(payload: ApprovalRequestPayload, approve: bool):
+        req_id = (payload.request_id or "").strip()
+        if not req_id:
+            # A missing id must never approve/reject "whatever is pending".
+            raise HTTPException(status_code=400, detail="request_id is required")
+        verb = "approved" if approve else "rejected"
+        if orch and hasattr(orch, "permission_system") and orch.permission_system:
+            ps = orch.permission_system
+            ok = ps.approve_request(req_id) if approve else ps.reject_request(req_id)
+            if not ok:
+                raise HTTPException(status_code=404, detail="No matching pending request")
+            ctrl = getattr(orch, "controller", None)
+            if ctrl and getattr(ctrl, "pending_confirmation", None):
+                # Hand off through the orchestrator queue so the confirmation runs on
+                # the worker thread, not on this request's threadpool thread.
+                orch.cmd_queue.put("confirm" if approve else "cancel")
+            return {"status": verb, "success": True}
+
+        # Relay over authenticated UDP
+        import socket
+        prefix = "CONFIRM" if approve else "REJECT"
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(udp_pack(f"{prefix}:{req_id}").encode("utf-8"), ("127.0.0.1", Config.UDP_PORT_ASSISTANT))
+        return {"status": verb, "success": True}
+
     @app.post("/api/flexie/approve", dependencies=[Depends(verify_token)])
     @app.post("/api/jarvis/approve", dependencies=[Depends(verify_token)])
     def approve_action(payload: ApprovalRequestPayload):
-        if orch and hasattr(orch, "permission_system") and orch.permission_system:
-            ok = orch.permission_system.approve_request(payload.request_id)
-            if hasattr(orch, "controller") and orch.controller and orch.controller.pending_confirmation:
-                orch.controller._handle_confirmation("confirm")
-            return {"status": "approved", "success": ok}
-
-        # Relay over UDP
-        import socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        action_msg = f"CONFIRM:{payload.request_id}" if payload.request_id else "CONFIRM"
-        sock.sendto(udp_pack(action_msg).encode("utf-8"), ("127.0.0.1", Config.UDP_PORT_ASSISTANT))
-        sock.close()
-        return {"status": "approved", "success": True}
+        return _resolve(payload, True)
 
     @app.post("/api/flexie/reject", dependencies=[Depends(verify_token)])
     @app.post("/api/jarvis/reject", dependencies=[Depends(verify_token)])
     def reject_action(payload: ApprovalRequestPayload):
-        if orch and hasattr(orch, "permission_system") and orch.permission_system:
-            ok = orch.permission_system.reject_request(payload.request_id)
-            if hasattr(orch, "controller") and orch.controller and orch.controller.pending_confirmation:
-                orch.controller._handle_confirmation("cancel")
-            return {"status": "rejected", "success": ok}
-
-        # Relay over UDP
-        import socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        action_msg = f"REJECT:{payload.request_id}" if payload.request_id else "REJECT"
-        sock.sendto(udp_pack(action_msg).encode("utf-8"), ("127.0.0.1", Config.UDP_PORT_ASSISTANT))
-        sock.close()
-        return {"status": "rejected", "success": True}
+        return _resolve(payload, False)
 
     # ── Mail endpoints ────────────────────────────────────────────────────
 
@@ -316,13 +352,13 @@ def create_app(orch: Any = None) -> FastAPI:
         return e
 
     @app.get("/api/flexie/mail/inbox", dependencies=[Depends(verify_token)])
-    def mail_inbox(count: int = 5):
+    def mail_inbox(count: int = Query(5, ge=1, le=50)):
         """List unread emails."""
         emails = _email(orch).get_unread_emails_detailed(count=count)
         return {"emails": emails}
 
     @app.get("/api/flexie/mail/all", dependencies=[Depends(verify_token)])
-    def mail_all(count: int = 10, folder: str = "INBOX"):
+    def mail_all(count: int = Query(10, ge=1, le=50), folder: str = Query("INBOX", max_length=200)):
         emails = _email(orch).get_all_emails(count=count, folder=folder)
         return {"emails": emails}
 
@@ -331,7 +367,7 @@ def create_app(orch: Any = None) -> FastAPI:
         return _email(orch).get_email_count()
 
     @app.get("/api/flexie/mail/sent", dependencies=[Depends(verify_token)])
-    def mail_sent(count: int = 5):
+    def mail_sent(count: int = Query(5, ge=1, le=50)):
         emails = _email(orch).get_sent_emails(count=count)
         return {"emails": emails}
 
@@ -344,9 +380,33 @@ def create_app(orch: Any = None) -> FastAPI:
         results = _email(orch).search_emails(payload.query, count=payload.count)
         return {"results": results, "query": payload.query}
 
+    # Mail that LEAVES the machine needs an explicit approval (POST /approve with the
+    # request id) -- a leaked API token alone must not be able to send mail.
+    mail_approval_wait_seconds = float(os.getenv("FLEXIE_MAIL_APPROVAL_WAIT", "60"))
+
+    def _require_mail_approval(action: str, description: str) -> None:
+        from core.permission_system import PermissionLevel
+
+        ps = getattr(orch, "permission_system", None)
+        if ps is None:
+            # Fail closed: with no approval flow nothing is sent.
+            raise HTTPException(status_code=503, detail="Approval system unavailable; mail not sent.")
+        if not ps.await_approval(action, description, PermissionLevel.USER_CONFIRMATION,
+                                 wait_seconds=mail_approval_wait_seconds):
+            raise HTTPException(status_code=403, detail="Not approved; mail not sent.")
+
     @app.post("/api/flexie/mail/send", dependencies=[Depends(verify_token)])
     def mail_send(payload: MailSendRequest):
         eng = _email(orch)
+        _require_mail_approval(
+            "mail.send",
+            f"send an email to {payload.to!r} with subject {payload.subject!r}: {payload.body[:200]!r}")
+        try:
+            return _mail_send_approved(eng, payload)
+        finally:
+            orch.permission_system.consume_approval()
+
+    def _mail_send_approved(eng, payload: MailSendRequest):
         if payload.html and payload.body_html:
             result = eng.send_email_html(payload.to, payload.subject, payload.body, payload.body_html)
         else:
@@ -362,7 +422,12 @@ def create_app(orch: Any = None) -> FastAPI:
             body = eng.ai_draft_reply(brain, target, payload.body)
         else:
             body = payload.body
-        result = eng.reply_email(payload.to, body, payload.subject)
+        _require_mail_approval(
+            "mail.reply", f"send a reply to {payload.to!r} (subject {payload.subject!r}): {str(body)[:200]!r}")
+        try:
+            result = eng.reply_email(payload.to, body, payload.subject)
+        finally:
+            orch.permission_system.consume_approval()
         return {"result": result}
 
     @app.post("/api/flexie/mail/compose-ai", dependencies=[Depends(verify_token)])
@@ -374,7 +439,7 @@ def create_app(orch: Any = None) -> FastAPI:
         return {"to": payload.to, **composed}
 
     @app.post("/api/flexie/mail/summarize", dependencies=[Depends(verify_token)])
-    def mail_summarize_inbox(count: int = 5):
+    def mail_summarize_inbox(count: int = Query(5, ge=1, le=50)):
         brain = getattr(orch, "brain", None)
         if not brain:
             raise HTTPException(status_code=503, detail="Brain not available.")
@@ -407,15 +472,28 @@ def create_app(orch: Any = None) -> FastAPI:
 
     @app.get("/api/flexie/events", dependencies=[Depends(verify_token)])
     @app.get("/api/jarvis/events", dependencies=[Depends(verify_token)])
-    async def event_stream() -> StreamingResponse:
+    async def event_stream(request: Request) -> StreamingResponse:
+        global _sse_clients
+        with _sse_lock:
+            if _sse_clients >= MAX_SSE_CLIENTS:
+                raise HTTPException(status_code=429, detail="Too many event streams")
+            _sse_clients += 1
+
         async def event_generator() -> AsyncGenerator[str, None]:
-            while True:
-                data = {
-                    "active": getattr(orch, "active", False) if orch else False,
-                    "mode": getattr(orch, "current_mode", "general") if orch else "unknown",
-                }
-                yield f"data: {json.dumps(data)}\n\n"
-                await asyncio.sleep(2.0)
+            global _sse_clients
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    data = {
+                        "active": getattr(orch, "active", False) if orch else False,
+                        "mode": getattr(orch, "current_mode", "general") if orch else "unknown",
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+                    await asyncio.sleep(2.0)
+            finally:
+                with _sse_lock:
+                    _sse_clients = max(0, _sse_clients - 1)
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -437,7 +515,15 @@ def start_api_server_background(host: str = "127.0.0.1", port: int = 8768, orch:
     app = create_app(orch)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
-    t = threading.Thread(target=server.run, daemon=True, name="flexie_api_server")
+    def _serve():
+        # uvicorn calls sys.exit(1) on a bind failure; inside a thread that vanishes
+        # silently. Surface it at ERROR level instead.
+        try:
+            server.run()
+        except BaseException as exc:  # noqa: BLE001 - includes SystemExit from uvicorn
+            logger.error("API server stopped on %s:%s: %s: %s", host, port, type(exc).__name__, exc)
+
+    t = threading.Thread(target=_serve, daemon=True, name="flexie_api_server")
     t.start()
     return t
 

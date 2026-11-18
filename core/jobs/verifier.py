@@ -393,12 +393,52 @@ def run_build_check(workspace_path: str, stack: str) -> tuple[bool, str]:
     return False, f"npm run build failed (exit {res.returncode}):\n{(res.stderr or res.stdout).strip()[:800]}"
 
 
+def check_static_project(workspace_path: str) -> list[str]:
+    """Real checks for a static site: every page-linked local script/stylesheet exists, is not a
+    stub, and no source file contains a model-failure message instead of code."""
+    import re as _re
+
+    from core.llm_failure import is_failure_text, substantive_code
+    problems: list[str] = []
+    html_path = os.path.join(workspace_path, "index.html")
+    try:
+        with open(html_path, encoding="utf-8", errors="replace") as f:
+            html = f.read()
+    except OSError as e:
+        return [f"index.html unreadable: {e}"]
+    refs = _re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html, _re.I)
+    refs += _re.findall(r"""<link[^>]+href=["']([^"']+\.css)["']""", html, _re.I)
+    for ref in refs:
+        if ref.startswith(("http://", "https://", "//", "data:")):
+            continue
+        path = os.path.join(workspace_path, ref.split("?", 1)[0].lstrip("/"))
+        if not os.path.isfile(path):
+            problems.append(f"{ref} is linked from index.html but missing")
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                body = f.read()
+        except OSError:
+            problems.append(f"{ref} is unreadable")
+            continue
+        if is_failure_text(body):
+            problems.append(f"{ref} contains an error message instead of code")
+        elif not substantive_code(body):
+            problems.append(f"{ref} is empty or a stub")
+    if not substantive_code(html, min_lines=3):
+        problems.append("index.html is only a stub")
+    return problems
+
+
 def run_tests(workspace_path: str, stack: str) -> tuple[bool, str]:
     """Execute automated unit/integration tests in the isolated project environment."""
     if stack in ("static", "static-web", "unknown"):
         index_html = os.path.join(workspace_path, "index.html")
         if os.path.exists(index_html) and os.path.getsize(index_html) > 0:
-            return True, "Static web project verified: index.html exists and is non-empty."
+            problems = check_static_project(workspace_path)
+            if problems:
+                return False, "Static web project has problems: " + "; ".join(problems[:5])
+            return True, "Static web project verified: index.html and its linked scripts/styles exist and contain real code."
         for sub in ("dist", "build", "public"):
             sub_html = os.path.join(workspace_path, sub, "index.html")
             if os.path.exists(sub_html):

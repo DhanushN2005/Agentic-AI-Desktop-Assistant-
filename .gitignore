@@ -36,7 +36,6 @@ workspace/MEMORY.md
 # Test & temp
 captures/
 temp_test_chroma/
-recovery/
 .sixth/
 extracted.json
 flexie_meeting_summary.md
@@ -72,3 +71,11 @@ node_modules/
 .flexie_backups/
 *.part
 .flexie_tmp_*
+
+# Runtime job state and backups (written by the job system at run time)
+workspace/.flexie_jobs/
+*.bak
+.flexie_ui_ports
+data/automation_jobs.json
+data/knowledge_index.json
+data/research/

@@ -3,6 +3,7 @@ import threading
 import time
 from datetime import datetime
 
+from core.memory_manager import scrub
 from utils.paths import data_file
 from utils.sql_like import like_contains
 from utils.sqlite_util import fast_connect
@@ -22,8 +23,9 @@ CAPABILITY_GROUPS = [
      "write, generate, debug and run code, explain repositories, auto-build apps, "
      "search your codebase, run safe terminal commands, and scaffold projects."),
     ("Vision & Screen",
-     "take screenshots, analyze or describe your screen, read text from screen (OCR), "
-     "debug an error visible on screen, and capture photos from your webcam."),
+     "take screenshots, analyze or describe your screen when a vision model is available (otherwise "
+     "I read the text on it with OCR), debug an error visible on screen, capture photos from your "
+     "webcam, download images from a web search or a page, and open vision mode, the hand-gesture orb."),
     ("Voice & Speech",
      "listen via mic and reply by voice, adjust speech rate/language, and run "
      "voice-controlled hands-free gestures from the web UI."),
@@ -52,6 +54,7 @@ LIMITATIONS = [
     "I need your microphone allowed to hear you and your camera allowed to see you.",
     "I cannot unlock your phone, password-protected files, or accounts that require 2-factor verification.",
     "I cannot read your mind — you must speak, type, or gesture a command.",
+    "I cannot describe a picture unless a vision model answers, and I cannot read the tab you are viewing in your own Chrome.",
     "I refuse destructive or unsafe actions: restricted words are filtered and power/shutdown commands require your authorization phrase.",
     "I am desktop-only: mobile apps, and cloud-hosted deployments are out of scope.",
 ]
@@ -93,7 +96,8 @@ SYSTEM_MAP = {
 # TTS-safe concise phrasing for each section (spoken aloud).
 _CAPABILITY_SPEECH = (
     "I control your system, apps, browser, YouTube and music; I write and run code, "
-    "analyze projects, and can see your screen and webcam. I handle email, reminders, "
+    "analyze projects, and can look at your screen when a vision model is available. I can download "
+    "images, open vision mode, and handle email, reminders, "
     "alarms, weather, news, notes and memory, plus 30-plus tools like calculators, "
     "QR codes, image generation, translation and dictionaries."
 )
@@ -167,6 +171,8 @@ class SelfAwareness:
                     learned_at REAL
                 )
             """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_session_log_ts ON session_log(timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_user_facts_learned ON user_facts(learned_at)")
             conn.commit()
             conn.close()
 
@@ -174,6 +180,7 @@ class SelfAwareness:
         """Log a command execution for self-awareness."""
         self._commands_processed += 1
         self._features_used[intent] = self._features_used.get(intent, 0) + 1
+        command, response = scrub(command), scrub(response or "")
         with self._lock:
             conn = fast_connect(self._db_path)
             conn.execute(
@@ -184,7 +191,8 @@ class SelfAwareness:
             conn.close()
 
     def learn_fact(self, fact: str, category: str = "general", confidence: float = 1.0):
-        """Learn a new fact about the user or world."""
+        """Learn a new fact about the user or world (secrets masked)."""
+        fact = scrub(fact)
         with self._lock:
             conn = fast_connect(self._db_path)
             try:
@@ -210,6 +218,36 @@ class SelfAwareness:
                 return cur.rowcount
             finally:
                 conn.close()
+
+    def forget_everywhere(self, text: str) -> dict[str, int]:
+        """Delete ``text`` from learned facts AND the session log. Returns counts per table."""
+        pat = like_contains(text)
+        with self._lock:
+            with fast_connect(self._db_path) as conn:
+                counts = {
+                    "user_facts": conn.execute(
+                        "DELETE FROM user_facts WHERE fact LIKE ? ESCAPE '!'", (pat,)).rowcount,
+                    "session_log": conn.execute(
+                        "DELETE FROM session_log WHERE command LIKE ? ESCAPE '!' "
+                        "OR response LIKE ? ESCAPE '!'", (pat, pat)).rowcount,
+                }
+        return {k: v for k, v in counts.items() if v and v > 0}
+
+    def prune(self, max_log: int = 5000, max_facts: int = 2000) -> dict[str, int]:
+        """Delete the oldest session-log rows / learned facts beyond the caps."""
+        with self._lock:
+            with fast_connect(self._db_path) as conn:
+                out = {
+                    "session_log": conn.execute(
+                        "DELETE FROM session_log WHERE id <= "
+                        "(SELECT id FROM session_log ORDER BY id DESC LIMIT 1 OFFSET ?)",
+                        (max(0, max_log),)).rowcount,
+                    "user_facts": conn.execute(
+                        "DELETE FROM user_facts WHERE id <= "
+                        "(SELECT id FROM user_facts ORDER BY id DESC LIMIT 1 OFFSET ?)",
+                        (max(0, max_facts),)).rowcount,
+                }
+        return {k: v for k, v in out.items() if v and v > 0}
 
     def recall_facts(self, category: str | None = None, limit: int = 10) -> list[str]:
         """Recall learned facts."""

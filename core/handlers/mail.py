@@ -70,6 +70,43 @@ def _extract_after(text: str, *keywords) -> str:
     return text.strip()
 
 
+def _spoken_address(addr: str) -> str:
+    return addr.replace("@", " at ").replace(".", " dot ")
+
+
+def _confirm_send(orch, action: str, to_addr: str, subject: str) -> bool:
+    """Read back recipient + subject and require an explicit voice confirmation (fails closed)."""
+    voice = getattr(orch, "voice", None)
+    if voice is None or not hasattr(voice, "confirm"):
+        orch.speak("I cannot confirm by voice right now, so I did not send anything.")
+        return False
+    ok = voice.confirm(f"{action} To {_spoken_address(to_addr)}, subject {subject or 'no subject'} - send it?")
+    if not ok:
+        orch.speak("Okay, I did not send it.")
+    return bool(ok)
+
+
+def _resolve_recipient(orch, eng, c: str) -> tuple[str, str]:
+    """Return (validated_address, spoken_name). Names go through an address book if one exists."""
+    from engines.email_engine import validate_address
+    m = re.search(r"[\w.+-]+@[\w.-]+\.\w+", c)
+    if m:
+        return validate_address(m.group(0)), ""
+    name_m = re.search(r"\bto\s+([A-Za-z][\w .'-]*?)(?:\s+(?:about|saying|with|subject|regarding|re:?)\b|\s*$)", c, re.I)
+    name = name_m.group(1).strip() if name_m else ""
+    if name:
+        for owner in (eng, orch):
+            lookup = getattr(owner, "lookup_contact", None)
+            if callable(lookup):
+                try:
+                    found = validate_address(lookup(name) or "")
+                except Exception:
+                    found = ""
+                if found:
+                    return found, name
+    return "", name
+
+
 def _speak_emails(orch, emails: list[dict]) -> None:
     if not emails:
         orch.speak("No emails found.")
@@ -172,46 +209,44 @@ def handle_mail_read(orch, c: str) -> bool:
 
 
 def handle_mail_send(orch, c: str) -> bool:
-    """Compose and send an email. Supports AI-composed body."""
+    """Compose and send an email. Always reads back recipient + subject and asks to confirm."""
     orch.send_to_ui("STATE", "PROCESSING")
     eng = _email(orch)
     brain = _brain(orch)
 
-    # Try to extract: 'send email to X about/saying Y'
-    to_match = re.search(r"\bto\s+([\w.+@\-]+@[\w.-]+\.\w+|[\w\s]+?)(?:\s+(?:about|saying|with|subject|regarding|re:)\s+|\s*$)", c, re.I)
-    to_addr = ""
-    if to_match:
-        raw_to = to_match.group(1).strip()
-        to_addr = raw_to if "@" in raw_to else ""
-
     topic_match = re.search(r"\b(?:about|saying|regarding|re:?)\s+(.+)", c, re.I)
     topic = topic_match.group(1).strip() if topic_match else ""
 
+    to_addr, name = _resolve_recipient(orch, eng, c)
     if not to_addr:
-        to_addr = _extract_email_address(c)
-
-    if not to_addr:
-        orch.speak("Please specify the recipient's email address, for example: send email to user@example.com about meeting reschedule.")
+        if name:
+            orch.speak(f"I don't have an email address for {name}. Please say the full address, "
+                       "for example: send email to user@example.com about the meeting.")
+        else:
+            orch.speak("Please specify a valid recipient email address, for example: "
+                       "send email to user@example.com about meeting reschedule.")
         return True
 
     if brain and topic:
         orch.speak(f"Composing an AI-drafted email to {to_addr} about: {topic}…")
         composed = eng.ai_compose(brain, to_addr, topic)
-        subject = composed.get("subject", f"Re: {topic}")
-        body    = composed.get("body", topic)
-        result  = eng.send_email(to=to_addr, subject=subject, body=body)
-        orch.speak(result)
-        orch.send_to_ui("MAIL_SENT", {"to": to_addr, "subject": subject, "body": body})
+        subject = composed.get("subject") or f"Re: {topic}"
+        body = composed.get("body", topic)
     elif topic:
-        result = eng.send_email(to=to_addr, subject=f"Re: {topic}", body=topic)
-        orch.speak(result)
+        subject, body = f"Re: {topic}", topic
     else:
-        # No topic — open webmail compose
+        # No topic — open webmail compose (nothing is sent)
         url = eng.get_webmail_compose_url(to=to_addr)
         orch.speak(f"Opening Gmail compose window for {to_addr}.")
         import webbrowser
         webbrowser.open(url)
+        return True
 
+    if not _confirm_send(orch, "Ready to send.", to_addr, subject):
+        return True
+    result = eng.send_email(to=to_addr, subject=subject, body=body)
+    orch.speak(result)
+    orch.send_to_ui("MAIL_SENT", {"to": to_addr, "subject": subject, "body": body})
     return True
 
 
@@ -238,8 +273,16 @@ def handle_mail_reply(orch, c: str) -> bool:
     else:
         body = instruction or "Thanks for your email."
 
-    result = eng.reply_email(to=_extract_email_address(target["from"]) or target["from"],
-                             body=body, subject=target.get("subject"))
+    from engines.email_engine import validate_address
+    reply_to = validate_address(_extract_email_address(target["from"]) or target["from"])
+    if not reply_to:
+        orch.speak("The sender's address looks unusual, so I did not reply.")
+        return True
+    subj = target.get("subject") or ""
+    subj = subj if subj.lower().startswith("re:") else f"Re: {subj}"
+    if not _confirm_send(orch, "Ready to reply.", reply_to, subj):
+        return True
+    result = eng.reply_email(to=reply_to, body=body, subject=target.get("subject"))
     orch.speak(result)
     orch.send_to_ui("MAIL_SENT", {"to": target["from"], "subject": f"Re: {target.get('subject','')}", "body": body})
     return True
@@ -250,7 +293,7 @@ def handle_mail_forward(orch, c: str) -> bool:
     orch.send_to_ui("STATE", "PROCESSING")
     eng = _email(orch)
 
-    to_addr = _extract_email_address(c)
+    to_addr, _name = _resolve_recipient(orch, eng, c)
     idx = _extract_number(c)
     target = eng.get_email_by_index(idx) if idx else (eng._last_inbox[0] if eng._last_inbox else None)
 
@@ -258,12 +301,14 @@ def handle_mail_forward(orch, c: str) -> bool:
         orch.speak("No email to forward. Check your inbox first.")
         return True
     if not to_addr:
-        orch.speak("Please specify the recipient's email address.")
+        orch.speak("Please specify a valid recipient email address.")
         return True
 
     note_match = re.search(r"\b(?:note|saying|with note|adding)\s+(.+)", c, re.I)
     note = note_match.group(1).strip() if note_match else ""
 
+    if not _confirm_send(orch, "Ready to forward.", to_addr, f"Fwd: {target.get('subject', '')}"):
+        return True
     result = eng.forward_email(target["id"], to_addr, note)
     orch.speak(result)
     return True

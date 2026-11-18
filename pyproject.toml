@@ -39,8 +39,8 @@ flexie = "main:main"
 
 [tool.setuptools.packages.find]
 include = ["adapters*", "agents*", "context*", "core*", "engines*", "evals*",
-           "interface*", "recovery*", "runtime*", "sandbox*", "sdd*", "skills*",
-           "supervisor*", "tools*", "utils*", "verification*", "vision*", "voice*"]
+           "interface*", "recovery*", "sandbox*", "sdd*", "skills*",
+           "tools*", "utils*", "verification*", "vision*", "voice*"]
 exclude = ["tests*", "workspace*"]
 
 [tool.pytest.ini_options]

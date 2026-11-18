@@ -1,16 +1,17 @@
 import re
 
+from utils.voice_parse import strip_wake
+
 
 def handle_facts(orch, c):
     """Handle random fact commands."""
     orch.send_to_ui("STATE", "PROCESSING")
-    cmd = c.lower().strip()
-    cmd = re.sub(r"^(flexi|flexie|hey flexie|ok flexie)\b", "", cmd).strip()
+    cmd = strip_wake(c).lower()
 
-    # Check for category
+    # Check for category (whole words only: 'spacecraft' is not 'space')
     category = None
     for cat in ["science", "history", "animal", "space", "technology", "food", "nature"]:
-        if cat in cmd:
+        if re.search(rf"\b{cat}s?\b", cmd):
             category = cat
             break
 

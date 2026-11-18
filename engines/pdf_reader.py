@@ -23,11 +23,17 @@ class PDFReaderEngine:
         return None
 
     @staticmethod
-    def _page_texts(reader, max_pages: int | None = None) -> list[tuple[int, str]]:
-        """Extract (page_number, text) pairs, tolerating individual unreadable pages."""
+    def _page_texts(reader, max_pages: int | None = None,
+                    max_chars: int | None = None) -> list[tuple[int, str]]:
+        """Extract (page_number, text) pairs, tolerating individual unreadable pages.
+        Stops extracting as soon as max_pages pages were visited or max_chars of
+        text were collected, so a 1000-page PDF is never fully parsed for a preview."""
         pages: list[tuple[int, str]] = []
+        collected = 0
         for i, page in enumerate(reader.pages):
             if max_pages is not None and i >= max_pages:
+                break
+            if max_chars is not None and collected >= max_chars:
                 break
             try:
                 text = page.extract_text() or ""
@@ -36,6 +42,7 @@ class PDFReaderEngine:
                 continue
             if text.strip():
                 pages.append((i + 1, text.strip()))
+                collected += len(text)
         return pages
 
     def read_pdf(self, filepath: str) -> str:
@@ -46,16 +53,17 @@ class PDFReaderEngine:
             return f"File not found: {filepath}"
         try:
             reader = PdfReader(filepath)
+            total_pages = len(reader.pages)
             text_parts = [
                 f"--- Page {number} ---\n{text}"
-                for number, text in self._page_texts(reader)
+                for number, text in self._page_texts(reader, max_chars=3000)
             ]
             if not text_parts:
                 return "PDF contains no readable text."
             full_text = "\n\n".join(text_parts)
             if len(full_text) > 3000:
                 full_text = full_text[:3000] + "\n... [truncated]"
-            return f"PDF content ({len(text_parts)} pages):\n{full_text}"
+            return f"PDF content (showing {len(text_parts)} of {total_pages} pages):\n{full_text}"
         except Exception as e:
             logging.warning("[engines/pdf_reader.py] failed to read %s: %s", filepath, e)
             return f"Error reading PDF: {e}"
@@ -76,7 +84,9 @@ class PDFReaderEngine:
             summary = ". ".join(s.strip() for s in sentences[:10] if s.strip())
             if len(summary) > 500:
                 summary = summary[:500] + "..."
-            return f"Summary of {os.path.basename(filepath)}: {summary}."
+            total = len(reader.pages)
+            scope = f" (first {min(max_pages, total)} of {total} pages)" if total > max_pages else f" ({total} pages)"
+            return f"Summary of {os.path.basename(filepath)}{scope}: {summary}."
         except Exception as e:
             logging.warning("[engines/pdf_reader.py] failed to summarize %s: %s", filepath, e)
             return f"Error summarizing PDF: {e}"

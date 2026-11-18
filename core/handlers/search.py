@@ -43,7 +43,7 @@ def handle_search(orch, c):
 
     # 2. Strip leading trigger words
     clean_query = re.sub(
-        r"^(?:(?:search on chrome for|search on chrome|search for|search|google|look up|go to|find)\s+)+",
+        r"^(?:(?:search on chrome for|search on chrome|search for|search|google|look up|go to|find|check out|check)\s+)+",
         "", clean_query
     ).strip()
 

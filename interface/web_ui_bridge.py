@@ -17,6 +17,8 @@ Usage:  python interface/web_ui_bridge.py
 """
 
 import asyncio
+import atexit
+import hmac
 import logging
 import os
 import secrets
@@ -47,7 +49,7 @@ except ImportError as _e:
 
 # ── Config ─────────────────────────────────────────────────────────────────
 ORCHESTRATOR_UDP_IN  = 9887   # bridge sends commands TO orchestrator here
-ORCHESTRATOR_UDP_OUT = 9886   # orchestrator sends STATE updates here
+ORCHESTRATOR_UDP_OUT = 9888   # orchestrator fans STATE updates out here (Qt UI keeps 9886)
 WS_PORT              = 8765   # WebSocket port the browser connects to
 HTTP_PORT            = 8766   # localhost HTTP port serving the auth'd UI page
 HTML_FILE = os.path.join(os.path.dirname(__file__), "web_ui.html")
@@ -57,6 +59,26 @@ TOKEN_PLACEHOLDER = "{{AUTH_TOKEN}}"
 connected_clients: set = set()   # only AUTHENTICATED clients live here
 _loop: asyncio.AbstractEventLoop = None
 AUTH_TOKEN: str = secrets.token_urlsafe(24)
+
+# DNS-rebinding / cross-site defences: the page and the socket are only ever
+# legitimately reached as localhost / 127.0.0.1 on our own ports.
+ALLOWED_HTTP_HOSTS = frozenset({f"localhost:{HTTP_PORT}", f"127.0.0.1:{HTTP_PORT}"})
+ALLOWED_WS_HOSTS = frozenset({f"localhost:{WS_PORT}", f"127.0.0.1:{WS_PORT}"})
+ALLOWED_ORIGINS = frozenset({f"http://localhost:{HTTP_PORT}", f"http://127.0.0.1:{HTTP_PORT}"})
+# Non-browser clients (no Origin header) must present the token in this header.
+WS_TOKEN_HEADER = "X-Flexie-Token"
+
+
+def _host_allowed(host: str | None) -> bool:
+    return (host or "").strip().lower() in ALLOWED_HTTP_HOSTS
+
+
+def _origin_allowed(origin: str | None, token_header: str | None = None) -> bool:
+    """Browser clients must come from the dashboard origin. A missing Origin is
+    accepted only from a non-browser client presenting the token in WS_TOKEN_HEADER."""
+    if origin:
+        return origin.strip().lower() in ALLOWED_ORIGINS
+    return bool(token_header) and hmac.compare_digest(token_header, AUTH_TOKEN)
 
 
 # ── HTTP server: serves the UI page with the token injected ────────────────
@@ -76,6 +98,9 @@ class _AuthedUIHandler(BaseHTTPRequestHandler):
     are ever sent, so cross-origin pages can fetch but cannot READ the body."""
 
     def do_GET(self):
+        if not _host_allowed(self.headers.get("Host")):
+            self.send_error(421, "Misdirected Request")
+            return
         if self.path not in ("/", "/index.html"):
             self.send_error(404)
             return
@@ -84,6 +109,9 @@ class _AuthedUIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         # Deliberately NO Access-Control-Allow-Origin header.
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(body)
 
@@ -99,20 +127,29 @@ def start_http_server():
 
 # ── UDP → WebSocket relay ────────────────────────────────────────────────────
 def udp_listener():
-    """Listen for state updates from the Orchestrator and forward to all WS clients."""
+    """Listen for state updates from the Orchestrator and forward to all WS clients.
+
+    Datagrams must carry the per-run token (utils.udp_auth) unless
+    FLEXIE_ALLOW_UNSIGNED_UI=1; one bad datagram never stops the loop.
+    """
+    from utils.udp_auth import decode_ui_datagram, register_ui_port, unregister_ui_port
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # No SO_REUSEADDR: on Windows it lets another process hijack the port.
     sock.bind(("127.0.0.1", ORCHESTRATOR_UDP_OUT))
+    register_ui_port(ORCHESTRATOR_UDP_OUT)
+    atexit.register(unregister_ui_port, ORCHESTRATOR_UDP_OUT)
     print(f"[Bridge] Listening for Orchestrator UDP on :{ORCHESTRATOR_UDP_OUT}")
 
     while True:
         try:
             data, _ = sock.recvfrom(65535)
-            msg = data.decode("utf-8")
+            msg = decode_ui_datagram(data)
+            if msg is None:
+                continue
             asyncio.run_coroutine_threadsafe(_broadcast(msg), _loop)
         except Exception as e:
-            logging.debug("[interface/web_ui_bridge.py:99] Swallowed exception: %s: %s", type(e).__name__, e)
-            print(f"[Bridge] UDP recv error: {e}")
+            logging.debug("[interface/web_ui_bridge.py:udp_listener] %s: %s", type(e).__name__, e)
 
 
 async def _broadcast(msg: str):
@@ -150,6 +187,17 @@ async def ws_handler(websocket):
     Until the client authenticates, NOTHING is relayed and nothing is
     broadcast to it — unauthenticated peers are invisible.
     """
+    req = getattr(websocket, "request", None)
+    headers = getattr(req, "headers", None) or getattr(websocket, "request_headers", None) or {}
+    if (headers.get("Host", "") or "").lower() not in ALLOWED_WS_HOSTS or not _origin_allowed(
+        headers.get("Origin"), headers.get(WS_TOKEN_HEADER)
+    ):
+        try:
+            await websocket.close(code=4003, reason="origin not allowed")
+        except Exception as _e:
+            logging.debug("[interface/web_ui_bridge.py:ws_handler] close failed: %s", _e)
+        return
+
     if not await _authenticate(websocket):
         try:
             await websocket.close(code=4001, reason="auth failed")
@@ -198,7 +246,9 @@ def _send_udp(msg: str) -> bool:
               "cannot authenticate, command NOT sent.")
         return False
     try:
-        payload = _udp_pack(msg)
+        # Re-read the token file each send so a stale env value inherited from an
+        # old main.py run cannot get every dashboard command rejected.
+        payload = _udp_pack(msg, prefer_file=True)
     except Exception as e:
         print(f"[Bridge] ERROR: cannot sign command ({type(e).__name__}: {e}) — command NOT sent.")
         return False

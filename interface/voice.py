@@ -1,7 +1,9 @@
+import enum
 import logging
 import os
 import queue
 import re
+import socket
 import tempfile
 import threading
 import time
@@ -10,6 +12,58 @@ import speech_recognition as sr
 
 from utils.config import Config
 from utils.helpers import is_online
+
+try:  # audioop is C-speed; it was removed from the stdlib in Python 3.13
+    import audioop as _audioop
+except ImportError:  # pragma: no cover
+    _audioop = None
+
+
+class SpeakResult(enum.IntEnum):
+    """Outcome of one TTS attempt. FAILED is falsy; INTERRUPTED must NOT trigger a fallback."""
+    FAILED = 0
+    SPOKEN = 1
+    INTERRUPTED = 2
+
+
+SAPI_TEXT_ENV = "FLEXIE_TTS_TEXT"
+
+
+def build_sapi_command(rate, volume) -> list:
+    """argv for the PowerShell SAPI fallback.
+
+    The spoken text is NEVER part of the command line: the script reads it from
+    the ``FLEXIE_TTS_TEXT`` environment variable, so quotes (ASCII or curly),
+    ``;``, ``$()``, backticks and newlines cannot alter what PowerShell executes.
+    Rate/volume are coerced to bounded ints for the same reason.
+    """
+    try:
+        rate_i = max(-10, min(10, int(rate)))
+    except (TypeError, ValueError):
+        rate_i = 0
+    try:
+        vol_i = max(0, min(100, int(volume)))
+    except (TypeError, ValueError):
+        vol_i = 100
+    script = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        f"$synth.Rate = {rate_i}; "
+        f"$synth.Volume = {vol_i}; "
+        f"$synth.Speak($env:{SAPI_TEXT_ENV})"
+    )
+    return ["powershell", "-NoProfile", "-Command", script]
+
+
+def _frame_rms_peak(raw_chunk: bytes, count: int):
+    """Raw int16 RMS and peak of one frame (audioop when available)."""
+    if _audioop is not None:
+        return float(_audioop.rms(raw_chunk, 2)), int(_audioop.max(raw_chunk, 2))
+    import math
+    import struct
+    shorts = struct.unpack(f"{count}h", raw_chunk)
+    rms = math.sqrt(sum(float(x) * float(x) for x in shorts) / count)
+    return rms, max(max(shorts), -min(shorts))
 
 # ---------------------------------------------------------------------------
 # Speech text preparation — turns LLM/UI text into natural spoken prose.
@@ -80,11 +134,24 @@ VAD_MIC_SAMPLE_RATE = 16000     # preferred rate: Google ASR + webrtcvad optimum
 
 
 class VoiceInterface:
+    # Class-level defaults so partially-constructed instances (tests) stay safe.
+    interrupt_speech = False
+    _gen = 0                 # bumped by stop(); queued items carry the generation they were queued in
+    _playing_gen = 0
+    _buffer_lock = threading.Lock()
+    _asr_inflight = False
+    _last_partial_sent = ""
+    _udp_sock = None
+    _udp_lock = threading.Lock()
+    _ui_ports_cache = ([9886], 0.0)
+    _mic_ready = None
+
     def __init__(self):
         self.recognizer = sr.Recognizer()
         self.recognizer.energy_threshold = 150 # Lowered from 300 - fixes quiet voice not detected
         self.recognizer.pause_threshold = 0.45 # Ultra-fast endpoint detection
         self.recognizer.non_speaking_duration = 0.25
+        self.recognizer.operation_timeout = 8  # never let Google ASR hang the voice thread
         self.recognizer.dynamic_energy_threshold = False  # we manage noise_floor ourselves via _noise_floor_persist
 
         self.speech_queue = queue.Queue()
@@ -123,22 +190,12 @@ class VoiceInterface:
         self.engine_lock = threading.Lock()
         self._engine = None
 
-        # Report TTS configuration
-        try:
-            import pyttsx3
-            temp = pyttsx3.init()
-            sapi_voices = [v.name for v in temp.getProperty('voices')]
-            temp.stop()
-        except Exception as _e:
-            logging.debug("[interface/voice.py:52] Swallowed exception: %s: %s", type(_e).__name__, _e)
-            sapi_voices = []
+        # Report TTS configuration (no pyttsx3 voice enumeration: it cost seconds at startup)
         print("\n[Voice Setup]")
         if self.speech_mode == "neural":
             print(f" - TTS: Edge neural (natural) | voice: {self.EDGE_VOICE}")
         else:
             print(" - TTS: Windows SAPI (offline fallback)")
-        for i, v in enumerate(sapi_voices):
-            print(f" - SAPI Voice {i}: {v}")
 
         # Start speech thread
         self.speech_thread = threading.Thread(target=self._speech_worker, daemon=True)
@@ -148,6 +205,12 @@ class VoiceInterface:
         self._mic = None
         self._mic_context = None
         self._mic_sample_rate = None
+        # Mic open + 1.5 s ambient calibration run in the background so startup is
+        # not blocked; listen_adaptive() waits on _mic_ready before using the stream.
+        self._mic_ready = threading.Event()
+        threading.Thread(target=self._init_mic_background, daemon=True, name="flexie_mic_init").start()
+
+    def _init_mic_background(self):
         try:
             logging.info("Voice: Initializing persistent microphone stream...")
             self._mic, self._mic_sample_rate = self._open_mic_stream()
@@ -157,6 +220,12 @@ class VoiceInterface:
             logging.info(f"Voice: Calibration complete. Dynamic threshold baseline set to {self.recognizer.energy_threshold:.1f} (raw RMS)")
         except Exception as ce:
             logging.error(f"Voice: Persistent mic initialization/calibration failed: {ce}")
+        finally:
+            self._mic_ready.set()
+
+    def _interrupted(self) -> bool:
+        """True when stop() was called after the current utterance began."""
+        return self.interrupt_speech or self._gen != self._playing_gen
 
     # ------------------------------------------------------------------
     # TTS engines
@@ -167,21 +236,22 @@ class VoiceInterface:
     #   FLEXIE_TTS_MODE — "neural" (default) | "sapi" (offline robotic fallback)
     EDGE_VOICE = os.getenv("FLEXIE_VOICE", "en-GB-RyanNeural")
 
-    def _speak_neural(self, text: str) -> bool:
+    def _speak_neural(self, text: str) -> SpeakResult:
         """Speak via Edge neural TTS (natural, Jarvis-grade).
 
         Streams audio chunks from edge-tts into an in-memory buffer and plays
         the first chunk as soon as it arrives, cutting perceived latency by
         ~400 ms vs the old save-full-mp3-then-play approach.
-        Returns False so caller can fall back to SAPI on failure.
+        Returns SPOKEN / INTERRUPTED (user stop: do NOT fall back) / FAILED (fall back to SAPI).
         """
         try:
             import edge_tts
             import pygame
         except Exception as e:
             logging.info(f"TTS [Neural]: unavailable ({e}); will use SAPI fallback")
-            return False
+            return SpeakResult.FAILED
 
+        self._playing_gen = self._gen
         fd, tmp_path = tempfile.mkstemp(prefix="flexie_tts_", suffix=".mp3")
         os.close(fd)
         try:
@@ -213,15 +283,15 @@ class VoiceInterface:
 
             self._active_music_channel = True
             while pygame.mixer.music.get_busy():
-                if self.interrupt_speech:
+                if self._interrupted():
                     logging.info("TTS [Neural]: interruption detected — stopping playback")
                     pygame.mixer.music.stop()
-                    self.interrupt_speech = False
-                    return False
+                    self._active_music_channel = False
+                    return SpeakResult.INTERRUPTED
                 time.sleep(0.02)
 
             self._active_music_channel = False
-            return True
+            return SpeakResult.SPOKEN
         except Exception as e:
             logging.warning(f"TTS [Neural]: synthesis/playback failed: {e}")
             self._active_music_channel = False
@@ -234,52 +304,47 @@ class VoiceInterface:
                 os.remove(tmp_path)
             except OSError as _e:
                 logging.debug("[interface/voice.py:235] Swallowed exception: %s: %s", type(_e).__name__, _e)
-        return False
+        return SpeakResult.FAILED
 
-    def _speak_sapi(self, text: str) -> bool:
+    def _speak_sapi(self, text: str) -> SpeakResult:
         """Offline SAPI fallback via PowerShell System.Speech (robotic but reliable)."""
         logging.info(f"TTS [SAPI]: Speaking: '{text}'")
+        self._playing_gen = self._gen
         try:
             import subprocess
-            clean_text = text.replace("'", "''")
-
-            cmd = (
-                "Add-Type -AssemblyName System.Speech; "
-                "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                f"$synth.Rate = {self.speech_rate}; "
-                f"$synth.Volume = {self.speech_volume}; "
-                f"$synth.Speak('{clean_text}')"
-            )
+            env = dict(os.environ)
+            # Text travels in the environment, never in the command line.
+            env[SAPI_TEXT_ENV] = text.replace("\x00", "")
 
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
             self._active_speech_proc = subprocess.Popen(
-                ["powershell", "-NoProfile", "-Command", cmd],
+                build_sapi_command(self.speech_rate, self.speech_volume),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 startupinfo=startupinfo,
+                env=env,
             )
 
             while self._active_speech_proc.poll() is None:
-                if self.interrupt_speech:
+                if self._interrupted():
                     logging.info("TTS [SAPI]: interruption detected. Terminating speech process.")
                     try:
                         self._active_speech_proc.terminate()
                         self._active_speech_proc.wait(timeout=1.0)
                     except Exception as _e:
                         logging.debug("[interface/voice.py:292] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                    self.interrupt_speech = False
                     self._active_speech_proc = None
-                    return False
+                    return SpeakResult.INTERRUPTED
                 time.sleep(0.02)
 
             self._active_speech_proc = None
-            return True
+            return SpeakResult.SPOKEN
         except Exception as e:
             logging.error(f"SAPI TTS Exception: {e}")
             self._active_speech_proc = None
-            return False
+            return SpeakResult.FAILED
 
     def _speech_worker(self):
 
@@ -289,55 +354,50 @@ class VoiceInterface:
 
         while not self.stop_speech:
             try:
-                # Reset interrupt flag before dequeueing
-                if self.interrupt_speech:
+                item = self.speech_queue.get(timeout=0.2)
+                try:
+                    gen, text = item if isinstance(item, tuple) else (self._gen, item)
+                    # Items queued before a stop() belong to an interrupted reply: drop them.
+                    if not text or gen != self._gen:
+                        continue
+                    self._playing_gen = gen
                     self.interrupt_speech = False
 
-                text = self.speech_queue.get(timeout=0.2)
-                if not text:
-                    continue
+                    print(f"\n[Voice Output]: {text}")
+                    logging.info(f"TTS Start: {text}")
 
-                # Check for interruption right after dequeueing
-                if self.interrupt_speech:
-                    self.interrupt_speech = False
+                    self.is_speaking = True
+                    self._speak_start_time = time.time()
+
+                    # Neural-first with automatic offline fallback ONLY on failure; a
+                    # user interruption must never replay the sentence in SAPI.
+                    result = SpeakResult.FAILED
+                    use_neural = (
+                        self.speech_mode == "neural"
+                        and not self._neural_disabled
+                        and is_online()
+                    )
+                    if use_neural:
+                        result = self._speak_neural(text)
+                        if result == SpeakResult.FAILED:
+                            self._neural_fail_count += 1
+                            if self._neural_fail_count >= 3:
+                                self._neural_disabled = True
+                                logging.warning(
+                                    "TTS [Neural]: disabled after 3 consecutive failures — using SAPI only"
+                                )
+                        elif result == SpeakResult.SPOKEN:
+                            self._neural_fail_count = 0
+                    if result == SpeakResult.FAILED and gen == self._gen:
+                        result = self._speak_sapi(text)
+                        if result == SpeakResult.FAILED:
+                            logging.warning("TTS: all engines failed for this utterance")
+
+                    self.is_speaking = False
+                    self._speak_end_time = time.time()
+                    logging.info("TTS End.")
+                finally:
                     self.speech_queue.task_done()
-                    continue
-
-                print(f"\n[Voice Output]: {text}")
-                logging.info(f"TTS Start: {text}")
-
-                self.is_speaking = True
-                self._speak_start_time = time.time()
-
-                # Neural-first with automatic offline fallback. The persistent
-                # VAD stream handles barge-in via the is_speaking flag.
-                spoke = False
-                use_neural = (
-                    self.speech_mode == "neural"
-                    and is_online()
-                    and not self._neural_disabled
-                )
-                if use_neural:
-                    spoke = self._speak_neural(text)
-                    if not spoke:
-                        self._neural_fail_count += 1
-                        if self._neural_fail_count >= 3:
-                            self._neural_disabled = True
-                            logging.warning(
-                                "TTS [Neural]: disabled after 3 consecutive failures — using SAPI only"
-                            )
-                    else:
-                        self._neural_fail_count = 0
-                if not spoke:
-                    spoke = self._speak_sapi(text)
-                if not spoke:
-                    logging.warning("TTS: all engines failed for this utterance")
-
-                self.is_speaking = False
-                self._speak_end_time = time.time()
-
-                self.speech_queue.task_done()
-                logging.info("TTS End.")
             except queue.Empty as _e:
                 logging.debug("[interface/voice.py:146] Swallowed exception: %s: %s", type(_e).__name__, _e)
                 continue
@@ -349,6 +409,7 @@ class VoiceInterface:
     def stop(self):
         """Clears the speech queue and interrupts active playback instantly."""
         logging.info("Voice: Interrupt requested. Clearing speech queue.")
+        self._gen += 1            # invalidates everything queued/playing before this call
         self.interrupt_speech = True
 
         # Kill active subprocess immediately to stop audio playback in real-time
@@ -378,10 +439,13 @@ class VoiceInterface:
         if not text:
             return
 
-        # Suppression filter for duplicate announcements within 4 seconds
+        # Suppress an identical announcement only while that same utterance is
+        # still queued/being spoken (a user repeating a command after it finished
+        # must be answered again).
         now = time.time()
-        if text == self.last_spoken_text and (now - self.last_spoken_time < 4.0):
-            logging.info("TTS [Repetition Suppressed]: identical text within 4s")
+        still_active = self.is_speaking or not self.speech_queue.empty()
+        if text == self.last_spoken_text and still_active and (now - self.last_spoken_time < 4.0):
+            logging.info("TTS [Repetition Suppressed]: identical text still being spoken")
             return
         self.last_spoken_text = text
         self.last_spoken_time = now
@@ -390,18 +454,21 @@ class VoiceInterface:
             self.stop()
 
         # Batch sentences: flush when the pending chunk reaches 2 sentences
-        # (or 200 chars), giving natural pacing with low latency.
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
-        for sentence in sentences:
-            self._speech_buffer = (self._speech_buffer + " " + sentence).strip() if self._speech_buffer else sentence
-            n_sentences = len(re.findall(r"[.!?]", self._speech_buffer))
-            if n_sentences >= 2 or len(self._speech_buffer) >= 200:
-                self.speech_queue.put(self._speech_buffer)
+        # (or 200 chars), giving natural pacing with low latency. Items carry the
+        # generation current AFTER any stop() above, so the new reply survives it.
+        sentences = [x.strip() for x in re.split(r'(?<=[.!?])\s+', text) if x.strip()]
+        with self._buffer_lock:
+            gen = self._gen
+            for sentence in sentences:
+                self._speech_buffer = (self._speech_buffer + " " + sentence).strip() if self._speech_buffer else sentence
+                n_sentences = len(re.findall(r"[.!?]", self._speech_buffer))
+                if n_sentences >= 2 or len(self._speech_buffer) >= 200:
+                    self.speech_queue.put((gen, self._speech_buffer))
+                    self._speech_buffer = ""
+            # Flush any remainder so nothing is ever silently withheld.
+            if self._speech_buffer:
+                self.speech_queue.put((gen, self._speech_buffer))
                 self._speech_buffer = ""
-        # Flush any remainder so nothing is ever silently withheld.
-        if self._speech_buffer:
-            self.speech_queue.put(self._speech_buffer)
-            self._speech_buffer = ""
 
     def _resolve_mic_device(self):
         """Optional mic selection via FLEXIE_MIC_DEVICE.
@@ -487,20 +554,40 @@ class VoiceInterface:
 
         return "normal"
 
+    def _ui_ports(self):
+        ports, ts = self._ui_ports_cache
+        now = time.monotonic()
+        if now - ts > 5.0:
+            try:
+                from utils.udp_auth import ui_ports
+                ports = ui_ports()
+            except Exception as _e:
+                logging.debug("[interface/voice.py] ui_ports failed: %s: %s", type(_e).__name__, _e)
+                ports = [Config.UDP_PORT_UI]
+            self._ui_ports_cache = (ports, now)
+        return ports
+
     def send_to_ui(self, tag: str, value: str):
-        """Helper to send updates to UI UDP socket."""
+        """Send a signed update to every registered UI port over ONE reused socket."""
         try:
-            import socket
-            udp_out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            msg = f"{tag}:{value}"
-            # Port 9886 is Config.UDP_PORT_UI
-            udp_out.sendto(msg.encode('utf-8'), ('127.0.0.1', 9886))
+            from utils.udp_auth import pack
+            payload = pack(f"{tag}:{value}").encode("utf-8")
+            with self._udp_lock:
+                if VoiceInterface._udp_sock is None:
+                    VoiceInterface._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                for port in self._ui_ports():
+                    VoiceInterface._udp_sock.sendto(payload, ("127.0.0.1", port))
         except Exception as _e:
-            logging.debug("[interface/voice.py:218] Swallowed exception: %s: %s", type(_e).__name__, _e)
+            logging.debug("[interface/voice.py:send_to_ui] %s: %s", type(_e).__name__, _e)
 
     def listen_adaptive(self, mode="normal", timeout=None) -> str:
         """Adaptive real-time listening featuring persistent mic streaming, RMS VAD, and echo-safe endpoints."""
         start_time = time.time()
+
+        # Startup mic init/calibration runs in the background: wait (bounded) for it.
+        ready = self._mic_ready
+        if ready is not None and not ready.is_set():
+            ready.wait(10.0)
 
         # Ensure lazy instantiation of persistent stream context if needed
         if not hasattr(self, '_mic') or self._mic is None:
@@ -529,9 +616,6 @@ class VoiceInterface:
             f"VAD [Listening]: Mode={mode.upper()}, SilenceTimeout={silence_timeout}s, "
             f"EnergyFloor={VAD_MIN_ENERGY:.0f} (raw RMS)"
         )
-
-        import math
-        import struct
 
         try:
             source = self._mic
@@ -632,14 +716,11 @@ class VoiceInterface:
                     if count == 0:
                         continue
 
-                    shorts = struct.unpack(f"{count}h", raw_chunk)
-                    # RAW int16 RMS (audioop.rms equivalent) — identical units to
+                    # RAW int16 RMS (audioop.rms) — identical units to
                     # recognizer.energy_threshold. Do NOT rescale: comparing a
                     # rescaled value against an unscaled threshold is what made
                     # every utterance look like silence.
-                    sum_squares = sum(float(s) * float(s) for s in shorts)
-                    rms = math.sqrt(sum_squares / count)
-                    peak = max(max(shorts), -min(shorts))
+                    rms, peak = _frame_rms_peak(raw_chunk, count)
                     if rms > max_rms_seen:
                         max_rms_seen = rms
                     if peak > max_peak_seen:
@@ -689,8 +770,10 @@ class VoiceInterface:
 
                         # Dynamic partial recognition in background thread to achieve streaming feel
                         buf_len = len(audio_buffer)
-                        if buf_len > (sample_rate * sample_width * 1.8) and (time.time() - last_partial_time > 1.5):
+                        if (buf_len > (sample_rate * sample_width * 1.8) and (time.time() - last_partial_time > 1.5)
+                                and not self._asr_inflight):
                             last_partial_time = time.time()
+                            self._asr_inflight = True
                             def run_partial_asr(buf_slice, rate=sample_rate, width=sample_width):
                                 try:
                                     partial_audio = sr.AudioData(buf_slice, rate, width)
@@ -698,11 +781,18 @@ class VoiceInterface:
                                         partial_text = self.recognizer.recognize_google(partial_audio, language=self.lang).lower().strip()
                                     if partial_text:
                                         logging.info(f"VAD [Partial ASR]: \"{partial_text}...\"")
+                                        self._last_partial_sent = partial_text
                                         self.send_to_ui("PARTIAL", partial_text + "...")
                                 except Exception as _e:
                                     logging.debug("[interface/voice.py] partial ASR failed: %s: %s", type(_e).__name__, _e)
-                            threading.Thread(target=run_partial_asr, args=(bytes(audio_buffer),), daemon=True).start()
-                        else:
+                                finally:
+                                    self._asr_inflight = False
+                            # Only the last ~5 s: partials need the tail, not the whole utterance.
+                            tail = bytes(audio_buffer[-int(sample_rate * sample_width * 5.0):])
+                            threading.Thread(target=run_partial_asr, args=(tail,), daemon=True).start()
+                        elif self._last_partial_sent != "Listening...":
+                            # Throttled: announce "Listening..." on state change only.
+                            self._last_partial_sent = "Listening..."
                             self.send_to_ui("PARTIAL", "Listening...")
                     else:
                         onset_run = 0
@@ -801,6 +891,7 @@ class VoiceInterface:
                 time.sleep(1.0 - (now - last_asr))
             self._last_asr_ts = time.time()
 
+            self.recognizer.operation_timeout = 8   # bound the Google call; lock is released by `with`
             if is_online():
                 try:
                     with self._asr_lock:
@@ -957,7 +1048,13 @@ class VoiceInterface:
     def confirm(self, question: str) -> bool:
         self.speak(question)
         time.sleep(0.2)
+        deadline = time.monotonic() + 60.0
+        worker = getattr(self, "speech_thread", None)
         while not self.speech_queue.empty() or self.is_speaking:
+            if time.monotonic() > deadline or (worker is not None and not worker.is_alive()):
+                logging.warning("Voice.confirm: speech worker stalled/died; not waiting any longer")
+                self.is_speaking = False
+                break
             time.sleep(0.1)
         ans = self.listen(timeout=6)
         if not ans:

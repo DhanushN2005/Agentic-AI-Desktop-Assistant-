@@ -21,13 +21,25 @@ class LoremEngine:
         "neque", "porro", "quisquam", "nihil", "impedit", "quo", "minus", "maxime",
         "placeat", "facere", "possimus", "omnis", "assumenda", "repellendus", "temporibus",
         "autem", "quibusdam", "officiis", "debitis", "harum", "necessitatibus", "saepe",
-        "eveniet", "voluptates", "repudiandae", "intenderit", " molestiae", "non", "recusandae",
+        "eveniet", "voluptates", "repudiandae", "intenderit", "molestiae", "non", "recusandae",
         "itaque", "earum", "rerum", "tenetur", "sapiente", "delectus", "reiciendis",
         "voluptatibus", "maiores", "alias", "consequatur", "perferendis", "doloribus",
         "asperiores", "commodi", "assumenda", "repellat"
     ]
 
+    MAX_COUNT = 1000
+
+    @classmethod
+    def _clamp(cls, n) -> int:
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return 1
+        return max(0, min(n, cls.MAX_COUNT))
+
     def generate(self, paragraphs: int = 3, sentences_per: int = 5) -> str:
+        paragraphs = self._clamp(paragraphs)
+        sentences_per = self._clamp(sentences_per)
         result = []
         for _ in range(paragraphs):
             para = self._generate_paragraph(sentences_per)
@@ -47,11 +59,16 @@ class LoremEngine:
         return " ".join(words) + "."
 
     def generate_words(self, count: int = 100) -> str:
+        count = self._clamp(count)
+        if count == 0:
+            return ""
         words = [random.choice(self.WORDS) for _ in range(count)]
         words[0] = words[0].capitalize()
         return " ".join(words) + "."
 
     def generate_list(self, items: int = 5, sentences_per: int = 2) -> str:
+        items = self._clamp(items)
+        sentences_per = self._clamp(sentences_per)
         result = []
         for i in range(items):
             para = self._generate_paragraph(sentences_per)

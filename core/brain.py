@@ -1,54 +1,83 @@
-import warnings
-
-# Suppress FutureWarning from google.generativeai before any google imports
-warnings.filterwarnings("ignore", category=FutureWarning)
 import json
 import logging
+import os
+import re
+import threading
 import time
 from collections import OrderedDict
 from urllib.request import Request, urlopen
 
-# google-genai (new SDK) is the only supported Gemini path.
-# Legacy google-generativeai was removed from requirements; kept as
-# best-effort fallback only if still installed.
-try:
-    from google import genai as genai_new
-    _USE_NEW_GENAI = True
-except ImportError as _e:
-    logging.debug("[core/brain.py:9] Swallowed exception: %s: %s", type(_e).__name__, _e)
-    genai_new = None
-    _USE_NEW_GENAI = False
-try:
-    import google.generativeai as genai_legacy
-except ImportError as _e:
-    logging.debug("[core/brain.py:14] Swallowed exception: %s: %s", type(_e).__name__, _e)
-    genai_legacy = None
-# Back-compat alias: code below prefers genai_new, falls back to genai_legacy.
-genai = genai_legacy
-try:
-    from groq import Groq
-except ImportError as e:
-    logging.debug("[core/brain.py:21] Swallowed exception: %s: %s", type(e).__name__, e)
-    print(f"[Groq Import Error]: {e} - Groq API will be disabled.")
-    Groq = None
-import requests
-from PIL import Image
-
-try:
-    from ddgs import DDGS
-except ImportError as _e:
-    logging.debug("[core/brain.py:29] Swallowed exception: %s: %s", type(_e).__name__, _e)
-    DDGS = None
-import re
-
-from core.persona import compose_system_prompt
+# NOTE: no Google SDK is imported here. google.genai costs ~6 s of import time, so it is loaded
+# on first *use* of Gemini (core.llm_providers.load_genai). The deprecated google.generativeai
+# path was removed. Heavy/optional modules (PIL, requests, groq, openai, anthropic) are also
+# imported only where they are used.
+from core.llm_providers import build_gemini_client, gemini_generate
+from core.persona import SELF_FACTS, compose_system_prompt
 from core.skills import build_catalog, discover_skills
+from core.telemetry.redact import redact_secrets
 from core.telemetry.usage import messages_text, track_llm
 from utils.config import Config
 from utils.helpers import is_online
 
+try:
+    from ddgs import DDGS
+except ImportError as _e:
+    logging.debug("[core/brain.py] ddgs not installed: %s", _e)
+    DDGS = None
+
+logger = logging.getLogger("Flexie.Brain")
+
+# Prompts whose answer changes by the minute are never served from the cache.
+_TIME_SENSITIVE = re.compile(
+    r"\b(time|date|weather|forecast|news|today|tonight|tomorrow|yesterday|now|latest|current|currently|score)\b",
+    re.IGNORECASE,
+)
+from core.llm_failure import FAILURE_MARKERS as _FAILURE_MARKERS  # noqa: E402
+
+_RATE_LIMIT_MARKERS = ("429", "rate limit", "too many requests")
+_NETWORK_MARKERS = ("broken pipe", "connection", "timeout", "timed out")
+
+
+VISION_UNAVAILABLE_MSG = (
+    "I couldn't get a vision model to look at the image right now, so I can't describe it. "
+    "Check your Gemini key and connection, or say 'read my screen' and I'll read the text on it instead."
+)
+
+
+class _Uncacheable(str):
+    """A reply that must never enter the response cache (failure text, search fallback, ...)."""
+
+
+def _is_failure_text(text) -> bool:
+    return isinstance(text, _Uncacheable) or (
+        isinstance(text, str) and any(m in text[:200] for m in _FAILURE_MARKERS)
+    )
+
+
+def _json_ok(text: str) -> bool:
+    """True when ``text`` contains a JSON object (the shape strict-JSON callers such as the router want)."""
+    match = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if match is None:
+        return False
+    try:
+        return isinstance(json.loads(match.group()), dict)
+    except (ValueError, TypeError):
+        return False
+
+
+def _wants_json(system_override) -> bool:
+    low = (system_override or "").lower()
+    return "valid json" in low or "only json" in low or "json only" in low
+
+
+def _safe(err) -> str:
+    return redact_secrets(err)
+
 
 class Brain:
+    _cache_lock = threading.Lock()   # the cache is touched from several threads
+    _gemini_lock = threading.Lock()
+
     def __init__(self):
         self.gemini_model = None
         self.gemini_chat = None
@@ -59,25 +88,28 @@ class Brain:
         self.deepseek_client = None
         self.anthropic_client = None
         self.mistral_client = None
-        self.system_prompt = compose_system_prompt(Config.SYSTEM_PROMPT_STANDARD)
+        self.system_prompt = compose_system_prompt(Config.SYSTEM_PROMPT_STANDARD) + "\n\n" + SELF_FACTS
         _skills = discover_skills()
         if _skills:
             self.system_prompt += "\n\n" + build_catalog(_skills)
-        # LRU cache for recent LLM responses (prompt + prompt key -> response)
+        # LRU + TTL cache for recent LLM responses: key -> (stored_at, text)
         self._cache = OrderedDict()
         self._cache_max = 64
+        self._cache_ttl = 45.0
         # Provider manager for fallback + dynamic provider list
         self.provider_manager = None
         try:
             from core.llm_providers import LLMProviderManager
             self.provider_manager = LLMProviderManager()
         except Exception as e:
-            logging.debug("[core/brain.py:51] Swallowed exception: %s: %s", type(e).__name__, e)
-            print(f"[ProviderManager Init Error]: {e}")
+            logging.debug("[core/brain.py] provider manager init failed: %s: %s", type(e).__name__, e)
+            logger.warning("[ProviderManager Init Error]: %s", _safe(e))
 
-        self._init_all_providers()
-
-        # --- PHASE 2: Context Intelligence ---
+        # Building the SDK clients imports openai/groq (~2 s). Do it off the startup path; the first
+        # model call waits for it (bounded) so behaviour is unchanged.
+        self._providers_ready = threading.Event()
+        self._providers_thread = threading.Thread(target=self._init_providers_bg, name="brain-providers", daemon=True)
+        self._providers_thread.start()
 
         # --- PHASE 2: Context Intelligence ---
         self.context_compiler = None
@@ -89,87 +121,146 @@ class Brain:
             self.context_compiler = ContextCompiler()
             self.vector_store = VectorStore()
         except Exception as e:
-            logging.debug("[core/brain.py:67] Swallowed exception: %s: %s", type(e).__name__, e)
-            print(f"[Context Engine Error]: {e} - Proceeding with raw context.")
+            logging.debug("[core/brain.py] context engine init failed: %s: %s", type(e).__name__, e)
+            logger.warning("[Context Engine Error]: %s - Proceeding with raw context.", _safe(e))
+
+    # ------------------------------------------------------------------ providers
+    def _init_providers_bg(self):
+        try:
+            self._init_all_providers()
+        finally:
+            self._providers_ready.set()
+
+    def _wait_providers(self):
+        ready = self.__dict__.get("_providers_ready")
+        if ready is not None and not ready.is_set() and threading.current_thread() is not self.__dict__.get("_providers_thread"):
+            ready.wait(30.0)
+
+    @staticmethod
+    def _request_timeout() -> float:
+        return float(getattr(Config, "LLM_REQUEST_TIMEOUT", 7.0) or 7.0)
 
     def _init_all_providers(self):
-        """Initialize all LLM clients from Config (supports hot-reload)."""
-        # Groq (model from Config.GROQ_MODEL) - Sep 2026: Groq decommissioned llama-* , current valid: openai/gpt-oss-20b
-        if Config.GROQ_API_KEY and Groq:
+        """Initialize all LLM clients from Config (supports hot-reload).
+
+        Every client is built with ``max_retries=0`` and an explicit timeout: the SDK's own
+        retries multiplied the per-request timeout (a failing provider cost ~22 s); falling
+        back to the next provider is the retry.
+        """
+        timeout = self._request_timeout()
+        self.groq_model = getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b')
+        self.groq_client = None
+        if Config.GROQ_API_KEY:
             try:
-                self.groq_client = Groq(api_key=Config.GROQ_API_KEY)
-                self.groq_model = getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b')
+                from groq import Groq
+                self.groq_client = Groq(api_key=Config.GROQ_API_KEY, max_retries=0, timeout=timeout)
             except Exception as e:
-                logging.debug("[core/brain.py:77] Swallowed exception: %s: %s", type(e).__name__, e)
-                print(f"[Groq Init Error]: {e}")
+                logging.debug("[core/brain.py] groq init failed: %s: %s", type(e).__name__, e)
+                logger.warning("[Groq Init Error]: %s - Groq API will be disabled.", _safe(e))
                 self.groq_client = None
-        else:
-            self.groq_client = None
-            self.groq_model = getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b')
-        # Gemini via new google-genai SDK (preferred). Legacy SDK only if still installed.
-        gemini_model_name = getattr(Config, 'GEMINI_MODEL', 'gemini-2.0-flash')
-        self.gemini_model_name = gemini_model_name
+        # Gemini: the SDK is imported and the client built lazily on first use (_get_gemini_client).
+        self.gemini_model_name = getattr(Config, 'GEMINI_MODEL', 'gemini-2.0-flash')
         self.gemini_new_client = None
         self.gemini_model = None
         self.gemini_chat = None
-        if Config.GEMINI_API_KEY:
-            if genai_new is not None:
-                try:
-                    self.gemini_new_client = genai_new.Client(api_key=Config.GEMINI_API_KEY)
-                except Exception as e:
-                    logging.debug("[core/brain.py:91] Swallowed exception: %s: %s", type(e).__name__, e)
-                    print(f"[Gemini Init Error]: {e}")
-                    self.gemini_new_client = None
-            if self.gemini_new_client is None and genai_legacy is not None:
-                try:
-                    genai_legacy.configure(api_key=Config.GEMINI_API_KEY)
-                    self.gemini_model = genai_legacy.GenerativeModel(gemini_model_name, system_instruction=self.system_prompt)
-                    self.gemini_chat = self.gemini_model.start_chat()
-                except Exception as e:
-                    logging.debug("[core/brain.py:91] Swallowed exception: %s: %s", type(e).__name__, e)
-                    print(f"[Gemini Init Error]: {e}")
-                    self.gemini_model = None
+        self._gemini_failed_key = None
+        self._gemini_enabled = bool(getattr(Config, "GEMINI_API_KEY", ""))
         # OpenAI + DeepSeek + Mistral (OpenAI-compatible)
+        self.openai_client = self.deepseek_client = self.mistral_client = None
         try:
             from openai import OpenAI
-            if Config.OPENAI_API_KEY:
-                try:
-                    self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
-                except Exception as _e:
-                    logging.debug("[core/brain.py:103] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                    self.openai_client = None
-            else:
-                self.openai_client = None
-            if Config.DEEPSEEK_API_KEY:
-                try:
-                    self.deepseek_client = OpenAI(api_key=Config.DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-                except Exception as _e:
-                    logging.debug("[core/brain.py:107] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                    self.deepseek_client = None
-            else:
-                self.deepseek_client = None
-            if Config.MISTRAL_API_KEY:
-                try:
-                    self.mistral_client = OpenAI(api_key=Config.MISTRAL_API_KEY, base_url="https://api.mistral.ai/v1")
-                except Exception as _e:
-                    logging.debug("[core/brain.py:111] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                    self.mistral_client = None
-            else:
-                self.mistral_client = None
         except ImportError as _e:
-            logging.debug("[core/brain.py:113] Swallowed exception: %s: %s", type(_e).__name__, _e)
-            self.openai_client = self.deepseek_client = self.mistral_client = None
+            logging.debug("[core/brain.py] openai not installed: %s", _e)
+            OpenAI = None
+        if OpenAI is not None:
+            for attr, key, base in (
+                ("openai_client", Config.OPENAI_API_KEY, None),
+                ("deepseek_client", Config.DEEPSEEK_API_KEY, "https://api.deepseek.com"),
+                ("mistral_client", Config.MISTRAL_API_KEY, "https://api.mistral.ai/v1"),
+            ):
+                if not key:
+                    continue
+                try:
+                    kw = {"api_key": key, "max_retries": 0, "timeout": timeout}
+                    if base:
+                        kw["base_url"] = base
+                    setattr(self, attr, OpenAI(**kw))
+                except Exception as _e:
+                    logging.debug("[core/brain.py] %s init failed: %s: %s", attr, type(_e).__name__, _e)
         # Anthropic
+        self.anthropic_client = None
         if Config.ANTHROPIC_API_KEY:
             try:
                 import anthropic
-                self.anthropic_client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+                self.anthropic_client = anthropic.Anthropic(
+                    api_key=Config.ANTHROPIC_API_KEY, max_retries=0, timeout=timeout)
             except Exception as e:
-                logging.debug("[core/brain.py:120] Swallowed exception: %s: %s", type(e).__name__, e)
-                print(f"[Anthropic Init Error]: {e}")
+                logging.debug("[core/brain.py] anthropic init failed: %s: %s", type(e).__name__, e)
+                logger.warning("[Anthropic Init Error]: %s", _safe(e))
                 self.anthropic_client = None
-        else:
-            self.anthropic_client = None
+
+    def _get_gemini_client(self):
+        """Build the google-genai client on first use (keeps ``import core.brain`` ~6 s faster)."""
+        client = getattr(self, "gemini_new_client", None)
+        if client is not None:
+            return client
+        key = getattr(Config, "GEMINI_API_KEY", "")
+        if not key or getattr(self, "_gemini_failed_key", None) == key:
+            return None
+        with self._gemini_lock:
+            if getattr(self, "gemini_new_client", None) is not None:
+                return self.gemini_new_client
+            try:
+                self.gemini_new_client = build_gemini_client(key, self._request_timeout())
+            except Exception as e:
+                logger.warning("[Gemini Init Error]: %s", _safe(e))
+                self.gemini_new_client = None
+            if self.gemini_new_client is None:
+                self._gemini_failed_key = key  # don't retry the import on every call
+            return self.gemini_new_client
+
+    def _circuit_allows(self, name: str) -> bool:
+        pm = getattr(self, "provider_manager", None)
+        try:
+            return pm.allow(name) if pm is not None else True
+        except Exception:
+            return True
+
+    def _report(self, name: str, ok: bool, error: str = "") -> None:
+        """Feed outcomes into the one shared circuit breaker (the provider manager's)."""
+        pm = getattr(self, "provider_manager", None)
+        if pm is None:
+            return
+        try:
+            pm.report(name, ok, error)
+        except Exception as _e:
+            logging.debug("[core/brain.py] circuit report failed: %s", _e)
+
+    def add_maintenance_task(self, fn, every_seconds: float = 3600.0) -> None:
+        """Register a cheap callable for the maintenance thread, run at most every ``every_seconds``."""
+        if not hasattr(self, "_maintenance_tasks"):
+            self._maintenance_tasks = []
+        self._maintenance_tasks.append([fn, float(every_seconds), 0.0])
+
+    def _run_maintenance_once(self, now: float | None = None) -> None:
+        """One maintenance tick: expired-memory cleanup, then any registered task that is due."""
+        import time as _time
+        now = _time.monotonic() if now is None else now
+        mm = getattr(self, "memory_manager", None)
+        if mm is not None:
+            try:
+                mm.cleanup_expired()
+            except Exception as _e:
+                logging.debug("[core/brain.py:maintenance] Swallowed exception: %s: %s", type(_e).__name__, _e)
+        for task in list(getattr(self, "_maintenance_tasks", [])):
+            fn, every, last = task
+            if last and now - last < every:
+                continue
+            task[2] = now or 1e-9
+            try:
+                fn()
+            except Exception as _e:
+                logging.debug("[core/brain.py:maintenance] task failed: %s: %s", type(_e).__name__, _e)
 
     def ensure_maintenance_thread(self, interval_seconds: int = 1800) -> bool:
         """Start the periodic memory-maintenance daemon (expired cleanup).
@@ -189,12 +280,7 @@ class Brain:
             while True:
                 try:
                     _time.sleep(interval_seconds)
-                    mm = getattr(self, "memory_manager", None)
-                    if mm is not None:
-                        try:
-                            mm.cleanup_expired()
-                        except Exception as _e:
-                            logging.debug("[core/brain.py:maintenance] Swallowed exception: %s: %s", type(_e).__name__, _e)
+                    self._run_maintenance_once()
                 except Exception as _e:
                     logging.debug("[core/brain.py:maintenance] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
@@ -207,21 +293,26 @@ class Brain:
         """Hot-reload all providers after API key change via UI (no restart needed)."""
         from utils.config import Config as C
         C.reload()
+        self._wait_providers()
         self._init_all_providers()
+        with self._cache_lock:
+            if getattr(self, "_cache", None) is not None:
+                self._cache.clear()
         # Also refresh provider_manager
         if self.provider_manager:
             try:
                 from core.llm_providers import LLMProviderManager
                 self.provider_manager = LLMProviderManager()
             except Exception as _e:
-                logging.debug("[core/brain.py:136] Swallowed exception: %s: %s", type(_e).__name__, _e)
-        print("[Brain] Providers reloaded from .env")
+                logging.debug("[core/brain.py] provider manager reload failed: %s", _e)
+        logger.info("[Brain] Providers reloaded from .env")
 
     def get_provider_status(self) -> dict:
         """Return status dict for UI badges."""
         from utils.config import Config as C
         return C.get_all_keys_masked()
 
+    # ------------------------------------------------------------------ messages
     @staticmethod
     def _normalize_history(history):
         if isinstance(history, str):
@@ -266,298 +357,453 @@ class Brain:
         )
 
     def _provider_for_client(self, client) -> str:
+        if client is not None and client is getattr(self, "groq_client", None):
+            return "groq"
         if client is not None and client is getattr(self, "deepseek_client", None):
             return "deepseek"
         if client is not None and client is getattr(self, "mistral_client", None):
             return "mistral"
         return "openai"
 
+    # ------------------------------------------------------------------ single-provider calls
     def _ask_openai_compatible(self, client, model: str, prompt: str, sys_p: str, max_tokens: int | None = None, history=None) -> str | None:
+        """One OpenAI-style call (OpenAI, DeepSeek, Mistral, Groq). None on error or empty reply."""
         if not client:
             return None
+        label = self._provider_for_client(client)
         try:
-            kwargs = dict(model=model, messages=self._build_messages(sys_p, prompt, history), timeout=Config.LLM_REQUEST_TIMEOUT)
+            kwargs = dict(model=model, messages=self._build_messages(sys_p, prompt, history), timeout=self._request_timeout())
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
-            with track_llm(self._provider_for_client(client), model, messages=kwargs["messages"]) as call:
+            with track_llm(label, model, messages=kwargs["messages"]) as call:
                 resp = client.chat.completions.create(**kwargs)
                 text = resp.choices[0].message.content
+                if not text or not text.strip():
+                    # e.g. Groq reasoning tokens consumed max_tokens: an empty reply is a failure
+                    call.fail("EmptyResponse")
+                    return None
                 call.done(text, getattr(resp, "usage", None))
             return text
         except Exception as e:
-            logging.debug("[core/brain.py:154] Swallowed exception: %s: %s", type(e).__name__, e)
-            print(f"[OpenAI-Compatible Error ({model})]: {e}")
+            logging.debug("[core/brain.py] %s call failed: %s: %s", label, type(e).__name__, e)
+            logger.warning("[%s Error (%s)]: %s", label, model, _safe(e))
             return None
 
-    def _ask_anthropic(self, prompt: str, sys_p: str, history=None) -> str | None:
+    def _ask_anthropic(self, prompt: str, sys_p: str, history=None, max_tokens: int | None = None) -> str | None:
         if not self.anthropic_client:
             return None
         try:
-            anthropic_model = getattr(Config, 'ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022')
+            anthropic_model = getattr(Config, 'ANTHROPIC_MODEL', 'claude-sonnet-4-20250514')
             a_messages = self._build_messages("", prompt, history)
             with track_llm("anthropic", anthropic_model, prompt_text=sys_p + "\n" + messages_text(a_messages)) as call:
                 resp = self.anthropic_client.messages.create(
-                    model=anthropic_model, max_tokens=2048, system=sys_p, messages=a_messages
+                    model=anthropic_model, max_tokens=max_tokens or 2048, system=sys_p, messages=a_messages,
+                    timeout=self._request_timeout(),
                 )
                 text = "".join([b.text for b in resp.content if hasattr(b, 'text')])
+                if not text.strip():
+                    call.fail("EmptyResponse")
+                    return None
                 call.done(text, getattr(resp, "usage", None))
             return text
         except Exception as e:
-            logging.debug("[core/brain.py:168] Swallowed exception: %s: %s", type(e).__name__, e)
-            print(f"[Anthropic Error]: {e}")
+            logging.debug("[core/brain.py] anthropic call failed: %s: %s", type(e).__name__, e)
+            logger.warning("[Anthropic Error]: %s", _safe(e))
             return None
 
-    def ask(self, prompt: str, img_path: str | None = None, system_override: str | None = None, use_chat: bool = False, use_rag: bool = True, max_tokens: int | None = None, history=None) -> str:
-        """Query the AI brain, with LRU caching and optional RAG. Includes rate-limit retry logic."""
-        key = (prompt, system_override or self.system_prompt, use_rag, max_tokens, self._history_key(history))
-        if key in self._cache:
-            return self._cache[key]
+    _GEMINI_FALLBACK_MODELS = ("gemini-flash-latest", "gemini-3.8-flash")
 
-        import time
-        max_attempts = 4
-        result = ""
-        for attempt in range(max_attempts):
+    def _ask_gemini(self, prompt: str, sys_p: str, max_tokens: int | None, history, img_path: str | None) -> str | None:
+        client = self._get_gemini_client()
+        if client is None:
+            return None
+        gname = getattr(self, "_gemini_working_model", None) or getattr(
+            Config, 'GEMINI_MODEL', getattr(self, 'gemini_model_name', 'gemini-flash-latest'))
+        history_text = self._history_as_text(history)
+        text_in = (f"Recent conversation:\n{history_text}\n\nUser: {prompt}"
+                   if history_text else prompt)
+        tried = []
+        candidates = [gname] + [m for m in self._GEMINI_FALLBACK_MODELS if m != gname]
+        for model in candidates:
+            tried.append(model)
             try:
-                result = self._ask_impl(prompt, img_path, system_override, use_chat, use_rag, max_tokens, history)
+                with track_llm("gemini", model, prompt_text=sys_p + "\n" + text_in) as call:
+                    # the system prompt is ALWAYS sent as the system instruction (even when it is the default)
+                    resp = gemini_generate(client, model, text_in, sys_p, max_tokens, None, img_path)
+                    text = getattr(resp, 'text', None) or ""
+                    if not text.strip():
+                        call.fail("EmptyResponse")
+                        return None
+                    call.done(text, getattr(resp, "usage_metadata", None))
+                self._gemini_working_model = model  # remember the model that works
+                return text
+            except Exception as e:
+                msg = str(e)
+                logging.debug("[core/brain.py] gemini call failed: %s: %s", type(e).__name__, e)
+                logger.warning("[Gemini Error (%s)]: %s - Falling back", model, _safe(e))
+                # A retired / unknown / overloaded model: try the next known-good model name. Anything else
+                # (quota, network, bad key) goes straight to the next provider.
+                if not ("NOT_FOUND" in msg or "no longer available" in msg or " 404" in msg
+                        or "UNAVAILABLE" in msg or " 503" in msg):
+                    return None
+        return None
+
+    def _provider_sig(self):
+        """What can change an answer besides the prompt: provider choice, engine and model names.
+        Part of the cache key so switching provider/model never replays another model's answer."""
+        names = ("GROQ_MODEL", "OPENAI_MODEL", "OLLAMA_MODEL", "DEEPSEEK_MODEL", "MISTRAL_MODEL",
+                 "GEMINI_MODEL", "ANTHROPIC_MODEL")
+        try:
+            active = self._active_provider()
+        except Exception:
+            active = "auto"
+        return (active, str(getattr(Config, "ENGINE", "auto")),
+                tuple(str(getattr(Config, n, "") or "") for n in names))
+
+    @staticmethod
+    def _img_sig(img_path):
+        try:
+            st = os.stat(img_path)
+            return (os.path.abspath(img_path), st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+
+    def _cache_key(self, prompt, img_path, system_override, use_chat, use_rag, max_tokens, history):
+        """None means "do not cache": time-sensitive prompts and unreadable images."""
+        if _TIME_SENSITIVE.search(str(prompt or "")):
+            return None
+        img = None
+        if img_path:
+            img = self._img_sig(img_path)
+            if img is None:
+                return None
+        return (prompt, system_override or self.system_prompt, use_rag, max_tokens,
+                self._history_key(history), img, bool(use_chat), self._provider_sig())
+
+    def _cache_get(self, key):
+        ttl = getattr(self, "_cache_ttl", 45.0)
+        with self._cache_lock:
+            item = self._cache.get(key)
+            if item is None:
+                return None
+            stored_at, text = item
+            if time.monotonic() - stored_at > ttl:
+                self._cache.pop(key, None)
+                return None
+            if hasattr(self._cache, "move_to_end"):
+                self._cache.move_to_end(key)
+            return text
+
+    def _cache_put(self, key, text):
+        limit = getattr(self, "_cache_max", 64)
+        with self._cache_lock:
+            self._cache[key] = (time.monotonic(), text)
+            while len(self._cache) > limit:
+                try:
+                    del self._cache[next(iter(self._cache))]
+                except (StopIteration, KeyError):
+                    break
+
+    # ------------------------------------------------------------------ ask
+    def ask(self, prompt: str, img_path: str | None = None, system_override: str | None = None, use_chat: bool = False, use_rag: bool = True, max_tokens: int | None = None, history=None, expect_json: bool = False, validate=None, skip_local: bool = False) -> str:
+        """Query the AI brain, with a short-lived LRU cache and optional RAG.
+
+        ``expect_json`` / ``validate`` make a provider's reply acceptable only if it parses (a callable
+        ``validate(text) -> bool``); an invalid or empty reply moves on to the next provider. A system
+        prompt that says "valid JSON" turns ``expect_json`` on automatically.
+
+        Failures (no provider answered, search fallback) are never cached; answers expire after
+        ``_cache_ttl`` seconds and time-sensitive prompts bypass the cache entirely.
+        """
+        self._wait_providers()
+        key = self._cache_key(prompt, img_path, system_override, use_chat, use_rag, max_tokens, history)
+        if key is not None:
+            hit = self._cache_get(key)
+            if hit is not None:
+                return hit
+
+        validator = validate or (_json_ok if (expect_json or _wants_json(system_override)) else None)
+        extra = {}
+        if validator is not None:
+            extra["validate"] = validator
+        if skip_local:
+            extra["skip_local"] = True
+
+        result = ""
+        for attempt in range(2):
+            try:
+                result = self._ask_impl(prompt, img_path, system_override, use_chat, use_rag, max_tokens, history, **extra)
                 break
             except Exception as e:
-                err_str = str(e).lower()
-                is_rate_limit = "429" in err_str or "rate limit" in err_str or "too many requests" in err_str
-                is_network_err = "broken pipe" in err_str or "connection" in err_str or "timeout" in err_str
-                if is_rate_limit or is_network_err:
-                    if attempt < max_attempts - 1:
-                        sleep_time = (attempt + 1) * 8 if is_rate_limit else 2
-                        logging.warning("API error (%s). Retrying AI request in %s seconds...", "rate limit" if is_rate_limit else "network error", sleep_time)
-                        time.sleep(sleep_time)
-                        continue
-                # If it's not a rate limit or network error, or we exceeded max attempts, raise it so the fallback mechanism triggers
-                raise e
+                err = str(e).lower()
+                rate_limited = any(m in err for m in _RATE_LIMIT_MARKERS)
+                transient = any(m in err for m in _NETWORK_MARKERS)
+                # fail fast: one very short retry for a transient network blip, never for rate limits
+                if attempt == 0 and transient and not rate_limited:
+                    time.sleep(0.25)
+                    continue
+                raise
 
-        # Never cache failures: an empty reply (offline, provider error) would otherwise be
-        # served for the same prompt forever, long after the connection came back.
-        if isinstance(result, str) and result.strip():
-            self._cache[key] = result
-            if len(self._cache) > self._cache_max:
-                self._cache.popitem(last=False)
+        if key is not None and isinstance(result, str) and result.strip() and not _is_failure_text(result):
+            self._cache_put(key, result)
         return result
 
-    def _ask_impl(self, prompt: str, img_path: str | None, system_override: str | None, use_chat: bool, use_rag: bool, max_tokens: int | None = None, history=None) -> str:
-        """Core ask logic (caching is handled by ask())."""
+    def _local_first_enabled(self, active: str) -> bool:
+        engine_pref = getattr(Config, "ENGINE", "auto")
+        local_enabled = engine_pref == "ollama" or (
+            engine_pref == "auto" and getattr(Config, "LOCAL_FIRST", True)
+        )
+        return bool(local_enabled and active in ("auto", "ollama"))
+
+    @staticmethod
+    def _active_provider() -> str:
+        return str(getattr(Config, 'ACTIVE_PROVIDER', 'auto') or 'auto').lower()
+
+    def _ask_impl(self, prompt: str, img_path: str | None, system_override: str | None, use_chat: bool, use_rag: bool, max_tokens: int | None = None, history=None, validate=None, skip_local: bool = False) -> str:
+        """Core ask logic (caching is handled by ask()).
+
+        Returns an ``_Uncacheable`` string for anything that is not a real model answer.
+        """
         sys_p = system_override or self.system_prompt
 
         if use_rag and self.context_compiler and self.vector_store and getattr(self.vector_store, "rag_available", True):
             try:
                 episodes = self.vector_store.search_episodes(prompt, limit=5)
                 historical_data = "\n".join([str(e) for e in episodes]) if episodes else ""
+                mm_entries: list = []
                 if hasattr(self, 'memory_manager') and self.memory_manager:
                     try:
-                        mm_hits = self.memory_manager.search(prompt, limit=5)
+                        from core.memory_manager import MemoryCategory
+                        mm_hits = self.memory_manager.search(
+                            prompt, limit=5, exclude_categories=[MemoryCategory.CONVERSATION])
                         if mm_hits:
-                            mm_text = "\n".join([f"{h.key}: {h.value}" for h in mm_hits])
-                            historical_data = f"{historical_data}\n{mm_text}" if historical_data else mm_text
+                            # Structured entries: the compiler drops CONVERSATION ones (MM-10).
+                            mm_entries = list(mm_hits)
                         # NOTE: expired-memory cleanup runs on the maintenance
                         # thread (see ensure_maintenance_thread), never here.
                     except Exception as _e:
-                        logging.debug("[core/brain.py:203] Swallowed exception: %s: %s", type(_e).__name__, _e)
-                sys_p = self.context_compiler.compile(sys_p, {"memory": historical_data})
+                        logging.debug("[core/brain.py] memory search failed: %s", _e)
+                sys_p = self.context_compiler.compile(
+                    sys_p, {"memory": historical_data, "memory_entries": mm_entries})
             except Exception as e:
-                logging.debug("[core/brain.py:206] Swallowed exception: %s: %s", type(e).__name__, e)
-                print(f"[Context Compilation Warning]: {e}")
+                logging.debug("[core/brain.py] context compilation failed: %s: %s", type(e).__name__, e)
+                logger.warning("[Context Compilation Warning]: %s", _safe(e))
+
+        invalid: list[str] = []  # first non-empty reply that failed validation (last-resort answer)
+
+        def accept(text) -> bool:
+            if not isinstance(text, str) or not text.strip():
+                return False  # empty / whitespace is never an answer
+            if validate is not None:
+                try:
+                    ok = bool(validate(text))
+                except Exception:
+                    ok = False
+                if not ok:
+                    if not invalid:
+                        invalid.append(text)
+                    return False
+            return True
+
+        active = self._active_provider()
 
         # Local-first: try Ollama before any cloud provider when enabled.
-        engine_pref = getattr(Config, "ENGINE", "auto")
-        local_enabled = engine_pref == "ollama" or (
-            engine_pref == "auto" and getattr(Config, "LOCAL_FIRST", True)
-        )
-        if (
-            local_enabled
-            and not img_path
-            and getattr(Config, "ACTIVE_PROVIDER", "auto") in ("auto", "ollama")
-        ):
-            local = self._ask_local_engine(prompt, sys_p, max_tokens, history)
-            if local:
+        if not skip_local and not img_path and self._local_first_enabled(active):
+            timeout = float(getattr(Config, "LOCAL_JSON_TIMEOUT", 6.0)) if validate is not None \
+                else float(getattr(Config, "LOCAL_LLM_TIMEOUT", 30.0))
+            local = self._ask_local_engine(prompt, sys_p, max_tokens, history, timeout=timeout)
+            if accept(local):
                 return local
 
         online = is_online()
+        tried: set[str] = set()
         if online:
-            active = getattr(Config, 'ACTIVE_PROVIDER', 'auto').lower() if hasattr(Config, 'ACTIVE_PROVIDER') else 'auto'
-            if active in ('auto','groq') and self.groq_client:
-                # Groq has a tight TPM ceiling (~8 000 tokens/min on free tier).
-                # Skip large prompts so we don't exhaust the budget on one call.
-                _groq_chars = len(prompt) + len(sys_p) + sum(len(str(m)) for m in (history or []))
-                if _groq_chars > 20000:
-                    print(f"[Groq] Skipping oversized prompt ({_groq_chars} chars) — trying next provider")
+            # (name, call) in fallback order, only for providers that have a client. Each call returns
+            # text or None and never raises.
+            def _oc(client, model):
+                return lambda: self._ask_openai_compatible(client, model, prompt, sys_p, max_tokens, history)
+
+            chain = []
+            groq_client = getattr(self, "groq_client", None)
+            if groq_client:
+                # Groq has a tight TPM ceiling (~8 000 tokens/min on free tier): skip huge prompts.
+                chars = len(prompt) + len(sys_p) + sum(len(str(m)) for m in (history or []))
+                if chars > 20000:
+                    logger.info("[Groq] Skipping oversized prompt (%d chars) - trying next provider", chars)
+                    tried.add("groq")
                 else:
-                    try:
-                        model = getattr(self, 'groq_model', getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b'))
-                        kwargs = dict(messages=self._build_messages(sys_p, prompt, history), model=model, timeout=Config.LLM_REQUEST_TIMEOUT)
-                        if max_tokens is not None:
-                            kwargs["max_tokens"] = max_tokens
-                        with track_llm("groq", model, messages=kwargs["messages"]) as call:
-                            chat_completion = self.groq_client.chat.completions.create(**kwargs)
-                            text = chat_completion.choices[0].message.content
-                            call.done(text, getattr(chat_completion, "usage", None))
-                        return text
-                    except Exception as e:
-                        err_str = str(e).lower()
-                        is_retryable = "429" in err_str or "rate limit" in err_str or "too many requests" in err_str or "broken pipe" in err_str or "connection" in err_str or "timeout" in err_str
-                        if active != 'auto' and is_retryable:
-                            raise e
-                        logging.debug("[core/brain.py:228] Swallowed exception: %s: %s", type(e).__name__, e)
-                        print(f"[Groq Error]: {e} - Falling back")
-                        if active == 'groq':
-                            is_tool_err = "tool choice" in err_str or "tool_use_failed" in err_str or "tool_use" in err_str
-                            if is_tool_err:
-                                r = self._ask_openai_compatible(self.openai_client, getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini'), prompt, sys_p, max_tokens, history)
-                                if r:
-                                    return r
-                                r = self._ask_openai_compatible(self.deepseek_client, getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat'), prompt, sys_p, max_tokens, history)
-                                if r:
-                                    return r
-                            return self._ddg_search(prompt) if online else ""
-            if active in ('auto','openai'):
-                r = self._ask_openai_compatible(self.openai_client, getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini'), prompt, sys_p, max_tokens, history)
-                if r:
-                    return r
-            if active in ('auto','deepseek'):
-                r = self._ask_openai_compatible(self.deepseek_client, getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat'), prompt, sys_p, max_tokens, history)
-                if r:
-                    return r
-            if active in ('auto','mistral'):
-                r = self._ask_openai_compatible(self.mistral_client, getattr(Config, 'MISTRAL_MODEL', 'mistral-small-latest'), prompt, sys_p, max_tokens, history)
-                if r:
-                    return r
-            if active in ('auto','gemini'):
-                gname = getattr(Config, 'GEMINI_MODEL', getattr(self, 'gemini_model_name', 'gemini-2.0-flash'))
-                if getattr(self, 'gemini_new_client', None) is not None:
-                    try:
-                        history_text = self._history_as_text(history)
-                        full_prompt = prompt
-                        if sys_p != self.system_prompt:
-                            full_prompt = f"{sys_p}\n\nUser: {prompt}"
-                        if history_text:
-                            full_prompt = f"Recent conversation:\n{history_text}\n\n{full_prompt}"
-                        with track_llm("gemini", gname, prompt_text=full_prompt) as call:
-                            if img_path:
-                                resp = self.gemini_new_client.models.generate_content(model=gname, contents=[full_prompt, Image.open(img_path)])
-                            else:
-                                resp = self.gemini_new_client.models.generate_content(model=gname, contents=full_prompt)
-                            call.done(getattr(resp, 'text', None) or "", getattr(resp, "usage_metadata", None))
-                        if getattr(resp, 'text', None):
-                            return resp.text
-                    except Exception as e:
-                        err_str = str(e).lower()
-                        is_retryable = "429" in err_str or "rate limit" in err_str or "too many requests" in err_str or "broken pipe" in err_str or "connection" in err_str or "timeout" in err_str
-                        if active != 'auto' and is_retryable:
-                            raise e
-                        logging.debug("[core/brain.py:246] Swallowed exception: %s: %s", type(e).__name__, e)
-                        print(f"[Gemini Error]: {e} - Falling back")
-                        if active == 'gemini':
-                            return self._ddg_search(prompt) if online else ""
-                if getattr(self, 'gemini_model', None) is not None and genai_legacy is not None:
-                    try:
-                        model = self.gemini_model
-                        if sys_p != self.system_prompt:
-                            model = genai_legacy.GenerativeModel(gname, system_instruction=sys_p)
-                        history_text = self._history_as_text(history)
-                        model_prompt = prompt
-                        if history_text:
-                            model_prompt = f"Recent conversation:\n{history_text}\n\nUser: {prompt}"
-                        with track_llm("gemini", gname, prompt_text=model_prompt) as call:
-                            if img_path:
-                                gresp = model.generate_content([model_prompt, Image.open(img_path)])
-                            elif use_chat and self.gemini_chat:
-                                gresp = self.gemini_chat.send_message(model_prompt)
-                            else:
-                                gresp = model.generate_content(model_prompt)
-                            call.done(gresp.text, getattr(gresp, "usage_metadata", None))
-                        return gresp.text
-                    except Exception as e:
-                        logging.debug("[core/brain.py:256] Swallowed exception: %s: %s", type(e).__name__, e)
-                        print(f"[Gemini Error]: {e} - Falling back")
-            if active in ('auto','anthropic'):
-                r = self._ask_anthropic(prompt, sys_p, history)
-                if r:
-                    return r
+                    main_model = getattr(self, 'groq_model', getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b'))
+                    chain.append(("groq", _oc(groq_client, main_model)))
+                    # Groq rate limits (and tool-call glitches) are per MODEL: try its sibling models
+                    # before giving up on the provider.
+                    for alt in getattr(Config, "GROQ_FALLBACK_MODELS", ()):
+                        if alt != main_model:
+                            chain.append(("groq", _oc(groq_client, alt)))
+            for pname, attr, cfg, default in (
+                ("openai", "openai_client", "OPENAI_MODEL", "gpt-4o-mini"),
+                ("deepseek", "deepseek_client", "DEEPSEEK_MODEL", "deepseek-chat"),
+                ("mistral", "mistral_client", "MISTRAL_MODEL", "mistral-small-latest"),
+            ):
+                client = getattr(self, attr, None)
+                if client:
+                    chain.append((pname, _oc(client, getattr(Config, cfg, default))))
+            if getattr(self, "_gemini_enabled", False) or getattr(self, "gemini_new_client", None) is not None:
+                chain.append(("gemini", lambda: self._ask_gemini(prompt, sys_p, max_tokens, history, img_path)))
+            if getattr(self, "anthropic_client", None):
+                chain.append(("anthropic", lambda: self._ask_anthropic(prompt, sys_p, history, max_tokens)))
+
+            if img_path:
+                # Text-only models never see the image and would invent a description: only
+                # providers that really receive it may answer.
+                tried.update(n for n, _ in chain if n != "gemini")
+                chain = [(n, c) for n, c in chain if n == "gemini"]
+
+            for name, call in chain:
+                if active not in ("auto", name) or not self._circuit_allows(name):
+                    continue
+                tried.add(name)
+                text = call()
+                self._report(name, bool(text and str(text).strip()), "" if text else "no result")
+                if accept(text):
+                    return text
+
             if self.provider_manager:
                 try:
-                    resp, pname = self.provider_manager.query(prompt, system_override=sys_p, img_path=img_path, history=history)
-                    if resp:
+                    resp, _pname = self.provider_manager.query(
+                        prompt, system_override=sys_p, img_path=img_path, history=history,
+                        max_tokens=max_tokens, exclude=tried, vision_required=bool(img_path))
+                    if accept(resp):
                         return resp
                 except Exception as _e:
-                    logging.debug("[core/brain.py:268] Swallowed exception: %s: %s", type(_e).__name__, _e)
-            # A specific active provider was requested but failed — skip the rest.
-            if active != 'auto':
-                return self._ddg_search(prompt) if online else ""
+                    logging.debug("[core/brain.py] provider manager failed: %s: %s", type(_e).__name__, _e)
+            if img_path:
+                # Never answer an image question with text-only guesses or a web search.
+                return _Uncacheable(VISION_UNAVAILABLE_MSG)
+            # A specific cloud provider was requested but failed: skip the local reasoning chain.
+            if active not in ('auto', 'ollama'):
+                return self._final_failure(prompt, online, validate, invalid)
 
-        # Local Ollama reasoning (deepseek-r1) — always preferred when available
+        if img_path:  # offline, or no cloud vision answered: the local text models cannot see images
+            return _Uncacheable(VISION_UNAVAILABLE_MSG)
+
+        # Local Ollama reasoning (deepseek-r1) - preferred when available
         try:
             ollama_reason = self._ollama_reasoning(prompt, sys_p, history)
-            if ollama_reason:
+            if accept(ollama_reason):
                 return ollama_reason
         except Exception as e:
-            logging.debug("[core/brain.py:307] Ollama reasoning swallowed: %s", e)
+            logging.debug("[core/brain.py] Ollama reasoning swallowed: %s", e)
         ollama_res = self._ask_ollama(prompt)
-        if ollama_res:
+        if accept(ollama_res):
             return ollama_res
+        return self._final_failure(prompt, online, validate, invalid)
+
+    def _final_failure(self, prompt: str, online: bool, validate, invalid: list[str]) -> str:
+        """Everything failed. The result is flagged uncacheable so the failure is never replayed."""
+        if invalid:
+            return _Uncacheable(invalid[0])  # a reply the validator disliked beats nothing; caller falls back
+        if validate is not None:
+            return _Uncacheable("")  # strict-format callers want "no answer", not search prose
         if online:
-            return self._ddg_search(prompt)
-        return "All AI providers are unavailable right now — online LLMs and local Ollama both failed. Check your internet connection or start Ollama if you'd like local processing."
+            return _Uncacheable(self._ddg_search(prompt))
+        return _Uncacheable("All AI providers are unavailable right now — online LLMs and local Ollama both failed. Check your internet connection or start Ollama if you'd like local processing.")
+
+    # ------------------------------------------------------------------ streaming
+    def _stream_chat(self, label: str, client, model: str, messages: list, max_tokens: int | None):
+        """Yield text deltas from an OpenAI-style streaming endpoint.
+
+        The telemetry timer starts BEFORE the request, and exact usage is requested
+        (``stream_options.include_usage``) where the SDK/server supports it.
+        """
+        kwargs = dict(model=model, messages=messages, stream=True, timeout=self._request_timeout())
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        streamed: list[str] = []
+        usage = None
+        with track_llm(label, model, messages=messages) as call:
+            try:
+                try:
+                    stream = client.chat.completions.create(stream_options={"include_usage": True}, **kwargs)
+                except TypeError:
+                    stream = client.chat.completions.create(**kwargs)
+                except Exception as e:
+                    if "stream_options" not in str(e).lower():
+                        raise
+                    stream = client.chat.completions.create(**kwargs)
+                for chunk in stream:
+                    usage = getattr(chunk, "usage", None) or getattr(getattr(chunk, "x_groq", None), "usage", None) or usage
+                    choices = getattr(chunk, "choices", None)
+                    if not choices:
+                        continue  # the final usage-only chunk has no choices
+                    delta_obj = getattr(choices[0], "delta", None)
+                    delta = getattr(delta_obj, "content", None) if delta_obj else None
+                    if delta:
+                        streamed.append(delta)
+                        yield delta
+            except GeneratorExit:  # consumer stopped early: record what was produced
+                call.done("".join(streamed), usage)
+                raise
+            if not streamed:
+                call.fail("EmptyStream")
+            else:
+                call.done("".join(streamed), usage)
 
     def ask_stream(self, prompt: str, system_override: str | None = None, use_rag: bool = False, max_tokens: int | None = None, history=None):
-        """Streaming version - yields text chunks as they arrive (Groq/OpenAI streaming, else fallback)."""
+        """Streaming version - yields text chunks as they arrive.
+
+        Local-first like ask(). Once the first chunk has been yielded the stream NEVER falls back to a
+        different provider (that would repeat the answer): it finishes or stops cleanly. If nothing was
+        yielded the non-streaming ask() chain runs.
+        """
+        self._wait_providers()
         sys_p = system_override or self.system_prompt
-        active = getattr(Config, 'ACTIVE_PROVIDER', 'auto').lower() if hasattr(Config, 'ACTIVE_PROVIDER') else 'auto'
+        active = self._active_provider()
+        messages = self._build_messages(sys_p, prompt, history)
+        local_model = getattr(Config, "OLLAMA_MODEL", None) or "llama3.2:3b"
+        sources: list[tuple[str, object]] = []
+        local_listed = False
+
+        def _local():
+            return self._ollama_chat_stream(local_model, messages)
+
+        if self._local_first_enabled(active) and self._ollama_available():
+            sources.append(("ollama", _local))
+            local_listed = True
         if is_online():
-            if active in ('auto','groq') and self.groq_client:
-                try:
-                    model = getattr(self, 'groq_model', getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b'))
-                    kwargs = dict(messages=self._build_messages(sys_p, prompt, history), model=model, stream=True, timeout=Config.LLM_REQUEST_TIMEOUT)
-                    if max_tokens is not None:
-                        kwargs["max_tokens"] = max_tokens
-                    stream = self.groq_client.chat.completions.create(**kwargs)
-                    streamed: list[str] = []
-                    for chunk in stream:
-                        delta = chunk.choices[0].delta.content
-                        if delta:
-                            streamed.append(delta)
-                            yield delta
-                    with track_llm("groq", model, messages=kwargs["messages"]) as call:
-                        call.done("".join(streamed))  # streaming returns no usage: estimated
-                    return
-                except Exception as e:
-                    logging.debug("[core/brain.py:299] Swallowed exception: %s: %s", type(e).__name__, e)
-                    print(f"[Groq Stream Error]: {e}")
-            if active in ('auto','openai') and self.openai_client:
-                try:
-                    model = getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini')
-                    kwargs = dict(messages=self._build_messages(sys_p, prompt, history), model=model, stream=True, timeout=Config.LLM_REQUEST_TIMEOUT)
-                    if max_tokens is not None:
-                        kwargs["max_tokens"] = max_tokens
-                    stream = self.openai_client.chat.completions.create(**kwargs)
-                    streamed: list[str] = []
-                    for chunk in stream:
-                        delta = chunk.choices[0].delta.content if chunk.choices[0].delta else None
-                        if delta:
-                            streamed.append(delta)
-                            yield delta
-                    with track_llm("openai", model, messages=kwargs["messages"]) as call:
-                        call.done("".join(streamed))  # streaming returns no usage: estimated
-                    return
-                except Exception as e:
-                    logging.debug("[core/brain.py:313] Swallowed exception: %s: %s", type(e).__name__, e)
-                    print(f"[OpenAI Stream Error]: {e}")
-        if self._ollama_available():
+            for name, client, model in (
+                ("groq", getattr(self, "groq_client", None), getattr(self, 'groq_model', getattr(Config, 'GROQ_MODEL', 'openai/gpt-oss-20b'))),
+                ("openai", getattr(self, "openai_client", None), getattr(Config, 'OPENAI_MODEL', 'gpt-4o-mini')),
+                ("deepseek", getattr(self, "deepseek_client", None), getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat')),
+                ("mistral", getattr(self, "mistral_client", None), getattr(Config, 'MISTRAL_MODEL', 'mistral-small-latest')),
+            ):
+                if client and active in ("auto", name) and self._circuit_allows(name):
+                    sources.append((name, lambda n=name, c=client, m=model: self._stream_chat(n, c, m, messages, max_tokens)))
+        if not local_listed and active in ("auto", "ollama") and self._ollama_available():
+            sources.append(("ollama", _local))
+            local_listed = True
+
+        yielded = False
+        for name, make in sources:
             try:
-                for chunk in self._ollama_chat_stream(
-                    "deepseek-r1",
-                    self._build_messages(sys_p, prompt, history),
-                ):
-                    yield chunk
-                return
+                for delta in make():
+                    yielded = True
+                    yield delta
             except Exception as e:
-                logging.debug("[core/brain.py:350] Ollama stream swallowed: %s", e)
-        yield self.ask(prompt, system_override=system_override, use_rag=use_rag, max_tokens=max_tokens, history=history)
+                logging.debug("[core/brain.py] %s stream failed: %s: %s", name, type(e).__name__, e)
+                logger.warning("[%s Stream Error]: %s", name, _safe(e))
+                if name != "ollama":
+                    self._report(name, False, str(e))
+                if yielded:
+                    return  # partial answer already delivered: stop cleanly, no duplicate fallback
+                continue
+            if yielded:
+                if name != "ollama":
+                    self._report(name, True)
+                return
+        # Nothing streamed: run the non-streaming chain (skip local if it was already tried).
+        reply = self.ask(prompt, system_override=system_override, use_rag=use_rag, max_tokens=max_tokens,
+                         history=history, skip_local=local_listed)
+        yield reply
 
     def react(self, prompt: str, tool_registry=None, max_steps: int = 5) -> str:
         """Run a ReAct agent loop — reason, act with tools, observe, reflect."""
@@ -569,24 +815,26 @@ class Brain:
             logging.debug("[core/brain.py:react] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"Agent error: {e}. Falling back to direct response."
 
-    def _ask_local_engine(self, prompt: str, sys_p: str, max_tokens: int | None, history=None) -> str | None:
-        """Ask the local Ollama engine through the inference registry."""
+    # ------------------------------------------------------------------ local (Ollama)
+    def _ask_local_engine(self, prompt: str, sys_p: str, max_tokens: int | None, history=None, timeout: float | None = None) -> str | None:
+        """Ask the local Ollama engine through the inference registry.
+
+        Messages are assembled exactly like the cloud path (history limit, role filtering, no
+        duplicate of the current prompt). An empty/whitespace answer is never returned.
+        """
         try:
             from core.inference import OllamaEngine
 
-            engine = OllamaEngine()
+            engine = OllamaEngine(timeout=timeout) if timeout else OllamaEngine()
             if not engine.available():
                 return None
-            messages = [{"role": "system", "content": sys_p}]
-            messages.extend(self._normalize_history(history))
-            messages.append({"role": "user", "content": prompt})
             result = engine.generate(
-                messages,
+                self._build_messages(sys_p, prompt, history),
                 model=getattr(Config, "OLLAMA_MODEL", None),
                 max_tokens=max_tokens or 2048,
             )
-            if result.text:
-                print(f"[Local] Answered with {result.model}")
+            if result.text and result.text.strip():
+                logger.info("[Local] Answered with %s", result.model)
                 return result.text
         except Exception as e:
             logging.debug("[core/brain.py:local] Swallowed exception: %s: %s", type(e).__name__, e)
@@ -597,90 +845,87 @@ class Brain:
         if not self._ollama_available():
             return None
         try:
+            import requests
             payload = {
                 "model": Config.OLLAMA_MODEL,
                 "prompt": f"{self.system_prompt}\n\nUser: {prompt}\n{Config.NAME}:",
                 "stream": False
             }
-            # Increased timeout for initial model loading
             response = requests.post(Config.OLLAMA_URL, json=payload, timeout=10)
             if response.status_code == 200:
-                return response.json().get("response", "").strip()
-            else:
-                err_msg = response.json().get("error", "Unknown Ollama Error")
-                print(f"[Ollama Error {response.status_code}]: {err_msg}")
+                text = response.json().get("response", "").strip()
+                return text or None
+            err_msg = response.json().get("error", "Unknown Ollama Error")
+            logger.warning("[Ollama Error %s]: %s", response.status_code, _safe(err_msg))
         except Exception as e:
-            logging.debug("[core/brain.py:332] Swallowed exception: %s: %s", type(e).__name__, e)
-            print(f"[Ollama Connection Error]: {e}")
+            logging.debug("[core/brain.py] ollama request failed: %s: %s", type(e).__name__, e)
+            logger.warning("[Ollama Connection Error]: %s", _safe(e))
         return None
 
     @staticmethod
     def _ollama_base() -> str:
-        """Derive the Ollama host (scheme://netloc) from Config.OLLAMA_URL.
-
-        Config.OLLAMA_URL defaults to 'http://localhost:11434/api/generate'
-        (the generate endpoint), while tags/chat use '/api/tags' and
-        '/api/chat'. Centralising here avoids hardcoded localhost drift.
-        """
+        """The Ollama host (scheme://netloc) derived from Config.OLLAMA_URL (shared helper)."""
         try:
-            from urllib.parse import urlparse
-            raw = getattr(Config, "OLLAMA_URL", "http://localhost:11434/api/generate") or "http://localhost:11434/api/generate"
-            parts = urlparse(raw)
-            if parts.scheme and parts.netloc:
-                return f"{parts.scheme}://{parts.netloc}"
+            from core.inference.ollama import ollama_base_url
+            return ollama_base_url()
         except Exception as _e:
             logging.debug("[core/brain.py:ollama_base] Swallowed exception: %s: %s", type(_e).__name__, _e)
         return "http://localhost:11434"
 
     def _ollama_available(self) -> bool:
-        """Check if a local Ollama server is running (cached with 60s TTL)."""
-        now = time.time()
-        cached = getattr(self, "_ollama_avail_cache", None)
-        if cached and (now - cached[0] < 60):
-            return cached[1]
+        """Is a local Ollama server running? Uses the ONE shared health cache (30 s TTL)."""
         try:
-            req = Request(f"{self._ollama_base()}/api/tags")
-            with urlopen(req, timeout=0.8) as r:
-                status = (r.status == 200)
-                self._ollama_avail_cache = (now, status)
-                return status
+            from core.inference.ollama import ollama_available
+            return ollama_available(self._ollama_base(), opener=urlopen, timeout=0.8)
         except Exception:
-            self._ollama_avail_cache = (now, False)
             return False
 
     def _ollama_chat_stream(self, model: str, messages: list, temperature: float = 0.7):
-        """Stream tokens from a local Ollama chat endpoint."""
-        try:
-            payload = {"model": model, "messages": messages, "stream": True, "options": {"temperature": temperature}}
-            req = Request(f"{self._ollama_base()}/api/chat", data=json.dumps(payload).encode(),
-                          headers={"Content-Type": "application/json"})
-            streamed: list[str] = []
-            with urlopen(req, timeout=10) as resp:
-                for line in resp:
-                    line = line.decode().strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if obj.get("done"):
-                        with track_llm("ollama", model, messages=messages) as call:
-                            call.done("".join(streamed), obj)  # final chunk carries exact counts
-                        return
-                    content = obj.get("message", {}).get("content", "")
-                    if content:
-                        streamed.append(content)
-                        yield content
-        except Exception as e:
-            logging.debug("[core/brain.py:ollama_stream] Swallowed exception: %s: %s", type(e).__name__, e)
-            print(f"[Ollama Stream Error]: {e}")
+        """Stream tokens from a local Ollama chat endpoint.
+
+        Errors PROPAGATE (the caller decides whether a fallback is still safe); an empty stream is
+        recorded as a failure so the caller can fall back to the non-streaming path.
+        """
+        payload = {"model": model, "messages": messages, "stream": True, "options": {"temperature": temperature}}
+        req = Request(f"{self._ollama_base()}/api/chat", data=json.dumps(payload).encode(),
+                      headers={"Content-Type": "application/json"})
+        streamed: list[str] = []
+        with track_llm("ollama", model, messages=messages) as call:
+            try:
+                with urlopen(req, timeout=15) as resp:
+                    for line in resp:
+                        line = line.decode().strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if obj.get("error"):
+                            raise RuntimeError(str(obj["error"]))
+                        if obj.get("done"):
+                            if streamed:
+                                call.done("".join(streamed), obj)  # final chunk carries exact counts
+                            else:
+                                call.fail("EmptyStream")
+                            return
+                        content = (obj.get("message") or {}).get("content", "")
+                        if content:
+                            streamed.append(content)
+                            yield content
+            except GeneratorExit:
+                call.done("".join(streamed), None)
+                raise
+            if streamed:
+                call.done("".join(streamed), None)
+            else:
+                call.fail("EmptyStream")
 
     def _ollama_reasoning(self, prompt: str, system_prompt: str = None, history=None) -> str:
         """Use a local reasoning model (deepseek-r1) for plan/think steps."""
         if not self._ollama_available():
             return None
-        model = "deepseek-r1"
+        model = getattr(Config, "OLLAMA_REASONING_MODEL", "deepseek-r1")
         messages = self._build_messages(
             system_prompt or "You are a reasoning assistant. Think step by step before answering.",
             prompt,
@@ -695,13 +940,17 @@ class Brain:
             with track_llm("ollama", model, messages=messages) as call:
                 with urlopen(req, timeout=60) as resp:
                     obj = json.loads(resp.read().decode())
-                text = obj.get("message", {}).get("content", "")
+                text = (obj.get("message") or {}).get("content", "")
+                if not text or not text.strip():
+                    call.fail("EmptyResponse")
+                    return None
                 call.done(text, obj)  # Ollama returns exact prompt_eval_count / eval_count
             return text
         except Exception as e:
             logging.debug("[core/brain.py:ollama_reasoning] Swallowed exception: %s: %s", type(e).__name__, e)
             return None
 
+    # ------------------------------------------------------------------ fallbacks / helpers
     def _ddg_search(self, prompt: str) -> str:
         """Web-search fallback via ddgs, with timeout and friendly fallback."""
         if DDGS is None:
@@ -719,8 +968,8 @@ class Brain:
                         if len(body.strip()) > 5:
                             return f"Based on my web search, {body.strip()[:380]}..."
         except Exception as e:
-            logging.debug("[core/brain.py:349] Swallowed exception: %s: %s", type(e).__name__, e)
-            print(f"[Brain Error]: {e}")
+            logging.debug("[core/brain.py] ddg search failed: %s: %s", type(e).__name__, e)
+            logger.warning("[Brain Error]: %s", _safe(e))
         return f"I've searched for you, {Config.USER_NAME}, but I couldn't find a clear enough summary to read back. I've opened the browser results for you."
 
     def _ask_ddg(self, prompt: str) -> str:

@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 
@@ -40,25 +41,40 @@ class TextSummarizerEngine:
         top = sorted(scored[:num_sentences], key=lambda x: x[1])
         return " ".join(s[2] for s in top)
 
+    @staticmethod
+    def html_to_text(raw: str) -> str:
+        """Visible text of an HTML page: <script>/<style>/comments removed."""
+        raw = re.sub(r"(?is)<!--.*?-->", " ", raw)
+        raw = re.sub(r"(?is)<(script|style|noscript|template|svg)\b.*?</\1\s*>", " ", raw)
+        text = re.sub(r"(?s)<[^>]+>", " ", raw)
+        return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
     def summarize_url(self, url: str, num_sentences: int = 3) -> str:
         """Fetch URL content and summarize it."""
+        if not re.match(r"https?://", url or "", re.IGNORECASE):
+            return "Please give me a full http or https link to summarize."
         try:
             resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-            text = re.sub(r'<[^>]+>', ' ', resp.text)
-            text = re.sub(r'\s+', ' ', text).strip()
+            if resp.status_code != 200:
+                return f"Couldn't fetch that page (HTTP {resp.status_code})."
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            body = resp.text[:2_000_000]
+            text = self.html_to_text(body) if ("html" in ctype or not ctype or "<" in body[:200]) else re.sub(r"\s+", " ", body).strip()
+            if not text:
+                return "That page has no readable text to summarize."
             if len(text) > 5000:
                 text = text[:5000]
             return self.summarize(text, num_sentences)
         except Exception as e:
-            logging.debug("[engines/text_summarizer.py:51] Swallowed exception: %s: %s", type(e).__name__, e)
+            logging.debug("[engines/text_summarizer.py] fetch failed: %s: %s", type(e).__name__, e)
             return f"Error fetching content: {e}"
 
     def summarize_file(self, filepath: str, num_sentences: int = 5) -> str:
         """Read a text file and summarize it."""
         try:
             with open(filepath, encoding="utf-8", errors="ignore") as f:
-                text = f.read()
+                text = f.read(2_000_000)
             return self.summarize(text, num_sentences)
         except Exception as e:
-            logging.debug("[engines/text_summarizer.py:60] Swallowed exception: %s: %s", type(e).__name__, e)
+            logging.debug("[engines/text_summarizer.py] read failed: %s: %s", type(e).__name__, e)
             return f"Error reading file: {e}"

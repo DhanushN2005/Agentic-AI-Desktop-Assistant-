@@ -126,6 +126,12 @@ def _conversation_history(orch, current_query):
 
 
 def handle_conversational(orch, c):
+    if re.fullmatch(r"(?:ok(?:ay)?\s+|no\s+|yeah\s+)?(?:skip(?:\s+(?:that|those|it|this))?|never\s*mind|forget\s+(?:it|that)|leave\s+it|ignore\s+(?:that|it|this))[.!]?", (c or "").strip().lower()):
+        orch.speak("Okay.")  # a dismissal: acknowledge instantly, no model call
+        return True
+    if re.fullmatch(r"(?:please\s+)?(?:stop|stop\s+it|stop\s+that|stop\s+talking|stop\s+speaking|be\s+quiet|shut\s+up|enough)[.!]?", (c or "").strip().lower()):
+        orch.speak("Okay.")  # nothing is running to stop; acknowledge instead of asking the model
+        return True
     router = getattr(orch, "router", None)
     route = getattr(router, "route", None)
     if callable(route):
@@ -187,6 +193,11 @@ def handle_conversational(orch, c):
             buffer = buffer[m.end():]
             flush_count = 0
     response = "".join(chunks)
+    if not response.strip():
+        # Every provider failed or returned nothing: never answer with silence.
+        orch.speak("Sorry, I couldn't get an answer from my language model just now. "
+                   "Please try again in a moment.")
+        return True
     if buffer.strip():
         orch.speak(buffer.strip(), record_chat=False)
     if orch.current_mode == "hacker" and orch._parse_tool_call(response):
@@ -341,8 +352,8 @@ def dispatch_intent(orch, intent, c, silent):
             return handle_auto_save(orch, c)
         if intent in (
             "dev_build", "build_project", "job_status", "job_pause",
-            "pause_build", "job_resume", "resume_build", "job_cancel",
-            "cancel_build", "job_undo", "undo_last_phase", "job_open",
+            "pause_build", "job_resume", "resume_build", "fix_build", "job_fix",
+            "job_cancel", "cancel_build", "job_undo", "undo_last_phase", "job_open",
             "job_launch", "open_project"
         ):
             return handle_job_intent(orch, intent, c)
@@ -390,6 +401,12 @@ def dispatch_intent(orch, intent, c, silent):
             return handle_memory(orch, c)
         if intent == "translate":
             return handle_translate(orch, c)
+        if intent == "vision_mode":
+            from core.handlers.vision_mode import handle_vision_mode
+            return handle_vision_mode(orch, c)
+        if intent == "image_download":
+            from core.handlers.images import handle_image_download
+            return handle_image_download(orch, c)
         return handle_conversational(orch, c)
     except Exception as e:
         if hasattr(orch.logger, "exception"):

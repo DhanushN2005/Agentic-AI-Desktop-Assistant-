@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Flexie 2.0 | Autonomous AI Desktop</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src https://cdnjs.cloudflare.com https://fonts.gstatic.com; img-src 'self' data:; connect-src ws://localhost:8765 ws://127.0.0.1:8765 http://127.0.0.1:8768 http://localhost:8768; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap');
 
@@ -1108,17 +1109,32 @@ const TOAST_ICONS = {
 function toast(title, msg = '', type = 'info', duration = 4500) {
     const container = document.getElementById('toastContainer');
     const el = document.createElement('div');
-    el.className = `toast ${type}`;
-
-    el.innerHTML = `
-        <i class="fa ${TOAST_ICONS[type] || TOAST_ICONS.info} toast-icon"></i>
-        <div class="toast-body">
-            <div class="toast-title">${title}</div>
-            ${msg ? `<div class="toast-msg">${msg}</div>` : ''}
-        </div>
-        <button class="toast-close" onclick="dismissToast(this.closest('.toast'))">✕</button>
-        <div class="toast-progress" style="animation-duration:${duration}ms"></div>
-    `;
+    // Built with DOM nodes + textContent: title/msg can carry untrusted text
+    // (build output, alarm/reminder/error fields, page titles).
+    const safeType = Object.prototype.hasOwnProperty.call(TOAST_ICONS, type) ? type : 'info';
+    el.className = `toast ${safeType}`;
+    const icon = document.createElement('i');
+    icon.className = `fa ${TOAST_ICONS[safeType]} toast-icon`;
+    const body = document.createElement('div');
+    body.className = 'toast-body';
+    const t = document.createElement('div');
+    t.className = 'toast-title';
+    t.textContent = String(title ?? '');
+    body.appendChild(t);
+    if (msg) {
+        const m = document.createElement('div');
+        m.className = 'toast-msg';
+        m.textContent = String(msg);
+        body.appendChild(m);
+    }
+    const close = document.createElement('button');
+    close.className = 'toast-close';
+    close.textContent = '\u2715';
+    close.addEventListener('click', () => dismissToast(el));
+    const prog = document.createElement('div');
+    prog.className = 'toast-progress';
+    prog.style.animationDuration = `${Number(duration) || 4500}ms`;
+    el.append(icon, body, close, prog);
 
     container.appendChild(el);
     el.addEventListener('click', e => {
@@ -1412,12 +1428,20 @@ function handleMCP(servers) {
     const active = servers.filter(s => s.connected);
     badge.textContent = active.length + ' connected';
     if (active.length === 0) { list.textContent = 'No MCP servers active'; return; }
-    list.innerHTML = active.map(s =>
-        `<div style="padding:4px 0;display:flex;align-items:center;gap:8px">
-            <span style="color:var(--accent-ok)">●</span> ${s.name}
-            <span style="color:#444;margin-left:auto">${s.tool_count || 0} tools</span>
-        </div>`
-    ).join('');
+    list.replaceChildren(...active.map(s => {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:4px 0;display:flex;align-items:center;gap:8px';
+        const dot = document.createElement('span');
+        dot.style.color = 'var(--accent-ok)';
+        dot.textContent = '\u25CF';
+        const name = document.createElement('span');
+        name.textContent = String(s.name ?? '');
+        const cnt = document.createElement('span');
+        cnt.style.cssText = 'color:#444;margin-left:auto';
+        cnt.textContent = `${Number(s.tool_count) || 0} tools`;
+        row.append(dot, name, cnt);
+        return row;
+    }));
 }
 
 // ── State + Orb ───────────────────────────────────────────────────────
@@ -1651,7 +1675,7 @@ function _mailRenderList(emails) {
 }
 
 function _escape(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 async function mailLoadFolder(folder) {

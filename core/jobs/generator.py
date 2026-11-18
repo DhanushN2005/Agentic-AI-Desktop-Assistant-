@@ -19,6 +19,7 @@ import logging
 import math
 import os
 import re
+import time
 import tokenize
 from html.parser import HTMLParser
 from typing import Any
@@ -27,6 +28,7 @@ from core.jobs.lessons import lessons_block
 from core.jobs.models import BuildJob, JobPhase
 from core.jobs.planner import ProjectFileSpec, ProjectSpec
 from core.jobs.safe_paths import atomic_write, count_source_files, safe_join
+from core.llm_failure import is_failure_text, substantive_code
 from utils.config import Config
 
 logger = logging.getLogger("flexie.jobs.generator")
@@ -551,6 +553,8 @@ class CodeGenerator:
         self.token_budget = token_budget or getattr(Config, "JOB_TOKEN_BUDGET", 200000)
         # 8192 keeps a full 300-line file without truncation; Config.CODE_MAX_TOKENS overrides
         self.max_tokens_per_call = max_tokens_per_call or getattr(Config, "CODE_MAX_TOKENS", 8192)
+        # pauses between retries when the model returns a failure message (rate limit / outage)
+        self.retry_pauses: tuple[float, ...] = tuple(getattr(Config, "JOB_LLM_RETRY_PAUSES", (3.0, 8.0)))
 
     def _enhance_intent(self, brain: Any, file_spec: ProjectFileSpec, spec: ProjectSpec, job: BuildJob) -> str:
         """Expand the short file purpose into a detailed implementation plan before coding."""
@@ -763,20 +767,33 @@ Write the complete, production-ready source code for {file_spec.name} now:"""
         )
 
         raw_code = ""
-        try:
-            raw_code = brain.ask(
-                prompt,
-                system_override=system_prompt,
-                use_rag=False,
-                max_tokens=self.max_tokens_per_call,
-            )
-            if not isinstance(raw_code, str):
-                raw_code = "" if raw_code is None else str(raw_code)
-            job.tokens_used += len(prompt + raw_code) // 4
-        except Exception as e:
-            msg = f"LLM code generation failed for {file_spec.name}: {e}"
-            logger.error("Job %s: %s", job.id, msg)
-            return False, msg
+        # A provider that is rate-limited or down makes Brain.ask return a *fallback sentence*
+        # ("I've searched for you..."). That is never code: retry after a pause, then fail the
+        # file with a clear reason instead of writing prose into it and calling it a success.
+        for attempt, pause in enumerate(self.retry_pauses + (None,)):
+            try:
+                raw_code = brain.ask(
+                    prompt,
+                    system_override=system_prompt,
+                    use_rag=False,
+                    max_tokens=self.max_tokens_per_call,
+                )
+                if not isinstance(raw_code, str):
+                    raw_code = "" if raw_code is None else str(raw_code)
+                job.tokens_used += len(prompt + raw_code) // 4
+            except Exception as e:
+                msg = f"LLM code generation failed for {file_spec.name}: {e}"
+                logger.error("Job %s: %s", job.id, msg)
+                return False, msg
+            if not is_failure_text(raw_code):
+                break
+            logger.warning("Job %s: model unavailable for %s (attempt %d)", job.id, file_spec.name, attempt + 1)
+            if pause is None:
+                msg = (f"The language model could not generate {file_spec.name} (it was rate-limited or "
+                       "unavailable). Nothing was written for this file; resume the job in a minute to retry.")
+                logger.error("Job %s: %s", job.id, msg)
+                return False, msg
+            time.sleep(pause)
 
         clean_code = strip_fences_and_prose(file_spec.name, raw_code)
         clean_code, _ = neutralize_secrets(clean_code, job.workspace_path, file_spec.name)
@@ -822,6 +839,12 @@ Return ONLY the complete, corrected source code inside a single code fence. Fix 
                 msg = f"Repair pass failed for {file_spec.name}: {re_err}"
                 logger.error("Job %s: %s", job.id, msg)
                 return False, msg
+
+        if ext in (".js", ".ts", ".jsx", ".tsx", ".py", ".css", ".html", ".htm") and not substantive_code(clean_code):
+            msg = (f"Generated {file_spec.name} is empty or only comments/one line "
+                   f"({len(clean_code)} chars), so it was not written.")
+            logger.error("Job %s: %s", job.id, msg)
+            return False, msg
 
         code_bytes = clean_code.encode("utf-8")
         if len(code_bytes) > MAX_FILE_SIZE_BYTES:

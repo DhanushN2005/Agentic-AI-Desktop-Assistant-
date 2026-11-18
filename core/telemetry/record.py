@@ -19,6 +19,7 @@ class TelemetryRecord:
     cost_usd: float = 0.0
     energy_joules: float | None = None
     power_watts: float | None = None
+    failed: bool = False
     timestamp: float = field(default_factory=time.time)
     metadata: dict[str, Any] = field(default_factory=dict)
 

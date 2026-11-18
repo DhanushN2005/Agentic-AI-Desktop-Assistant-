@@ -16,10 +16,12 @@ def test_permission_system_approval_lifecycle():
     assert len(received) == 1
     assert ps.get_pending_request() == req
 
-    # Approving request should escalate permission
+    # Approval is a scoped, one-shot grant: it never raises the standing level.
     approved = ps.approve_request(req["id"])
     assert approved is True
-    assert ps.current_level == PermissionLevel.USER_CONFIRMATION
+    assert ps.current_level == PermissionLevel.READ_ONLY
+    with ps.grant_scope(req["id"]):
+        assert ps.grant_covers(PermissionLevel.USER_CONFIRMATION)
     assert ps.get_pending_request() is None
 
 

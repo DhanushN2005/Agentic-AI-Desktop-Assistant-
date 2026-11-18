@@ -37,7 +37,11 @@ def safe_rel_error(rel: object) -> str | None:
         return "path too long"
     if "\x00" in rel or any(ord(c) < 32 for c in rel):
         return "control characters in path"
-    p = rel.strip()
+    if rel != rel.strip():
+        # Windows silently drops trailing spaces/dots, so "a.txt " would alias "a.txt" and a
+        # whitespace-only component ("dir/ ") collapses to its parent. Reject, don't normalise.
+        return f"leading/trailing whitespace not allowed: {rel!r}"
+    p = rel
     if p.startswith(("/", "\\")) or _DRIVE_RE.match(p) or p.startswith("~"):
         return f"absolute or drive-qualified path not allowed: {rel!r}"
     if ":" in p:

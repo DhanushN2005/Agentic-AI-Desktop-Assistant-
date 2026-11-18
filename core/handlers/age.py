@@ -1,11 +1,12 @@
 import re
 
+from utils.voice_parse import strip_wake
+
 
 def handle_age(orch, c):
     """Handle age and date calculation commands."""
     orch.send_to_ui("STATE", "PROCESSING")
-    cmd = c.lower().strip()
-    cmd = re.sub(r"^(flexi|flexie|hey flexie|ok flexie)\b", "", cmd).strip()
+    cmd = strip_wake(c).lower()
 
     # Find date patterns (YYYY-MM-DD, DD/MM/YYYY, etc.)
     date_pattern = r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})"
@@ -31,7 +32,7 @@ def handle_age(orch, c):
             response = orch.age_calc.days_between(d1, d2)
         else:
             response = "Provide two dates. Say 'days between 2020-01-01 and 2025-12-31'."
-    elif "add" in cmd and "day" in cmd:
+    elif re.search(r"\badd\b", cmd) and re.search(r"\bdays?\b", cmd):
         if dates:
             date_str = f"{dates[0][0]}-{int(dates[0][1]):02d}-{int(dates[0][2]):02d}"
             num_match = re.search(r"add\s+(\d+)", cmd)
@@ -39,7 +40,7 @@ def handle_age(orch, c):
             response = orch.age_calc.add_days(date_str, days)
         else:
             response = "Provide a date and days. Say 'add 10 days to 2025-01-01'."
-    elif "subtract" in cmd and "day" in cmd:
+    elif re.search(r"\bsubtract\b", cmd) and re.search(r"\bdays?\b", cmd):
         if dates:
             date_str = f"{dates[0][0]}-{int(dates[0][1]):02d}-{int(dates[0][2]):02d}"
             num_match = re.search(r"subtract\s+(\d+)", cmd)

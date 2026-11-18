@@ -67,35 +67,56 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const ctx = actionMap[info.menuItemId];
   if (!ctx) return;
 
-  // DOM-only actions handled via content script without opening sidebar
-  if (ctx.action === "extract_tables") {
-    const res = await chrome.tabs.sendMessage(tab.id, { type: "DOM_EXTRACT_TABLES" });
-    if (res?.ok) {
-      await chrome.storage.local.set({ flexie_active_context: { action: "extract_tables", data: res.tables } });
-    }
-  } else if (ctx.action === "extract_links") {
-    const res = await chrome.tabs.sendMessage(tab.id, { type: "DOM_EXTRACT_LINKS" });
-    if (res?.ok) {
-      await chrome.storage.local.set({ flexie_active_context: { action: "extract_links", data: res.links } });
+  // DOM-only actions handled via content script; keep the extracted data
+  // (merged into the context) and tell the user when the page is restricted.
+  let payload = ctx;
+  if (ctx.action === "extract_tables" || ctx.action === "extract_links") {
+    const isTables = ctx.action === "extract_tables";
+    try {
+      const res = await chrome.tabs.sendMessage(tab.id, { type: isTables ? "DOM_EXTRACT_TABLES" : "DOM_EXTRACT_LINKS" });
+      if (res?.ok) payload = { ...ctx, data: isTables ? res.tables : res.links };
+      else payload = { action: "notice", text: "Flexie could not extract data from this page." };
+    } catch (e) {
+      payload = { action: "notice", text: "Flexie cannot read this page (restricted or not loaded). Try a normal web page." };
     }
   }
 
-  openSidePanel(tab.id, ctx);
+  openSidePanel(tab.id, payload);
 });
 
 function openSidePanel(tabId, contextData) {
+  // Store first (sidebar reads it once on load and via onChanged), then open.
+  chrome.storage.local.set({ flexie_active_context: contextData }).catch?.(() => {});
   if (chrome.sidePanel?.open) {
-    chrome.sidePanel.open({ tabId }).then(() => {
-      chrome.storage.local.set({ flexie_active_context: contextData });
-    }).catch(() => {});
+    chrome.sidePanel.open({ tabId }).catch(() => {});
   }
+}
+
+// ── CALL_API hardening ───────────────────────────────────────────────
+const ALLOWED_ENDPOINTS = [
+  /^\/health$/, /^\/page-assist$/, /^\/command$/,
+  /^\/api\/(flexie|jarvis)\/(status|usage|jobs|commands|events|page-assistant|approve|reject)$/,
+  /^\/api\/flexie\/mail\/[a-z-]+$/,
+];
+const PRIVILEGED_ENDPOINTS = [/^\/command$/, /^\/api\/(flexie|jarvis)\/(commands|approve|reject)$/, /^\/api\/flexie\/mail\/(send|reply|delete|archive|move|draft)$/];
+
+function validateEndpoint(endpoint) {
+  if (typeof endpoint !== "string" || endpoint.length > 200) return null;
+  if (!endpoint.startsWith("/")) return null;
+  if (/[@\\]|\/\/|\.\.|%2e|%2f|%5c|[\s\u0000-\u001f]/i.test(endpoint)) return null;
+  const [path, query = ""] = endpoint.split("?", 2);
+  if (!ALLOWED_ENDPOINTS.some((re) => re.test(path))) return null;
+  return { path, query };
 }
 
 // ── Message Router ───────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // Sidebar → content script DOM task relay
+  if (sender.id !== chrome.runtime.id) return false;
+
   if (request.type === "DOM_TASK") {
+    if (sender.tab) return sendResponse({ ok: false, error: "Not allowed from content scripts" }), true;
     const { tabId, domType, payload } = request;
     const targetTab = tabId || sender.tab?.id;
     if (!targetTab) return sendResponse({ ok: false, error: "No tab id" }), true;
@@ -116,7 +137,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // Generic API proxy (with auth token injected automatically)
   if (request.type === "CALL_API") {
-    const { endpoint, method = "POST", body } = request;
+    const { method: rawMethod = "POST", body } = request;
+    const method = String(rawMethod).toUpperCase();
+    const ep = validateEndpoint(request.endpoint);
+    if (!ep || !["GET", "POST"].includes(method)) {
+      return sendResponse({ ok: false, error: "Endpoint not allowed" }), true;
+    }
+    if (sender.tab && PRIVILEGED_ENDPOINTS.some((re) => re.test(ep.path))) {
+      return sendResponse({ ok: false, error: "Endpoint not allowed from content scripts" }), true;
+    }
+    const endpoint = ep.path + (ep.query ? "?" + ep.query : "");
     chrome.storage.local.get(["flexie_token"], (stored) => {
       const token = stored.flexie_token || "";
       const headers = { "Content-Type": "application/json" };
@@ -125,7 +155,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       fetch(`${API_BASE}${endpoint}`, {
         method,
         headers,
-        body: body ? JSON.stringify(body) : undefined,
+        body: body && method !== "GET" ? JSON.stringify(body) : undefined,
       })
         .then(async (r) => {
           const data = await r.json().catch(() => ({}));

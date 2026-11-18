@@ -5,15 +5,58 @@ Upgrades the existing DangerGate into a proper permission model with levels:
   READ_ONLY → SAFE_ACTION → USER_CONFIRMATION → SENSITIVE → DANGEROUS
 
 Every action must pass through this system. The LLM cannot bypass it.
+
+Approvals are PER REQUEST, not process-wide:
+  * every approval request has an id, a TTL and a status (pending/approved/rejected/expired)
+  * approving a request creates a *grant* that is active only in the context (thread) that is
+    running the approved action, for a short time, and only up to the requested level
+  * a bare "confirm" (no id) only approves when exactly ONE request is pending
+  * all state is guarded by a lock
+The old process-wide ``escalate()`` still exists for explicit, deliberate use.
 """
+import contextlib
+import contextvars
 import logging
 import re
+import threading
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from core.danger_gate import DangerGate
 from core.tool_registry import PermissionLevel
+
+PENDING_TTL_SECONDS = 120.0   # how long an unanswered request stays approvable
+GRANT_TTL_SECONDS = 60.0      # how long an approval stays usable after it is given
+_MAX_REQUESTS = 100
+
+
+@dataclass
+class ApprovalGrant:
+    request_id: str
+    level: PermissionLevel
+    expires_at: float  # monotonic
+
+    def active(self) -> bool:
+        return time.monotonic() < self.expires_at
+
+
+# The grant that applies to the code currently running (per thread / per context).
+_active_grant: contextvars.ContextVar["ApprovalGrant | None"] = contextvars.ContextVar(
+    "flexie_active_grant", default=None
+)
+
+
+def _current_command_id() -> str:
+    """Id of the user command in flight, used to scope untrusted-content taint per command."""
+    try:
+        from core.telemetry.usage import current_command
+
+        return current_command() or "_global"
+    except Exception:
+        return "_global"
 
 
 class PermissionSystem:
@@ -27,13 +70,14 @@ class PermissionSystem:
         self.current_level = default_level
         self.danger_gate = DangerGate()
         self.logger = logging.getLogger("Flexie.PermissionSystem")
-        # Expiry (monotonic) for temporary escalations; None = not escalated.
+        self._lock = threading.RLock()
+        self._cond = threading.Condition(self._lock)
+        # Expiry (monotonic) for temporary process-wide escalations; None = not escalated.
         self._escalation_expires: float | None = None
-        self._pending_approval: dict | None = None
-        # Sources of untrusted content (web pages, email, MCP output) seen this user turn.
-        # While non-empty, side-effecting SAFE_ACTION tools need explicit approval, so
-        # injected instructions in that content cannot silently trigger actions.
-        self._untrusted_sources: set[str] = set()
+        self._requests: OrderedDict[str, dict] = OrderedDict()
+        # Untrusted content (web pages, email, MCP output) seen, scoped PER COMMAND: a background
+        # job starting mid-turn can neither clear nor inherit the user's taint.
+        self._untrusted: dict[str, set[str]] = {}
         self._on_approval_callback: Callable[[dict], None] | None = None
 
         # Patterns that classify actions into permission levels
@@ -59,7 +103,7 @@ class PermissionSystem:
             ],
             PermissionLevel.USER_CONFIRMATION: [
                 r"\b(move|rename|copy|paste|create|write|save)\s+(file|folder|document)\b",
-                r"\b(send|compose|reply|forward)\s+(email|mail|message)\b",
+                r"\b(send|compose|reply|forward)\s+(an?\s+)?(email|mail|message|text)\b",
                 r"\b(delete|remove|erase)\s+(file|folder|document)\b",
                 r"\b(modify|edit|change|update)\s+(code|file|document)\b",
                 r"\b(install|uninstall|update)\s+(app|package|dependency)\b",
@@ -67,21 +111,41 @@ class PermissionSystem:
                 r"\b(organize|sort|clean|arrange)\s+(desktop|folder|files)\b",
                 r"\b(run|execute)\s+(script|code|python|node|npm|pip)\b",
                 r"\b(powershell|bash|sh|cmd|python|node|npx|pip)\b",
+                # Outbound messaging / publishing — judged per clause, so verbs at the START of a clause
+                r"\breply\s+(?:to\s+)?all\b",
+                r"\bforward\s+(?:this|it|that|the\s+\w+|everything)\s+to\b",
+                r"\bsend\s+(it|this|that|them|everything)\b",
+                r"\bsend\s+\w+\s+an?\s+(message|text|email|dm|note)\b",
+                r"^\s*(?:please\s+)?(?:email|e-mail|mail|text|message|dm|whatsapp|tweet|post)\s+"
+                r"(?!me\b|tools?\b|editor\b|files?\b|box\b|apps?\b|about\b|office\b)\w+",
+                r"\b(publish|deploy|release)\b",
+                r"\bmerge\s+(to|into)\s+\w+",
+                r"\b(uninstall|get\s+rid\s+of|trash|dispose\s+of|clear\s+out|overwrite)\b",
+                r"\bmove\s+(all|everything)\b",
+                r"\bclean\s*up\s+(my\s+|the\s+)?(desktop|downloads|folder|files|disk)\b",
             ],
             PermissionLevel.SENSITIVE: [
-                r"\b(terminate|kill|force stop|end process)\b",
-                r"\b(shutdown|shut\s+down|power\s+off|restart|reboot|sleep|hibernate|log off|sign out)\b",
+                r"\b(terminate|kill|force\s+stop|end)\s+(the\s+|that\s+|this\s+)?(process|task|app|application|program|\w+\.exe)\b",
+                r"\b(shutdown|shut\s+down|power\s+off|reboot)\b",
+                r"\brestart\s+(the\s+|my\s+)?(pc|computer|laptop|machine|system|windows)\b",
+                r"\b(put|send|let)\s+(the\s+|my\s+)?(pc|computer|laptop|machine)\s+(to\s+)?sleep\b|\bhibernate\b",
+                r"\b(log\s*off|sign\s*out)\b",
                 r"\b(lock screen|lock pc|lock computer)\b",
                 r"\b(change settings|modify config|update settings)\b",
-                r"\b(enable|disable)\s+(auto save|firewall|antivirus)\b",
+                r"\b(enable|disable|turn\s+off|turn\s+on|switch\s+off)\s+(the\s+)?"
+                r"(auto\s*save|firewall|antivirus|defender|windows\s+defender|uac|security)\b",
             ],
             PermissionLevel.DANGEROUS: [
-                r"\b(rm -rf|del /s|wipe|erase all)\b",
-                r"\bformat\s+[a-z]:",
+                r"\b(rm -rf|del /s|wipe|erase all|nuke|shred|factory\s+reset)\b",
+                r"\bformat\s+(the\s+|my\s+)?(drive|disk|partition|usb|[a-z]:)",
                 r"\b(delete (account|profile|all|everything|permanent))\b",
-                r"\b(purchase|buy|pay|transfer money|send money)\b",
-                r"\b(confirm payment|place order|checkout)\b",
-                r"\b(drop database|drop table|truncate)\b",
+                r"\b(purchase|buy|pay(?!\s+(attention|heed|respect|a\s+visit))|transfer\s+(money|funds)|send\s+(money|\$))\b",
+                r"\bwire\s+(\$|\d)|\b(venmo|donate|withdraw|paypal)\b|\bsend\s+\$",
+                r"\border\s+(a|an|some|me|\d+)\b|^\s*(?:please\s+)?order\s+(?!by\b|of\b|to\b)\w+"
+                r"|\bbook\s+(a|an|the)?\s*(flight|hotel|ticket|cab|table|room)\b",
+                r"\b(confirm payment|place order|proceed to checkout|checkout\s+(my|the)\s+(cart|basket|order))\b",
+                r"\b(drop|truncate)\s+(database|table)\b|\bdelete\s+from\b",
+                r"\bgit\s+push\b.*(--force|\s-f\b)",
                 r"\b(override safety|bypass safety|ignore warning)\b",
             ],
         }
@@ -91,23 +155,34 @@ class PermissionSystem:
         for level, patterns in self._level_patterns.items():
             self._compiled[level] = [re.compile(p, re.IGNORECASE) for p in patterns]
 
+    # ------------------------------------------------------------------ untrusted taint
     # Browsing/reading tools stay free even when tainted; these are the effectful ones.
     _READ_ONLY_TAGS = frozenset({"web", "search", "extract", "intelligence"})
 
     def mark_untrusted(self, source: str):
-        """Record that untrusted content (web/email/MCP output) entered this turn."""
-        if source and source not in self._untrusted_sources:
-            self._untrusted_sources.add(source)
-            self.logger.info(f"[PERMISSION] Untrusted content from {source}: effectful actions now need approval")
+        """Record that untrusted content (web/email/MCP output) entered THIS command."""
+        if not source:
+            return
+        key = _current_command_id()
+        with self._lock:
+            bucket = self._untrusted.setdefault(key, set())
+            if source not in bucket:
+                bucket.add(source)
+                self.logger.info(f"[PERMISSION] Untrusted content from {source}: effectful actions now need approval")
+            while len(self._untrusted) > 64:  # bounded: forget the oldest commands
+                self._untrusted.pop(next(iter(self._untrusted)))
 
     def clear_taint(self):
-        """Call at the start of each new user turn."""
-        self._untrusted_sources.clear()
+        """Call at the start of a new user turn (clears THIS command's taint)."""
+        with self._lock:
+            self._untrusted.pop(_current_command_id(), None)
 
     @property
     def is_tainted(self) -> bool:
-        return bool(self._untrusted_sources)
+        with self._lock:
+            return bool(self._untrusted.get(_current_command_id()))
 
+    # -------------------------------------------------------------------- classification
     def classify_action(self, command: str) -> PermissionLevel:
         """
         Classifies a command into a permission level based on pattern matching.
@@ -119,13 +194,8 @@ class PermissionSystem:
         if not command or not command.strip():
             return PermissionLevel.USER_CONFIRMATION
 
-        from core.plan_text import split_clauses
-
-        # Judge each clause on its own so a harmless question does not inherit the level of a
-        # risky-sounding word ("what is a good python tutorial", "how do I remove a stain"),
-        # while a compound request is still as strict as its riskiest action.
         highest = PermissionLevel.READ_ONLY
-        for clause in split_clauses(command) or [command]:
+        for clause in self.danger_gate.clauses(command):
             if self.danger_gate.is_benign_clause(clause):
                 continue
             for level in list(PermissionLevel):
@@ -147,10 +217,10 @@ class PermissionSystem:
         """Auto-reset an expired escalation back to the default level."""
         if self._escalation_expires is None:
             return
-        import time as _time
-        if _time.monotonic() >= self._escalation_expires:
-            self._escalation_expires = None
-            self.current_level = self.default_level
+        if time.monotonic() >= self._escalation_expires:
+            with self._lock:
+                self._escalation_expires = None
+                self.current_level = self.default_level
             self.logger.info("[PERMISSION] Escalation expired — reset to "
                              f"{self.default_level.name}")
 
@@ -173,6 +243,9 @@ class PermissionSystem:
         """
         self._maybe_expire_escalation()
         effective_level = current_level or self.current_level
+        grant = _active_grant.get()
+        if grant is not None and grant.active() and grant.level.value > effective_level.value:
+            effective_level = grant.level  # an approval for THIS running action
 
         # Resolve the required permission level
         if hasattr(tool, 'permission'):
@@ -189,12 +262,12 @@ class PermissionSystem:
             # Use the more restrictive of tool's default and context-derived level
             required = PermissionLevel(max(required.value, context_level.value))
 
-        # Taint: after untrusted content entered the turn, effectful SAFE_ACTION tools
+        # Taint: after untrusted content entered THIS command, effectful SAFE_ACTION tools
         # (click/fill/open...) are treated as needing confirmation.
         if (
-            self._untrusted_sources
-            and required == PermissionLevel.SAFE_ACTION
+            required == PermissionLevel.SAFE_ACTION
             and hasattr(tool, "tags")
+            and self.is_tainted
             and not (set(getattr(tool, "tags", [])) & self._READ_ONLY_TAGS)
         ):
             required = PermissionLevel.USER_CONFIRMATION
@@ -222,18 +295,161 @@ class PermissionSystem:
         """Check if user reply is a cancellation."""
         return self.danger_gate.is_cancellation(text)
 
+    # ----------------------------------------------------------- explicit escalation
     def escalate(self, level: PermissionLevel, ttl_seconds: float = 300.0):
-        """Temporarily escalate permission level (e.g., after user confirmation).
+        """Temporarily escalate the PROCESS-WIDE permission level (deliberate, explicit use).
 
-        The escalation auto-resets to the default level after ``ttl_seconds``
-        (default 5 min); ``reset()`` clears it immediately. ``ttl_seconds<=0``
-        means no expiry (stays until ``reset()``) for legacy callers.
+        Prefer approval requests: they produce a grant that applies only to the approved action.
+        The escalation auto-resets after ``ttl_seconds``; ``reset()`` clears it immediately.
+        ``ttl_seconds<=0`` means no expiry (stays until ``reset()``) for legacy callers.
         """
-        import time as _time
-        old = self.current_level
-        self.current_level = level
-        self._escalation_expires = (_time.monotonic() + ttl_seconds) if ttl_seconds and ttl_seconds > 0 else None
+        with self._lock:
+            old = self.current_level
+            self.current_level = level
+            self._escalation_expires = (time.monotonic() + ttl_seconds) if ttl_seconds and ttl_seconds > 0 else None
         self.logger.info(f"[PERMISSION] Escalated: {old.name} -> {level.name} (ttl={ttl_seconds}s)")
+
+    def consume_approval(self):
+        """End the approval that was just used: drop this context's grant (and any explicit
+        escalation) so one approval cannot authorize later, unrelated actions."""
+        _active_grant.set(None)
+        self.reset()
+
+    def reset(self):
+        """Reset to default permission level."""
+        with self._lock:
+            self._escalation_expires = None
+            self.current_level = self.default_level
+
+    # ------------------------------------------------------------------- approval requests
+    def set_approval_callback(self, callback: Callable[[dict], None]):
+        """Register a callback invoked when an action requires approval."""
+        self._on_approval_callback = callback
+
+    def _expire_requests(self) -> None:
+        now = time.time()
+        for req in list(self._requests.values()):
+            if req["status"] == "pending" and now >= req["expires_at"]:
+                req["status"] = "expired"
+        while len(self._requests) > _MAX_REQUESTS:
+            self._requests.popitem(last=False)
+
+    def create_approval_request(
+        self,
+        action: str,
+        details: str = "",
+        level: PermissionLevel = PermissionLevel.USER_CONFIRMATION,
+        ttl_seconds: float = PENDING_TTL_SECONDS,
+    ) -> dict:
+        """Create a pending approval request for an action requiring confirmation."""
+        req = {
+            "id": f"apr_{uuid.uuid4().hex[:8]}",
+            "action": action,
+            "details": details,
+            "level": level,
+            "created_at": time.time(),
+            "expires_at": time.time() + ttl_seconds,
+            "status": "pending",
+        }
+        with self._lock:
+            self._expire_requests()
+            self._requests[req["id"]] = req
+        if self._on_approval_callback:
+            try:
+                self._on_approval_callback(req)
+            except Exception as e:
+                self.logger.debug(f"[PermissionSystem] approval callback failed: {e}")
+        return req
+
+    def _pending(self) -> list[dict]:
+        self._expire_requests()
+        return [r for r in self._requests.values() if r["status"] == "pending"]
+
+    def get_pending_request(self) -> dict | None:
+        """Return the most recent pending, unexpired approval request, if any."""
+        with self._lock:
+            pending = self._pending()
+            return pending[-1] if pending else None
+
+    @property
+    def _pending_approval(self) -> dict | None:  # backward-compatible read access
+        return self.get_pending_request()
+
+    def request_status(self, request_id: str) -> str | None:
+        with self._lock:
+            self._expire_requests()
+            req = self._requests.get(request_id)
+            return req["status"] if req else None
+
+    def approve_request(self, request_id: str | None = None, ttl_seconds: float = GRANT_TTL_SECONDS) -> bool:
+        """Approve a pending request.
+
+        With an id: approves exactly that request. Without an id ("confirm" said out loud):
+        approves only when exactly ONE request is pending — with several it refuses, so a
+        confirmation can never land on a request the user was not asked about.
+        The approval is a grant bound to the request's level and TTL; it does NOT raise the
+        process-wide permission level.
+        """
+        with self._lock:
+            pending = self._pending()
+            if request_id:
+                req = self._requests.get(request_id)
+                if req is None or req["status"] != "pending":
+                    return False
+            else:
+                if len(pending) != 1:
+                    if len(pending) > 1:
+                        self.logger.warning("[PERMISSION] Ambiguous approval: %d requests pending; "
+                                            "an explicit request id is required.", len(pending))
+                    return False
+                req = pending[0]
+            req["status"] = "approved"
+            req["approved_at"] = time.time()
+            req["grant"] = ApprovalGrant(
+                request_id=req["id"],
+                level=req.get("level", PermissionLevel.USER_CONFIRMATION),
+                expires_at=time.monotonic() + ttl_seconds,
+            )
+            self._cond.notify_all()
+        return True
+
+    def reject_request(self, request_id: str | None = None) -> bool:
+        """Reject a pending request (all pending requests when no id is given — cancelling is
+        always safe)."""
+        with self._lock:
+            if request_id:
+                req = self._requests.get(request_id)
+                targets = [req] if req and req["status"] == "pending" else []
+            else:
+                targets = self._pending()
+            for req in targets:
+                req["status"] = "rejected"
+            if targets:
+                self._cond.notify_all()
+            return bool(targets)
+
+    # ------------------------------------------------------------------- grant activation
+    def _grant_for(self, request_id: str) -> "ApprovalGrant | None":
+        with self._lock:
+            req = self._requests.get(request_id)
+            grant = req.get("grant") if req and req["status"] == "approved" else None
+        return grant if grant is not None and grant.active() else None
+
+    @contextlib.contextmanager
+    def grant_scope(self, request_id: str | None):
+        """Run a block under the grant of an APPROVED request (no-op for unknown/unapproved ids)."""
+        grant = self._grant_for(request_id) if request_id else None
+        token = _active_grant.set(grant) if grant else None
+        try:
+            yield grant is not None
+        finally:
+            if token is not None:
+                _active_grant.reset(token)
+
+    def grant_covers(self, level: PermissionLevel) -> bool:
+        """True when an approval granted to the CURRENT running action already covers ``level``."""
+        grant = _active_grant.get()
+        return bool(grant is not None and grant.active() and grant.level.value >= level.value)
 
     def await_approval(
         self,
@@ -247,91 +463,36 @@ class PermissionSystem:
         """Ask the user to approve ``action`` and block until answered or timed out.
 
         Voice users are asked directly (the action thread is busy, so a spoken
-        "confirm" could not be processed any other way); UI/API approval is polled.
-        Returns True only on an explicit approval; otherwise the request is rejected
-        (fail closed). The caller should ``consume_approval()`` once the action ran.
+        "confirm" could not be processed any other way); UI/API approval is awaited.
+        Returns True only when THIS request was explicitly approved; otherwise it is rejected
+        (fail closed). On approval the grant is activated for the calling thread; the caller
+        ends it with ``consume_approval()`` once the approved action has run.
         """
-        import time as _time
-        self.create_approval_request(action, details=description, level=level)
+        req = self.create_approval_request(action, details=description, level=level)
+        rid = req["id"]
         if callable(voice_confirm):
             try:
                 if voice_confirm(f"I need your approval to {description}. Should I go ahead?"):
-                    self.approve_request()
+                    self.approve_request(rid)
             except Exception as e:
                 self.logger.debug(f"[PermissionSystem] voice approval failed: {e}")
-        deadline = _time.monotonic() + wait_seconds
-        while True:
-            self._maybe_expire_escalation()
-            if self.current_level.value >= level.value:
-                return True
-            if _time.monotonic() >= deadline or (is_cancelled and is_cancelled()):
-                break
-            _time.sleep(0.25)
-        self.reject_request()
-        return False
-
-    def consume_approval(self):
-        """End an approval's escalation as soon as the approved action finishes, so a
-        single approval cannot silently authorize later, unrelated actions."""
-        self.reset()
-
-    def reset(self):
-        """Reset to default permission level."""
-        self._escalation_expires = None
-        self.current_level = self.default_level
-
-    def set_approval_callback(self, callback: Callable[[dict], None]):
-        """Register a callback invoked when an action requires approval."""
-        self._on_approval_callback = callback
-
-    def create_approval_request(
-        self,
-        action: str,
-        details: str = "",
-        level: PermissionLevel = PermissionLevel.USER_CONFIRMATION,
-    ) -> dict:
-        """Create a pending approval request for an action requiring confirmation."""
-        req = {
-            "id": f"apr_{uuid.uuid4().hex[:8]}",
-            "action": action,
-            "details": details,
-            "level": level,
-            "created_at": time.time(),
-            "status": "pending",
-        }
-        self._pending_approval = req
-        if self._on_approval_callback:
-            try:
-                self._on_approval_callback(req)
-            except Exception as e:
-                self.logger.debug(f"[PermissionSystem] approval callback failed: {e}")
-        return req
-
-    def get_pending_request(self) -> dict | None:
-        """Return the current pending approval request, if any."""
-        return self._pending_approval
-
-    def approve_request(self, request_id: str | None = None, ttl_seconds: float = 60.0) -> bool:
-        """Approve the pending request and escalate permission."""
-        if not self._pending_approval:
+        deadline = time.monotonic() + wait_seconds
+        with self._cond:
+            while True:
+                self._expire_requests()
+                status = self._requests[rid]["status"] if rid in self._requests else "expired"
+                if status == "approved":
+                    break
+                if status in ("rejected", "expired"):
+                    return False
+                if time.monotonic() >= deadline or (is_cancelled and is_cancelled()):
+                    self._requests[rid]["status"] = "rejected"
+                    return False
+                self._cond.wait(timeout=0.25)
+        grant = self._grant_for(rid)
+        if grant is None:
             return False
-        if request_id and self._pending_approval.get("id") != request_id:
-            return False
-        req = self._pending_approval
-        req["status"] = "approved"
-        level = req.get("level", PermissionLevel.USER_CONFIRMATION)
-        self.escalate(level, ttl_seconds=ttl_seconds)
-        self._pending_approval = None
-        return True
-
-    def reject_request(self, request_id: str | None = None) -> bool:
-        """Reject and clear the pending approval request."""
-        if not self._pending_approval:
-            return False
-        if request_id and self._pending_approval.get("id") != request_id:
-            return False
-        self._pending_approval["status"] = "rejected"
-        self._pending_approval = None
+        _active_grant.set(grant)
         return True
 
     def to_summary(self) -> str:

@@ -9,7 +9,7 @@ def handle_jokes(orch, c):
 
     category = None
     for cat in ["programming", "dark", "pun", "misc", "any"]:
-        if cat in cmd:
+        if re.search(rf"\b{cat}\b", cmd):
             category = cat
             break
 
@@ -18,6 +18,8 @@ def handle_jokes(orch, c):
     else:
         response = orch.jokes.get_joke()
 
+    if not response or str(response).strip().lower() == "none":
+        response = "Couldn't fetch a joke right now. Try again later."
     orch.ctx.update(last_response=response, query=c)
     orch.speak(response)
     return True

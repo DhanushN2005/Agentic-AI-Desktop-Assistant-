@@ -11,7 +11,21 @@ from utils.config import Config
 
 
 class DeveloperEngine:
-    DANGER_CMDS = ["rm ", "del ", "format ", "rmdir /s", ">", "mkfs", "rd /s"]
+    DANGER_CMDS = ["rm ", "del ", "erase ", "format ", "rmdir", "rd /s", "mkfs", "diskpart",
+                   "reg delete", "reg add", "takeown", "icacls", "cipher /w", "bcdedit",
+                   "taskkill", "net user", "schtasks", "sc delete", "remove-item",
+                   "stop-computer", "restart-computer", "invoke-expression", "iex "]
+    # Metacharacters rejected outright: a single & is a cmd.exe command separator,
+    # < > redirect, ^ is the cmd escape, %VAR% expands, newlines start a new command.
+    _SHELL_META = re.compile(r"&|\|\||;|\||`|[$][(]|[<>^%]|[\r\n]")
+    GIT_TIMEOUT = 15
+
+    @staticmethod
+    def _project_root() -> str:
+        root = getattr(Config, "PROJECT_ROOT", None)
+        if root and os.path.isdir(root):
+            return root
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def __init__(self, orchestrator):
         self.flexie = orchestrator
@@ -38,8 +52,8 @@ class DeveloperEngine:
                 return "Command execution cancelled for safety."
 
         # No shell: reject chaining/substitution, run a single argv without shell.
-        if re.search(r"&&|\|\||;|\||`|[$][(]", cmd):
-            return "Blocked: chained commands, pipes and command substitution are not allowed here. Use one simple command."
+        if self._SHELL_META.search(cmd):
+            return "Blocked: chained commands (&, &&, ;), pipes, redirection, % expansion and command substitution are not allowed here. Use one simple command."
         try:
             argv = shlex.split(cmd, posix=(os.name != "nt"))
         except ValueError as _e:
@@ -48,7 +62,8 @@ class DeveloperEngine:
         if not argv:
             return "No command to run."
         try:
-            result = subprocess.run(argv, shell=False, capture_output=True, text=True, timeout=15)
+            result = subprocess.run(argv, shell=False, capture_output=True, text=True, timeout=15,
+                                    cwd=self._project_root())
             if result.returncode == 0:
                 output = result.stdout.strip()
                 if not output:
@@ -67,10 +82,46 @@ class DeveloperEngine:
             logging.debug("[engines/developer.py:49] Swallowed exception: %s: %s", type(e).__name__, e)
             return f"I failed to execute the terminal command due to an internal error: {str(e)}"
 
+    def _install_vetted_requirements(self, req_path: str) -> str:
+        """pip-install an LLM-written requirements file only after vetting (EN-24/25).
+
+        Options, URLs, VCS refs and local paths are refused; the remaining plain
+        package names are installed with ``--`` so none can be read as an option.
+        """
+        try:
+            with open(req_path, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError as e:
+            return f"Could not read requirements: {e}"
+        try:
+            from core.jobs.verifier import vet_requirements
+        except Exception as e:  # cannot vet -> refuse
+            logging.debug("vet_requirements unavailable: %s", e)
+            return "Refused to install generated requirements: the vetting module is unavailable."
+        clean, problems = vet_requirements(text)
+        if problems:
+            logging.warning("Refused generated requirements: %s", "; ".join(problems))
+            return "Refused to install the generated requirements: " + problems[0]
+        if not clean:
+            return "No requirements to install."
+        try:
+            if not self.flexie.voice.confirm(f"Install these Python packages: {', '.join(clean[:8])}?"):
+                return "Package installation cancelled."
+        except Exception:
+            return "Package installation skipped (no confirmation available)."
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "--no-input", "--", *clean],
+                           capture_output=True, timeout=120, cwd=os.path.dirname(req_path))
+        except Exception as e:
+            logging.debug("Pip install failed: %s", e)
+            return f"Package installation failed: {e}"
+        return "Installed vetted requirements."
+
     def get_git_status(self) -> str:
         """Returns a conversational summary of git status."""
         try:
-            status = subprocess.check_output(["git", "status", "--short"], text=True).strip()
+            status = subprocess.check_output(["git", "status", "--short"], text=True, timeout=self.GIT_TIMEOUT,
+                                             cwd=self._project_root()).strip()
             if not status:
                 return "Your Git repository is clean. Everything is up to date."
 
@@ -83,7 +134,8 @@ class DeveloperEngine:
     def get_git_diff_summary(self) -> str:
         """Returns a conversational summary of recent changes."""
         try:
-            diff = subprocess.check_output(["git", "diff", "--stat"], text=True).strip()
+            diff = subprocess.check_output(["git", "diff", "--stat"], text=True, timeout=self.GIT_TIMEOUT,
+                                           cwd=self._project_root()).strip()
             if not diff:
                 return "There are no recent changes to report in your repository."
 
@@ -489,6 +541,9 @@ class DeveloperEngine:
                             break
                 if os.path.exists(index_path):
                     try:
+                        self.flexie.speak("I generated a web page with AI. I will not open it until you say so.")
+                        if not self.flexie.voice.confirm("Open the AI-generated page in your browser?"):
+                            return f"Autonomous project build complete at {folder}. I did not open the generated page."
                         webbrowser.open(f"file:///{os.path.abspath(index_path).replace(os.sep, '/')}")
                         self.flexie.speak("Launched your application in the browser.")
                         return f"Autonomous project build complete at {folder}. Multi-phase plan created, VS Code extensions configured, and app launched in browser."
@@ -499,10 +554,7 @@ class DeveloperEngine:
                 script_path = os.path.join(folder, main_f)
                 req_path = os.path.join(folder, "requirements.txt")
                 if os.path.exists(req_path):
-                    try:
-                        subprocess.run([sys.executable, "-m", "pip", "install", "-r", req_path], capture_output=True, timeout=60)
-                    except Exception as _re:
-                        logging.debug("Pip install failed: %s", _re)
+                    self._install_vetted_requirements(req_path)
                 return self.run_python_script(script_path)
 
             return f"Autonomous project build complete at {folder} - {len(files)} files verified and opened in VS Code."

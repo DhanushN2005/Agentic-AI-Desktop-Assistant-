@@ -8,7 +8,7 @@ class TipCalculatorEngine:
 
         parts = [
             f"Bill: ${bill:.2f}",
-            f"Tip ({tip_percent:.0f}%): ${tip_amount:.2f}",
+            f"Tip ({tip_percent:g}%): ${tip_amount:.2f}",
             f"Total: ${total:.2f}",
         ]
         if split > 1:
@@ -21,7 +21,7 @@ class TipCalculatorEngine:
         tip_amount = bill * (tip_percent / 100)
         total = bill + tip_amount
         per_person = total / people
-        return f"Bill: ${bill:.2f}. Tip ({tip_percent:.0f}%): ${tip_amount:.2f}. Total: ${total:.2f}. Each person pays: ${per_person:.2f}"
+        return f"Bill: ${bill:.2f}. Tip ({tip_percent:g}%): ${tip_amount:.2f}. Total: ${total:.2f}. Each person pays: ${per_person:.2f}"
 
     def tip_from_total(self, total: float, bill: float) -> str:
         if bill <= 0:

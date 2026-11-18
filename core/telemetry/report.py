@@ -23,15 +23,19 @@ def _pct(values: list[float], q: float) -> float:
 
 def build_report(store: TelemetryStore, since: float | None = None, top: int = 5) -> dict[str, Any]:
     rows = store.export_records(since=since)
-    latencies = [r["latency_seconds"] or 0.0 for r in rows]
-    estimated = sum(1 for r in rows if r["metadata"].get("estimated"))
+    latencies = [r["latency_seconds"] or 0.0 for r in rows]  # failed attempts included
+    ok_rows = [r for r in rows if not r.get("failed")]
+    estimated = sum(1 for r in ok_rows if r["metadata"].get("estimated"))
     base = store.summary(since=since)
+    attempts = base["total_calls"] + base["failed_calls"]
     return {
         "calls": base["total_calls"],
+        "failed_calls": base["failed_calls"],
+        "failure_rate": round(base["failed_calls"] / attempts, 4) if attempts else 0.0,
         "estimated_token_calls": estimated,
         "tokens": base["total_tokens"],
-        "prompt_tokens": sum((r["prompt_tokens"] or 0) for r in rows),
-        "completion_tokens": sum((r["completion_tokens"] or 0) for r in rows),
+        "prompt_tokens": sum((r["prompt_tokens"] or 0) for r in ok_rows),
+        "completion_tokens": sum((r["completion_tokens"] or 0) for r in ok_rows),
         "cost_usd": round(base["total_cost"], 6),
         "latency_p50_s": round(_pct(latencies, 0.5), 3),
         "latency_p95_s": round(_pct(latencies, 0.95), 3),
@@ -44,7 +48,8 @@ def build_report(store: TelemetryStore, since: float | None = None, top: int = 5
 
 def render(report: dict[str, Any]) -> str:
     L = ["Flexie LLM usage", "================",
-         f"Calls: {report['calls']}  (token counts estimated for {report['estimated_token_calls']})",
+         f"Calls: {report['calls']}  (token counts estimated for {report['estimated_token_calls']})  "
+         f"failed: {report['failed_calls']} ({report['failure_rate']:.1%})",
          f"Tokens: {report['tokens']:,}  (prompt {report['prompt_tokens']:,} / completion {report['completion_tokens']:,})",
          f"Estimated cost: ${report['cost_usd']:.4f}",
          f"Model-call latency: p50 {report['latency_p50_s']}s  p95 {report['latency_p95_s']}s", "",

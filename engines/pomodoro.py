@@ -1,9 +1,8 @@
 import threading
-import time
 
 
 class PomodoroEngine:
-    """Pomodoro focus timer engine."""
+    """Pomodoro focus timer engine (one loop thread, Event-based waits)."""
 
     def __init__(self):
         self.work_duration = 25 * 60  # 25 minutes default
@@ -14,56 +13,72 @@ class PomodoroEngine:
         self._running = False
         self._sessions_completed = 0
         self._callback = None
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
 
     def set_callback(self, callback):
         self._callback = callback
 
-    def start(self, work_minutes: int = None, break_minutes: int = None):
-        if work_minutes:
-            self.work_duration = work_minutes * 60
-        if break_minutes:
-            self.break_duration = break_minutes * 60
+    def _say(self, msg: str):
+        cb = self._callback
+        if cb:
+            try:
+                cb(msg)
+            except Exception:  # a broken callback must never kill the loop
+                pass
 
-        self._running = True
-        self._sessions_completed = 0
-        self._run_session(is_work=True)
+    def start(self, work_minutes: int = None, break_minutes: int = None) -> bool:
+        """Start the loop. Returns False (and starts nothing) if already running."""
+        with self._lock:
+            if self._running and self._timer is not None and self._timer.is_alive():
+                return False
+            if work_minutes:
+                self.work_duration = work_minutes * 60
+            if break_minutes:
+                self.break_duration = break_minutes * 60
+            self._running = True
+            self._sessions_completed = 0
+            self._stop_event = threading.Event()
+            stop = self._stop_event
+            self._timer = threading.Thread(target=self._loop, args=(stop,), daemon=True)
+            self._timer.start()
+            return True
 
-    def _run_session(self, is_work: bool):
-        if not self._running:
-            return
+    def _session_duration(self, is_work: bool) -> float:
+        if is_work:
+            return self.work_duration
+        if self._sessions_completed > 0 and self._sessions_completed % self.sessions_before_long == 0:
+            return self.long_break_duration
+        return self.break_duration
 
-        duration = self.work_duration if is_work else self.break_duration
-        if not is_work and self._sessions_completed > 0 and self._sessions_completed % self.sessions_before_long == 0:
-            duration = self.long_break_duration
-
-        session_type = "Work" if is_work else ("Long Break" if duration == self.long_break_duration else "Break")
-
-        if self._callback:
-            self._callback(f"Pomodoro {session_type} started — {duration // 60} minutes")
-
-        def _countdown():
-            remaining = duration
-            while remaining > 0 and self._running:
-                time.sleep(1)
-                remaining -= 1
-            if self._running:
-                if is_work:
-                    self._sessions_completed += 1
-                    if self._callback:
-                        self._callback(f"Work session complete! Session {self._sessions_completed}. Time for a break.")
-                else:
-                    if self._callback:
-                        self._callback("Break over! Ready to work?")
-                # Auto-start next session
-                self._run_session(is_work=not is_work)
-
-        self._timer = threading.Thread(target=_countdown, daemon=True)
-        self._timer.start()
+    def _loop(self, stop: threading.Event):
+        is_work = True
+        while not stop.is_set():
+            duration = self._session_duration(is_work)
+            if is_work:
+                session_type = "Work"
+            else:
+                session_type = "Long Break" if duration == self.long_break_duration else "Break"
+            self._say(f"Pomodoro {session_type} started — {duration // 60:g} minutes")
+            if stop.wait(duration):  # returns True if stopped early
+                break
+            if is_work:
+                self._sessions_completed += 1
+                self._say(f"Work session complete! Session {self._sessions_completed}. Time for a break.")
+            else:
+                self._say("Break over! Ready to work?")
+            is_work = not is_work
+        with self._lock:
+            if self._stop_event is stop:
+                self._running = False
 
     def stop(self):
-        self._running = False
-        if self._timer:
-            self._timer.join(timeout=2)
+        with self._lock:
+            self._running = False
+            self._stop_event.set()
+            t = self._timer
+        if t and t is not threading.current_thread():
+            t.join(timeout=2)
 
     def status(self) -> str:
         if self._running:

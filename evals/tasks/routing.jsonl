@@ -14,7 +14,7 @@
 {"task_id": "route-014", "query": "calculate 5 plus 5", "expected": "calc"}
 {"task_id": "route-015", "query": "what is 12 times 12", "expected": "calc"}
 {"task_id": "route-016", "query": "check battery", "expected": "status"}
-{"task_id": "route-017", "query": "remember that my name is Dhanush", "expected": "memory"}
+{"task_id": "route-017", "query": "remember that my name is Dhanush", "expected": "memory_system"}
 {"task_id": "route-018", "query": "translate good morning to Spanish", "expected": "translate"}
 {"task_id": "route-019", "query": "convert 100 dollars to rupees", "expected": "convert"}
 {"task_id": "route-020", "query": "convert 5 kilometers to miles", "expected": "convert"}
@@ -43,3 +43,116 @@
 {"task_id": "route-043", "query": "good morning flexie", "expected": "daily_briefing"}
 {"task_id": "route-044", "query": "unknown gibberish xyz", "expected": "conversational"}
 {"task_id": "route-045", "query": "", "expected": "conversational"}
+{"task_id": "route-046", "query": "stop", "expected": "conversational"}
+{"task_id": "route-047", "query": "stop it", "expected": "conversational"}
+{"task_id": "route-048", "query": "stop talking", "expected": "conversational"}
+{"task_id": "route-049", "query": "what's the weather", "expected": "weather"}
+{"task_id": "route-050", "query": "weather in paris", "expected": "weather"}
+{"task_id": "route-051", "query": "what's the weather in delhi", "expected": "weather"}
+{"task_id": "route-052", "query": "will it rain tomorrow", "expected": "weather"}
+{"task_id": "route-053", "query": "open notepad", "expected": "app_op"}
+{"task_id": "route-054", "query": "launch calculator", "expected": "app_op"}
+{"task_id": "route-055", "query": "close spotify", "expected": "app_op"}
+{"task_id": "route-056", "query": "mute", "expected": "media"}
+{"task_id": "route-057", "query": "volume up", "expected": "media"}
+{"task_id": "route-058", "query": "volume down", "expected": "media"}
+{"task_id": "route-059", "query": "what time is it", "expected": "alarm"}
+{"task_id": "route-060", "query": "tell me a joke", "expected": "jokes"}
+{"task_id": "route-061", "query": "who is elon musk", "expected": "conversational"}
+{"task_id": "route-062", "query": "what's the capital of france", "expected": "conversational"}
+{"task_id": "route-063", "query": "what's my name", "expected": "conversational"}
+{"task_id": "route-064", "query": "define serendipity", "expected": "dictionary"}
+{"task_id": "route-065", "query": "set an alarm for 7 am", "expected": "alarm"}
+{"task_id": "route-066", "query": "set a timer for 5 minutes", "expected": "alarm"}
+{"task_id": "route-067", "query": "show my alarms", "expected": "alarm"}
+{"task_id": "route-068", "query": "take a note buy eggs", "expected": "take_note"}
+{"task_id": "route-069", "query": "list my todos", "expected": "todo_list"}
+{"task_id": "route-070", "query": "add milk to my todo list", "expected": "todo_list"}
+{"task_id": "route-071", "query": "read my email", "expected": "mail_check"}
+{"task_id": "route-072", "query": "send an email to john", "expected": "mail_send"}
+{"task_id": "route-073", "query": "what's my battery level", "expected": "status"}
+{"task_id": "route-074", "query": "how much battery is left", "expected": "status"}
+{"task_id": "route-075", "query": "lock my computer", "expected": "power"}
+{"task_id": "route-076", "query": "restart the computer", "expected": "power"}
+{"task_id": "route-077", "query": "hi flexie", "expected": "social"}
+{"task_id": "route-078", "query": "thanks", "expected": "social"}
+{"task_id": "route-079", "query": "how are you", "expected": "social"}
+{"task_id": "route-080", "query": "goodbye", "expected": "exit"}
+{"task_id": "route-081", "query": "what's on my screen", "expected": "vision_analyze"}
+{"task_id": "route-082", "query": "read my screen", "expected": "vision_analyze"}
+{"task_id": "route-083", "query": "describe my screen", "expected": "vision_analyze"}
+{"task_id": "route-084", "query": "play despacito", "expected": "play_youtube"}
+{"task_id": "route-085", "query": "play arijit singh songs", "expected": "play_youtube"}
+{"task_id": "route-086", "query": "create a file notes.txt", "expected": "file_save"}
+{"task_id": "route-087", "query": "copy this to clipboard", "expected": "clipboard_mgr"}
+{"task_id": "route-088", "query": "what's in my clipboard", "expected": "clipboard_mgr"}
+{"task_id": "route-089", "query": "translate hello to french", "expected": "translate"}
+{"task_id": "route-090", "query": "how do you say thank you in german", "expected": "translate"}
+{"task_id": "route-091", "query": "what is 15 percent of 200", "expected": "calc"}
+{"task_id": "route-092", "query": "what's 5 plus 3", "expected": "calc"}
+{"task_id": "route-093", "query": "convert 10 miles to km", "expected": "convert"}
+{"task_id": "route-094", "query": "how old am i", "expected": "age_calc"}
+{"task_id": "route-095", "query": "generate a password", "expected": "password"}
+{"task_id": "route-096", "query": "tell me a fun fact", "expected": "facts"}
+{"task_id": "route-097", "query": "give me a quote", "expected": "quotes"}
+{"task_id": "route-098", "query": "what's the news", "expected": "news"}
+{"task_id": "route-099", "query": "latest headlines", "expected": "news"}
+{"task_id": "route-100", "query": "summarize this page", "expected": "browser_extract"}
+{"task_id": "route-101", "query": "screenshot", "expected": "vision_capture"}
+{"task_id": "route-102", "query": "open youtube", "expected": "browser_navigate"}
+{"task_id": "route-103", "query": "open gmail", "expected": "gmail"}
+{"task_id": "route-104", "query": "close tab", "expected": "browser_tabs"}
+{"task_id": "route-105", "query": "scroll down", "expected": "browser_control"}
+{"task_id": "route-106", "query": "who are you", "expected": "awareness"}
+{"task_id": "route-107", "query": "what can you do", "expected": "awareness"}
+{"task_id": "route-108", "query": "tell me about yourself", "expected": "awareness"}
+{"task_id": "route-109", "query": "forget everything", "expected": "memory"}
+{"task_id": "route-110", "query": "clear memory", "expected": "memory"}
+{"task_id": "route-111", "query": "start pomodoro", "expected": "pomodoro"}
+{"task_id": "route-112", "query": "stop pomodoro", "expected": "pomodoro"}
+{"task_id": "route-113", "query": "wake me up at 6", "expected": "alarm"}
+{"task_id": "route-114", "query": "cancel alarm", "expected": "alarm"}
+{"task_id": "route-115", "query": "qr code for example.com", "expected": "qr_code"}
+{"task_id": "route-116", "query": "hash hello with sha256", "expected": "hash_encoder"}
+{"task_id": "route-117", "query": "format this json", "expected": "json_fmt"}
+{"task_id": "route-118", "query": "lorem ipsum", "expected": "lorem"}
+{"task_id": "route-119", "query": "what's my ip", "expected": "ip_lookup"}
+{"task_id": "route-120", "query": "bmi for 70 kg 175 cm", "expected": "body_metrics"}
+{"task_id": "route-121", "query": "tip on 50 dollars", "expected": "tip_calc"}
+{"task_id": "route-122", "query": "brightness up", "expected": "media"}
+{"task_id": "route-123", "query": "git status", "expected": "dev"}
+{"task_id": "route-124", "query": "fix the build", "expected": "job_fix"}
+{"task_id": "route-125", "query": "resume the job", "expected": "job_resume"}
+{"task_id": "route-126", "query": "opne chrom", "expected": "app_op"}
+{"task_id": "route-127", "query": "wether in delhi", "expected": "weather"}
+{"task_id": "route-128", "query": "plya some musik", "expected": "play_youtube"}
+{"task_id": "route-129", "query": "serch for cats", "expected": "research"}
+{"task_id": "route-130", "query": "calcualte 5 plus 5", "expected": "calc"}
+{"task_id": "route-131", "query": "tell me about python", "expected": "conversational"}
+{"task_id": "route-132", "query": "what do you know about me", "expected": "awareness"}
+{"task_id": "route-133", "query": "start pomodoro timer", "expected": "pomodoro"}
+{"task_id": "route-134", "query": "open the downloads folder", "expected": "app_op"}
+{"task_id": "route-135", "query": "remind me to call mom at 5pm", "expected": "remind_me"}
+{"task_id": "route-136", "query": "what is the speed of light", "expected": "search"}
+{"task_id": "route-137", "query": "what is machine learning", "expected": "search"}
+{"task_id": "route-138", "query": "what is 7 times 8", "expected": "calc"}
+{"task_id": "route-139", "query": "calculate 100 divided by 4", "expected": "calc"}
+{"task_id": "route-140", "query": "what's the best programming language", "expected": "conversational"}
+{"task_id": "route-141", "query": "can you tell me the weather", "expected": "weather"}
+{"task_id": "route-142", "query": "is it going to be hot today", "expected": "weather"}
+{"task_id": "route-143", "query": "set volume to 30 percent", "expected": "media"}
+{"task_id": "route-144", "query": "remind me in 2 hours to stretch", "expected": "remind_me"}
+{"task_id": "route-145", "query": "what's two plus two", "expected": "calc"}
+{"task_id": "route-146", "query": "hey flexie how are you", "expected": "social"}
+{"task_id": "route-147", "query": "take a picture of my screen", "expected": "vision_capture"}
+{"task_id": "route-148", "query": "whats the temperature outside", "expected": "weather"}
+{"task_id": "route-149", "query": "how do i delete a file", "expected": "search"}
+{"task_id": "route-150", "query": "tell me a dad joke", "expected": "jokes"}
+{"task_id": "route-151", "query": "what is the capital of japan", "expected": "search"}
+{"task_id": "route-152", "query": "what model are you using", "expected": "awareness"}
+{"task_id": "route-153", "query": "why did that fail", "expected": "awareness"}
+{"task_id": "route-154", "query": "what did you just do", "expected": "awareness"}
+{"task_id": "route-155", "query": "are you listening", "expected": "awareness"}
+{"task_id": "route-156", "query": "what do you remember about me", "expected": "awareness"}
+{"task_id": "route-157", "query": "who made you", "expected": "awareness"}
+{"task_id": "route-158", "query": "what tools do you have", "expected": "awareness"}
