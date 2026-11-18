@@ -146,10 +146,14 @@ def test_execute_sequential_falls_back_when_dag_fails(monkeypatch):
     assert any("Step 1: open notepad" in s for s in orch.spoken)
 
 
-def test_execute_uses_dag_for_small_plans(monkeypatch):
+def test_small_plans_use_the_same_sequential_path_as_large_ones(monkeypatch):
+    """Plans of <= 4 steps used to go to a DAG runner that deadlocked on the single action worker
+    and skipped verification and reporting. Every plan now takes the one sequential path."""
     monkeypatch.setattr("core.workflow_executor.time.sleep", lambda *a, **k: None)
+    monkeypatch.setattr("core.workflow_executor.SystemCtrl.get_active_window_title", lambda: "notepad")
+    monkeypatch.setattr("core.workflow_executor.SystemCtrl.get_clipboard", lambda: "clip")
     orch = FakeOrch()
     executor = WorkflowExecutor(orch)
     executor.execute(["open notepad"])
-    assert orch.dag_calls  # DAG path executed and returned early
-    assert orch.executed == []
+    assert orch.dag_calls == []
+    assert orch.executed == ["open notepad"]

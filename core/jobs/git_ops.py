@@ -1,17 +1,31 @@
 """Git versioning and phase undo operations inside job workspaces."""
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
-import subprocess
+import time
+from dataclasses import dataclass
 
+from core.jobs.process import RunResult, run_tracked, scrubbed_env
 from utils.config import Config
 from utils.path_jail import resolve_in_root
 
 logger = logging.getLogger("flexie.jobs.git")
 
 _GIT_WARNED = False
+_STALE_LOCK_SECONDS = 120
+
+GITIGNORE_LINES = [
+    ".venv/", "venv/", "env/", "node_modules/", "__pycache__/", "*.pyc", ".pytest_cache/",
+    ".mypy_cache/", ".ruff_cache/", ".env", ".env.local", ".vscode/settings.json",
+    ".flexie_build.log", ".flexie_backups/", "*.part", ".flexie_tmp_*",
+]
+
+
+def _timeout() -> int:
+    return int(getattr(Config, "JOB_GIT_TIMEOUT", 60))
 
 
 def is_git_available() -> bool:
@@ -21,6 +35,48 @@ def is_git_available() -> bool:
         logger.warning("Git CLI is not installed or not on PATH. Phase versioning & undo disabled.")
         _GIT_WARNED = True
     return has_git
+
+
+def _git(args: list[str], cwd: str, timeout: float | None = None) -> RunResult:
+    """Run git (no shell, scrubbed env, tree-killed on timeout)."""
+    env = scrubbed_env({"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"})
+    return run_tracked(["git", *args], cwd=cwd, timeout=timeout or _timeout(), env=env)
+
+
+def ensure_gitignore(workspace: str) -> bool:
+    """Create/extend .gitignore so dependency dirs, secrets and build junk are never committed."""
+    path = os.path.join(workspace, ".gitignore")
+    existing: list[str] = []
+    try:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                existing = f.read().splitlines()
+        have = {ln.strip() for ln in existing}
+        missing = [ln for ln in GITIGNORE_LINES if ln not in have]
+        if not missing and existing:
+            return True
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(existing + (["# added by Flexie"] if existing else []) + missing) + "\n")
+        return True
+    except OSError as e:
+        logger.warning("Could not write .gitignore in %s: %s", workspace, e)
+        return False
+
+
+def clean_stale_index_lock(real_ws: str, force: bool = False) -> bool:
+    """Remove .git/index.lock when it is stale (older than 2 min) or ``force`` (our git was killed)."""
+    lock = os.path.join(real_ws, ".git", "index.lock")
+    try:
+        if not os.path.exists(lock):
+            return False
+        age = time.time() - os.path.getmtime(lock)
+        if force or age >= _STALE_LOCK_SECONDS:
+            os.remove(lock)
+            logger.warning("Removed stale git index.lock in %s (age %.0fs)", real_ws, age)
+            return True
+    except OSError as e:
+        logger.warning("Could not remove index.lock in %s: %s", real_ws, e)
+    return False
 
 
 def init_job_repo(workspace: str, workspace_root: str | None = None) -> bool:
@@ -36,93 +92,95 @@ def init_job_repo(workspace: str, workspace_root: str | None = None) -> bool:
             logger.error("Git init refused: workspace escapes root: %s", e)
             return False
 
+    ensure_gitignore(real_ws)
     git_dir = os.path.join(real_ws, ".git")
     if os.path.exists(git_dir):
         return True
 
     try:
-        res = subprocess.run(
-            ["git", "init"],
-            cwd=real_ws,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            shell=False,
-        )
+        res = _git(["init"], real_ws, 30)
         if res.returncode != 0:
             logger.warning("git init failed in %s: %s", real_ws, res.stderr)
             return False
-
-        # Set identity if unconfigured locally
-        subprocess.run(
-            ["git", "config", "user.name", getattr(Config, "GIT_USER_NAME", "Flexie Dev Assistant")],
-            cwd=real_ws,
-            capture_output=True,
-            timeout=5,
-            shell=False,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", getattr(Config, "GIT_USER_EMAIL", "flexie@local")],
-            cwd=real_ws,
-            capture_output=True,
-            timeout=5,
-            shell=False,
-        )
+        _git(["config", "user.name", getattr(Config, "GIT_USER_NAME", "Flexie Dev Assistant")], real_ws, 10)
+        _git(["config", "user.email", getattr(Config, "GIT_USER_EMAIL", "flexie@local")], real_ws, 10)
         return True
     except Exception as e:
         logger.warning("git init error in %s: %s", real_ws, e)
         return False
 
 
-def commit_job_phase(workspace: str, phase_name: str, message: str) -> str | None:
-    """Stage all files and commit with a clear phase message. Returns commit SHA if made."""
-    if not is_git_available():
-        return None
+@dataclass
+class CommitResult:
+    sha: str | None  # short sha of a commit created by THIS call, else None
+    committed: bool
+    error: str | None = None
 
+
+def _head(real_ws: str) -> str | None:
+    r = _git(["rev-parse", "HEAD"], real_ws, 15)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def commit_job_phase_ex(workspace: str, phase_name: str, message: str) -> CommitResult:
+    """Stage and commit; reports whether a new commit was really made and any failure."""
+    if not is_git_available():
+        return CommitResult(None, False, "git not available")
     real_ws = os.path.realpath(workspace)
     if not os.path.exists(os.path.join(real_ws, ".git")):
-        return None
+        return CommitResult(None, False, "not a git repository")
 
     try:
-        # Stage all changes
-        subprocess.run(
-            ["git", "add", "-A"],
-            cwd=real_ws,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            shell=False,
-        )
+        ensure_gitignore(real_ws)
+        clean_stale_index_lock(real_ws)
+        before = _head(real_ws)
 
-        # Commit
-        commit_msg = f"phase({phase_name}): {message}"
-        subprocess.run(
-            ["git", "commit", "-m", commit_msg],
-            cwd=real_ws,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            shell=False,
-        )
+        add = _git(["add", "-A"], real_ws)
+        if add.timed_out:
+            clean_stale_index_lock(real_ws, force=True)
+            return CommitResult(None, False, f"git add timed out after {_timeout()}s")
+        if add.returncode != 0:
+            return CommitResult(None, False, f"git add failed: {add.stderr.strip()[:300]}")
 
-        # If nothing to commit, return current HEAD
-        rev_res = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=real_ws,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            shell=False,
+        name = getattr(Config, "GIT_USER_NAME", "Flexie Dev Assistant")
+        email = getattr(Config, "GIT_USER_EMAIL", "flexie@local")
+        commit = _git(
+            ["-c", f"user.name={name}", "-c", f"user.email={email}", "commit", "-m", f"phase({phase_name}): {message}"],
+            real_ws,
         )
-        if rev_res.returncode == 0:
-            return rev_res.stdout.strip()
+        if commit.timed_out:
+            clean_stale_index_lock(real_ws, force=True)
+            return CommitResult(None, False, f"git commit timed out after {_timeout()}s")
+
+        after = _head(real_ws)
+        if after and after != before:
+            short = _git(["rev-parse", "--short", "HEAD"], real_ws, 15)
+            return CommitResult(short.stdout.strip() or after[:7], True)
+        out = f"{commit.stdout}\n{commit.stderr}".lower()
+        if commit.returncode == 0 or "nothing to commit" in out or "nothing added" in out:
+            return CommitResult(None, False)  # genuinely nothing to commit
+        return CommitResult(None, False, f"git commit failed: {(commit.stderr or commit.stdout).strip()[:300]}")
     except Exception as e:
         logger.warning("git commit error in %s: %s", real_ws, e)
-    return None
+        return CommitResult(None, False, str(e))
 
 
-def undo_last_phase(workspace: str, workspace_root: str | None = None) -> tuple[bool, str]:
-    """Hard reset to the previous phase commit inside the job workspace."""
+def commit_job_phase(workspace: str, phase_name: str, message: str) -> str | None:
+    """Commit and return the NEW commit's short SHA, or None when nothing was committed."""
+    res = commit_job_phase_ex(workspace, phase_name, message)
+    if res.error:
+        logger.warning("Phase commit problem: %s", res.error)
+    return res.sha
+
+
+def undo_last_phase(
+    workspace: str, workspace_root: str | None = None, expected_commit: str | None = None
+) -> tuple[bool, str]:
+    """Hard reset to the commit before the last phase commit.
+
+    When ``expected_commit`` is given, HEAD must be exactly that commit, otherwise
+    nothing is reset (prevents reverting two phases after a no-op phase).
+    """
     if not is_git_available():
         return False, "Git is not available on this system. Undo is disabled."
 
@@ -137,27 +195,21 @@ def undo_last_phase(workspace: str, workspace_root: str | None = None) -> tuple[
         return False, "Workspace is not a git repository."
 
     try:
-        # Check if HEAD~1 exists
-        check = subprocess.run(
-            ["git", "rev-parse", "--verify", "HEAD~1"],
-            cwd=real_ws,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            shell=False,
-        )
+        clean_stale_index_lock(real_ws)
+        if expected_commit:
+            exp = _git(["rev-parse", "--verify", f"{expected_commit}^{{commit}}"], real_ws, 15)
+            head = _head(real_ws)
+            if exp.returncode != 0 or not head or exp.stdout.strip() != head:
+                return False, "The workspace has moved on since that phase was committed; refusing to roll back."
+
+        check = _git(["rev-parse", "--verify", "HEAD~1"], real_ws, 15)
         if check.returncode != 0:
             return False, "No previous phase commit found to roll back to."
 
-        # Perform hard reset
-        reset_res = subprocess.run(
-            ["git", "reset", "--hard", "HEAD~1"],
-            cwd=real_ws,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            shell=False,
-        )
+        reset_res = _git(["reset", "--hard", "HEAD~1"], real_ws)
+        if reset_res.timed_out:
+            clean_stale_index_lock(real_ws, force=True)
+            return False, "Git reset timed out."
         if reset_res.returncode == 0:
             return True, "Successfully rolled back workspace to previous phase commit."
         return False, f"Git reset failed: {reset_res.stderr.strip()}"
@@ -174,24 +226,14 @@ def get_job_git_history(workspace: str, max_count: int = 10) -> list[dict]:
     if not os.path.exists(os.path.join(real_ws, ".git")):
         return []
 
-    try:
-        res = subprocess.run(
-            ["git", "log", f"-n{max_count}", "--format=%h|%s"],
-            cwd=real_ws,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            shell=False,
-        )
+    with contextlib.suppress(Exception):
+        res = _git(["log", f"-n{int(max_count)}", "--format=%h|%s"], real_ws, 15)
         if res.returncode != 0:
             return []
-
         commits = []
         for line in res.stdout.strip().splitlines():
             if "|" in line:
                 sha, msg = line.split("|", 1)
                 commits.append({"sha": sha.strip(), "message": msg.strip()})
         return commits
-    except Exception as e:
-        logger.debug("Failed to read git history in %s: %s", real_ws, e)
-        return []
+    return []

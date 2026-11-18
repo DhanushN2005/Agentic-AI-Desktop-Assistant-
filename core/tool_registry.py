@@ -15,7 +15,10 @@ Each tool has:
 
 The LLM never executes arbitrary code. It requests a registered tool by name.
 """
+import contextvars
 import logging
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -27,6 +30,11 @@ from core.capabilities import CapabilityPolicy
 # Tools carrying these tags return content authored by third parties (web pages, email,
 # MCP servers). That content is untrusted DATA: it may contain injected instructions.
 UNTRUSTED_SOURCE_TAGS = frozenset({"web", "extract", "email", "mcp"})
+
+
+# Tools carrying these tags touch thread-affine resources (Playwright pages, COM, the desktop
+# session). They must run on the calling thread, so their timeout is reported, not interrupted.
+THREAD_AFFINE_TAGS = frozenset({"browser", "automation", "desktop", "vision", "clipboard", "app"})
 
 
 class PermissionLevel(Enum):
@@ -78,6 +86,9 @@ class ToolSpec:
     tags: list[str] = field(default_factory=list)  # for grouping: "browser", "file", "system"
     enabled: bool = True
     capabilities: list[str] = field(default_factory=list)
+    # True: running it again leaves the same state (safe to retry after an inconclusive check).
+    # None: decide from the permission level (read-only / reversible tools are repeatable).
+    idempotent: bool | None = None
 
     def input_schema_dict(self) -> dict:
         """Returns JSON-schema-like dict for LLM consumption."""
@@ -243,9 +254,9 @@ class ToolRegistry:
             return ActionResult.fail(message=f"Invalid args: {err}", intent=tool_name, data={"error": err})
 
         # Execute
-        effective_timeout = timeout or tool.timeout
+        effective_timeout = self._effective_timeout(tool, args, timeout)
         try:
-            result = tool.execute_fn(**args)
+            result = self._invoke(tool, args, effective_timeout)
             # Ensure result is ActionResult
             if not isinstance(result, ActionResult):
                 result = ActionResult.ok(message=str(result), intent=tool_name, data={"raw": result})
@@ -260,9 +271,9 @@ class ToolRegistry:
         except TimeoutError as _e:
             logging.debug("[core/tool_registry.py:207] Swallowed exception: %s: %s", type(_e).__name__, _e)
             return ActionResult.fail(
-                message=f"Tool '{tool_name}' timed out after {effective_timeout}s",
+                message=f"Tool '{tool_name}' timed out after {effective_timeout:.0f}s (outcome unknown)",
                 intent=tool_name,
-                data={"timeout": effective_timeout}
+                data={"timeout": effective_timeout, "outcome_unknown": True},
             )
         except Exception as e:
             logging.debug("[core/tool_registry.py:213] Swallowed exception: %s: %s", type(e).__name__, e)
@@ -271,6 +282,58 @@ class ToolRegistry:
                 intent=tool_name,
                 data={"error": str(e), "error_type": type(e).__name__}
             )
+
+    @staticmethod
+    def _effective_timeout(tool: "ToolSpec", args: dict, requested: float | None) -> float:
+        """Never shorter than what the tool itself declares it needs.
+
+        A plan step's default timeout (15 s) must not cut a 65 s test run, and a tool that takes
+        its own ``timeout`` argument (terminal.run, python.exec) gets that plus a little slack.
+        """
+        candidates = [tool.timeout or 0, requested or 0]
+        own = args.get("timeout") if isinstance(args, dict) else None
+        if isinstance(own, (int, float)) and not isinstance(own, bool) and own > 0:
+            candidates.append(own + 5)
+        value = max(candidates)
+        return value if value > 0 else 30.0
+
+    def _invoke(self, tool: "ToolSpec", args: dict, timeout: float) -> Any:
+        """Run the tool, enforcing ``timeout`` where that is safe.
+
+        Thread-affine tools run inline; if they overrun, the result is kept (the action did
+        happen) but flagged ``slow``. Everything else runs in a worker thread and a call that
+        overruns is reported as a timeout instead of blocking the agent. Python cannot kill a
+        thread, so a timed-out call may still finish in the background; callers must treat a
+        timeout as "outcome unknown", not "did not happen".
+        """
+        if set(tool.tags) & THREAD_AFFINE_TAGS:
+            started = time.monotonic()
+            result = tool.execute_fn(**args)
+            elapsed = time.monotonic() - started
+            if elapsed > timeout:
+                logging.warning("[TOOL] %s took %.1fs (limit %.0fs); thread-affine tool, not interrupted",
+                                tool.name, elapsed, timeout)
+                if isinstance(result, ActionResult):
+                    result.data = {**(result.data or {}), "slow_seconds": round(elapsed, 2)}
+            return result
+
+        box: dict[str, Any] = {}
+        ctx = contextvars.copy_context()  # keep per-command usage attribution inside the worker
+
+        def _run() -> None:
+            try:
+                box["result"] = ctx.run(tool.execute_fn, **args)
+            except BaseException as exc:  # re-raised on the caller's thread below
+                box["error"] = exc
+
+        worker = threading.Thread(target=_run, name=f"tool-{tool.name}", daemon=True)
+        worker.start()
+        worker.join(timeout)
+        if worker.is_alive():
+            raise TimeoutError(f"no result after {timeout:.0f}s; it may still be running in the background")
+        if "error" in box:
+            raise box["error"]
+        return box.get("result")
 
     def verify(self, tool_name: str, result: ActionResult) -> bool:
         """Run the tool's verification function if it has one."""

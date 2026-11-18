@@ -500,7 +500,8 @@ class FlexieOrchestrator:
                 duration_seconds=time.perf_counter() - started,
             )
             self._attach_usage(trace)
-            self.trace_collector.finish(trace, result=str(result)[:1000], outcome="success")
+            self.trace_collector.finish(trace, result=str(result)[:1000],
+                                        outcome="failure" if result is False else "success")
             return result
         except Exception:
             self._attach_usage(trace)
@@ -619,8 +620,7 @@ class FlexieOrchestrator:
                         return
                     if intent == "complex" and confidence >= 0.5 and "steps" in params and params["steps"]:
                         self.logger.info(f"[PLANNER] Compound command routed semantically. Confidence: {confidence:.2f}")
-                        self.execute_workflow(params["steps"])
-                        return
+                        return self.execute_workflow(params["steps"])
                 except Exception as e:
                     self.logger.error(f"[PLANNER] Dynamic compound routing failed: {e}. Falling back to flat regex split.")
 
@@ -746,8 +746,10 @@ class FlexieOrchestrator:
                 # planner's structured TaskGraph. Executed OUTSIDE the planning try-block
                 # so a mid-plan error is never retried as a second, duplicate run.
                 self.send_to_ui("STATE", "THINKING")
-                self.agent_executor.execute(plan_graph, speak=not silent)
-                return
+                plan_result = self.agent_executor.execute(plan_graph, speak=not silent)
+                # Report the REAL outcome: callers (command queue, DAG, traces) must not see a
+                # failed or stopped plan as a success.
+                return bool(plan_result.success)
             intent = "complex"
             params = {"steps": steps_desc}
 
@@ -806,8 +808,7 @@ class FlexieOrchestrator:
             else:
                 steps = params.get("steps", [])
                 self.logger.info(f"[PLAN] {cmd} -> {' | '.join(steps)}")
-                self.execute_workflow(steps, depth=depth+1)
-                return
+                return self.execute_workflow(steps, depth=depth+1)
 
         # Atomic Action / Goal Classification Trace
         self.logger.info(f"[{task_type.name}] {cmd} (Intent: {intent})")

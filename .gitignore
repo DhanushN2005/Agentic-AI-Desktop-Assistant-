@@ -59,3 +59,16 @@ evals/results/
 
 # Vector memory store (personal data)
 context/flexie_memory/
+# added by Flexie
+env/
+node_modules/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env.local
+.vscode/settings.json
+.flexie_build.log
+.flexie_backups/
+*.part
+.flexie_tmp_*

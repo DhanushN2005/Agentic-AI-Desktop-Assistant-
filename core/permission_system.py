@@ -70,13 +70,14 @@ class PermissionSystem:
             ],
             PermissionLevel.SENSITIVE: [
                 r"\b(terminate|kill|force stop|end process)\b",
-                r"\b(shutdown|restart|sleep|hibernate|log off|sign out)\b",
+                r"\b(shutdown|shut\s+down|power\s+off|restart|reboot|sleep|hibernate|log off|sign out)\b",
                 r"\b(lock screen|lock pc|lock computer)\b",
                 r"\b(change settings|modify config|update settings)\b",
                 r"\b(enable|disable)\s+(auto save|firewall|antivirus)\b",
             ],
             PermissionLevel.DANGEROUS: [
-                r"\b(rm -rf|del /s|format c:|wipe|erase all)\b",
+                r"\b(rm -rf|del /s|wipe|erase all)\b",
+                r"\bformat\s+[a-z]:",
                 r"\b(delete (account|profile|all|everything|permanent))\b",
                 r"\b(purchase|buy|pay|transfer money|send money)\b",
                 r"\b(confirm payment|place order|checkout)\b",
@@ -118,16 +119,22 @@ class PermissionSystem:
         if not command or not command.strip():
             return PermissionLevel.USER_CONFIRMATION
 
-        # Check from least restrictive to most restrictive
-        # Track the highest matching level
+        from core.plan_text import split_clauses
+
+        # Judge each clause on its own so a harmless question does not inherit the level of a
+        # risky-sounding word ("what is a good python tutorial", "how do I remove a stain"),
+        # while a compound request is still as strict as its riskiest action.
         highest = PermissionLevel.READ_ONLY
-        for level in list(PermissionLevel):
-            if level in self._compiled:
-                for pattern in self._compiled[level]:
-                    if pattern.search(command):
-                        if level.value > highest.value:
-                            highest = level
-                        break  # Found match for this level, move to next level
+        for clause in split_clauses(command) or [command]:
+            if self.danger_gate.is_benign_clause(clause):
+                continue
+            for level in list(PermissionLevel):
+                if level in self._compiled:
+                    for pattern in self._compiled[level]:
+                        if pattern.search(clause):
+                            if level.value > highest.value:
+                                highest = level
+                            break  # Found match for this level, move to next level
 
         # Also check the existing danger gate
         if self.danger_gate.detect(command):

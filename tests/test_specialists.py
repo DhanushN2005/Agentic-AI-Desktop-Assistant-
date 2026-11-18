@@ -97,9 +97,35 @@ def test_capability_delegation_to_specialist():
     mock_orch = MagicMock()
     mock_orch.capability_registry = CapabilityRegistry()
     mock_orch.agent_team = MagicMock()
-    mock_orch.agent_team.delegate.return_value = "Delegated task completed."
+    from core.agents import AgentResult
+    mock_orch.get_conversation_history.return_value = [{"role": "user", "content": "earlier"}]
+    mock_orch.agent_team.delegate_full.return_value = AgentResult("Delegated task completed.")
 
     handled = handle_capability_delegation(mock_orch, "specialist", "delegate research task", silent=False)
     assert handled is True
-    mock_orch.agent_team.delegate.assert_called_with("delegate research task")
+    args, kwargs = mock_orch.agent_team.delegate_full.call_args
+    assert args == ("delegate research task",)
+    assert kwargs["history"] == [{"role": "user", "content": "earlier"}]   # follow-up context is passed on
     mock_orch.speak.assert_called_with("Delegated task completed.")
+
+
+def test_delegation_reports_a_cut_short_run_as_not_handled():
+    """A specialist that hit its limits must not look like a normal answer (and an empty reply falls through)."""
+    from core.agents import AgentResult
+    from core.capability_registry import CapabilityRegistry
+    from core.handlers.agents import handle_capability_delegation
+
+    orch = MagicMock()
+    orch.capability_registry = CapabilityRegistry()
+    orch.agent_team = MagicMock()
+    orch.agent_team.delegate_full.return_value = AgentResult("I stopped because loop detected.",
+                                                              metadata={"budget_tripped": "loop detected"})
+    assert handle_capability_delegation(orch, "specialist", "do things", silent=False) is False
+    orch.speak.assert_called_with("I stopped because loop detected.")   # the user is still told
+
+    orch2 = MagicMock()
+    orch2.capability_registry = CapabilityRegistry()
+    orch2.agent_team = MagicMock()
+    orch2.agent_team.delegate_full.return_value = AgentResult("   ")
+    assert handle_capability_delegation(orch2, "specialist", "do things", silent=False) is False
+    orch2.speak.assert_not_called()

@@ -17,7 +17,7 @@
 {"task_id": "exec-001-denied-step-does-not-run", "kind": "executor_permission", "tool": "file.write", "args": {"path": "a.txt", "content": "x"}, "level": "SAFE_ACTION", "expect": {"completed": false}}
 {"task_id": "exec-002-allowed-step-runs", "kind": "executor_permission", "tool": "file.read", "args": {"path": "a.txt"}, "level": "SAFE_ACTION", "expect": {"completed": true}}
 {"task_id": "budget-001-step-cap", "kind": "budget", "steps": 40, "max_steps": 5, "max_repeats": 99, "expect": {"ran": 5, "tripped": "step budget"}}
-{"task_id": "budget-002-loop-guard", "kind": "budget", "steps": 12, "same": true, "max_repeats": 3, "expect": {"ran": 3, "tripped": "loop detected"}}
+{"task_id": "budget-002-identical-distinct-steps-all-run", "kind": "budget", "steps": 12, "same": true, "max_repeats": 3, "expect": {"ran": 12}}
 {"task_id": "budget-003-within-budget", "kind": "budget", "steps": 4, "max_steps": 20, "expect": {"ran": 4}}
 {"task_id": "confirm-001-plain-yes", "kind": "confirm", "reply": "yes", "expect": true}
 {"task_id": "confirm-002-go-ahead", "kind": "confirm", "reply": "ok go ahead", "expect": true}
@@ -43,3 +43,20 @@
 {"task_id": "usage-002-missing-usage-is-estimated-and-flagged", "kind": "usage", "calls": [{"provider": "groq", "prompt_chars": 400, "completion_chars": 40}], "expect": {"tokens": 110, "estimated_calls": 1}}
 {"task_id": "usage-003-local-model-is-free", "kind": "usage", "calls": [{"provider": "ollama", "usage": {"prompt_eval_count": 200, "eval_count": 50}}], "expect": {"tokens": 250, "estimated_calls": 0, "costly": false}}
 {"task_id": "usage-004-calls-sum-per-command", "kind": "usage", "calls": [{"provider": "anthropic", "usage": {"input_tokens": 100, "output_tokens": 10}}, {"provider": "gemini", "usage": {"prompt_token_count": 40, "candidates_token_count": 5}}, {"provider": "ollama", "prompt_chars": 40, "completion_chars": 4}], "expect": {"tokens": 166, "estimated_calls": 1, "costly": true}}
+
+{"task_id": "plan-009-footnote-after-json", "kind": "plan", "goal": "read a and then summarise it", "llm": "[{\"description\":\"read a\",\"tool\":\"file.read\",\"arguments\":{\"path\":\"a\"}}]\nNote [see docs] for details", "expect": {"n_steps": 1, "tools": ["file.read"]}}
+{"task_id": "plan-010-fenced-json", "kind": "plan", "goal": "read a and then summarise it", "llm": "```json\n[{\"description\":\"read a\",\"tool\":\"file.read\",\"arguments\":{\"path\":\"a\"}}]\n```", "expect": {"n_steps": 1, "tools": ["file.read"]}}
+{"task_id": "route-006-multi-domain-goes-to-lead", "kind": "route", "goal": "research solid state batteries and write a python script to model them", "expect": "lead"}
+{"task_id": "split-001-and-between-commands", "kind": "split", "text": "open chrome and search for cats", "expect": ["open chrome", "search for cats"]}
+{"task_id": "split-002-idiom-not-split", "kind": "split", "text": "play rock and roll music", "expect": ["play rock and roll music"]}
+{"task_id": "split-003-quotes-protected", "kind": "split", "text": "write \"salt and pepper\" in my list", "expect": ["write \"salt and pepper\" in my list"]}
+{"task_id": "split-004-case-preserved", "kind": "split", "text": "write Hello World to Notes.txt then open Chrome", "expect": ["write Hello World to Notes.txt", "open Chrome"]}
+{"task_id": "split-005-word-not-substring", "kind": "split", "text": "fix the authentication bug", "expect": ["fix the authentication bug"]}
+{"task_id": "split-006-short-verb-kept", "kind": "split", "text": "open chrome and go", "expect": ["open chrome", "go"]}
+{"task_id": "wording-001-question-is-harmless", "kind": "wording", "text": "what is a good python tutorial", "expect": false}
+{"task_id": "wording-002-how-to-delete-is-harmless", "kind": "wording", "text": "how do I delete a file", "expect": false}
+{"task_id": "wording-003-reminder-is-harmless", "kind": "wording", "text": "remind me to buy milk", "expect": false}
+{"task_id": "wording-004-real-delete-needs-approval", "kind": "wording", "text": "delete the old report", "expect": true}
+{"task_id": "wording-005-compound-hides-nothing", "kind": "wording", "text": "search for old files and delete them", "expect": true}
+{"task_id": "wording-006-disguised-request-needs-approval", "kind": "wording", "text": "can you delete all my files", "expect": true}
+{"task_id": "wording-007-two-word-shutdown", "kind": "wording", "text": "shut down the pc", "expect": true}

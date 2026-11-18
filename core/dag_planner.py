@@ -39,8 +39,17 @@ class DAGPlanner:
         # executor_callback must be a blocking call — see docstring above.
         self.executor_callback = executor_callback
 
-    def execute_graph(self, tasks: list[DAGTask]):
-        self.logger.info(f"[DAG] Starting DAG execution with {len(tasks)} tasks.")
+    def execute_graph(self, tasks: list[DAGTask], inline: bool = False) -> dict:
+        """Run the graph and return {"completed": [...], "failed": [...], "cancelled": [...]}.
+
+        ``inline=True`` runs every task on the CALLING thread, one at a time, in dependency
+        order. Use it whenever the callback needs the caller's thread (UI/COM/Playwright work)
+        or the caller IS the orchestrator's single action worker: a pooled thread that waits for
+        that worker to run its command would otherwise wait forever.
+        """
+        self.logger.info(f"[DAG] Starting DAG execution with {len(tasks)} tasks (inline={inline}).")
+        if inline:
+            return self._execute_inline(tasks)
 
         task_dict = {t.task_id: t for t in tasks}
         completed = set()
@@ -86,6 +95,46 @@ class DAGPlanner:
                     break
 
         self.logger.info(f"[DAG] Execution finished. Completed: {len(completed)}, Failed: {len(failed)}")
+        return {
+            "completed": sorted(completed),
+            "failed": sorted(t for t in failed if task_dict[t].status == "FAILED"),
+            "cancelled": sorted(t for t in failed if task_dict[t].status == "CANCELLED"),
+            "pending": sorted(t for t, task in task_dict.items() if task.status in ("PENDING", "RUNNING")),
+        }
+
+    def _execute_inline(self, tasks: list[DAGTask]) -> dict:
+        task_dict = {t.task_id: t for t in tasks}
+        completed: set[str] = set()
+        failed: set[str] = set()
+        progressed = True
+        while progressed and len(completed) + len(failed) < len(tasks):
+            progressed = False
+            for task in tasks:
+                if task.status != "PENDING":
+                    continue
+                if any(dep in failed for dep in task.dependencies):
+                    task.status = "CANCELLED"
+                    failed.add(task.task_id)
+                    progressed = True
+                elif all(dep in completed for dep in task.dependencies):
+                    task.status = "RUNNING"
+                    try:
+                        result = self._run_task(task)
+                        if ActionResult is not None and result is not None and not result.success:
+                            raise RuntimeError(f"Action failed: {result.message}")
+                        task.status = "COMPLETED"
+                        completed.add(task.task_id)
+                    except Exception as e:
+                        task.status = "FAILED"
+                        failed.add(task.task_id)
+                        self.logger.error(f"[DAG] Failed {task.task_id}: {e}")
+                    progressed = True
+        return {
+            "completed": sorted(completed),
+            "failed": sorted(t for t in failed if task_dict[t].status == "FAILED"),
+            "cancelled": sorted(t for t in failed if task_dict[t].status == "CANCELLED"),
+            "pending": sorted(t for t, task in task_dict.items() if task.status in ("PENDING", "RUNNING")),
+        }
 
     def _run_task(self, task: DAGTask):
         """

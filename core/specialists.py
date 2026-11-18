@@ -91,7 +91,14 @@ class SpecialistAgent:
 
         def authorize(tool_name: str, args: dict, reason: str) -> bool:
             spec = self.tool_registry.get(tool_name) if self.tool_registry else None
-            level = spec.permission if spec is not None else PermissionLevel.USER_CONFIRMATION
+            if spec is not None:
+                # The level the gate ACTUALLY demands right now (it is raised after untrusted
+                # content such as web pages or email). Using the tool's base level here meant an
+                # approved click could never run.
+                _allowed, _why, required = ps.check_permission(spec)
+                level = required or spec.permission
+            else:
+                level = PermissionLevel.USER_CONFIRMATION
             return ps.await_approval(
                 tool_name, f"run {tool_name} {args}", level,
                 voice_confirm=getattr(self.voice, "confirm", None),
@@ -100,14 +107,20 @@ class SpecialistAgent:
 
         return authorize, ps.consume_approval
 
-    def run(self, task: str, context: dict[str, Any] | None = None,
-            extra_tools: dict[str, ToolSpec] | None = None) -> str:
-        """Run a task inside this specialist's scope; returns the final reply text."""
+    def run_full(self, task: str, context: dict[str, Any] | None = None,
+                 extra_tools: dict[str, ToolSpec] | None = None,
+                 history: list[dict[str, Any]] | None = None):
+        """Run a task inside this specialist's scope; returns the full ``AgentResult``.
+
+        ``context`` (arbitrary facts) and ``history`` (recent conversation turns) reach the
+        model, and ``metadata`` tells the caller whether the run was cut short.
+        """
+        from core.agents import AgentContext, AgentResult, ScopedToolRegistry, ToolUsingAgent
+
         generate = self._generate_fn()
         if generate is None:
-            return f"[{self.name}] No model available to complete: {task}"
-
-        from core.agents import AgentContext, ScopedToolRegistry, ToolUsingAgent
+            return AgentResult(f"[{self.name}] No model available to complete: {task}",
+                               metadata={"failed": "no_model"})
 
         scoped_names = self.get_scoped_tools()
         scoped = ScopedToolRegistry(self.tool_registry, scoped_names, extra=extra_tools)
@@ -121,11 +134,18 @@ class SpecialistAgent:
             authorizer=authorize,
             on_authorized=consume,
         )
-        agent_context = AgentContext(tools=sorted(scoped.allowed), metadata=context or {})
+        agent_context = AgentContext(
+            conversation=list(history or []), tools=sorted(scoped.allowed), metadata=context or {})
         result = loop.run(task, agent_context)
         if result.metadata.get("budget_tripped"):
             logger.warning("[%s] stopped: %s", self.name, result.metadata["budget_tripped"])
-        return result.content
+        return result
+
+    def run(self, task: str, context: dict[str, Any] | None = None,
+            extra_tools: dict[str, ToolSpec] | None = None,
+            history: list[dict[str, Any]] | None = None) -> str:
+        """Like ``run_full`` but returns only the reply text (kept for existing callers)."""
+        return self.run_full(task, context, extra_tools, history).content
 
 
 # Word-boundary keyword scoring (substring matching sent "apple" to the System agent).
@@ -200,13 +220,16 @@ class AgentTeam:
 
     # ------------------------------------------------------------------ routing
     def route_task(self, goal: str) -> SpecialistAgent:
-        """Pick the specialist whose keywords match the goal most; ties favour coder > researcher > system."""
-        best_role, best_hits = SpecialistRole.LEAD, 0
-        for role, pattern in _ROUTES:
-            hits = len(pattern.findall(goal))
-            if hits > best_hits:
-                best_role, best_hits = role, hits
-        return self._by_role[best_role]
+        """Pick the specialist for a goal.
+
+        One matching domain -> that specialist. Several domains ("research X and write a
+        script") or none -> the lead, who can split the work and delegate to each specialist.
+        """
+        hits = {role: len(pattern.findall(goal or "")) for role, pattern in _ROUTES}
+        matched = [role for role, count in hits.items() if count > 0]
+        if len(matched) == 1:
+            return self._by_role[matched[0]]
+        return self._by_role[SpecialistRole.LEAD]
 
     # --------------------------------------------------------------- delegation
     def _delegate_tool(self, context: dict[str, Any] | None) -> ToolSpec:
@@ -239,9 +262,19 @@ class AgentTeam:
             tags=["delegate"],
         )
 
-    def delegate(self, goal: str, context: dict[str, Any] | None = None) -> str:
-        """Run a goal on the best-fit specialist (the lead may fan out to others)."""
+    def delegate_full(self, goal: str, context: dict[str, Any] | None = None,
+                      history: list[dict[str, Any]] | None = None):
+        """Run a goal on the best-fit specialist and return the full ``AgentResult``.
+
+        ``result.metadata`` carries ``budget_tripped`` / ``max_turns_exceeded`` / ``failed`` when
+        the run was cut short, so callers can tell a real answer from a stop notice.
+        """
         specialist = self.route_task(goal)
         logger.info("[AgentTeam] Delegating goal '%s' to %s", goal[:50], specialist.name)
         extra = {"delegate": self._delegate_tool(context)} if specialist.role == SpecialistRole.LEAD else None
-        return specialist.run(goal, context, extra_tools=extra)
+        return specialist.run_full(goal, context, extra_tools=extra, history=history)
+
+    def delegate(self, goal: str, context: dict[str, Any] | None = None,
+                 history: list[dict[str, Any]] | None = None) -> str:
+        """Run a goal on the best-fit specialist (the lead may fan out to others)."""
+        return self.delegate_full(goal, context, history).content

@@ -14,6 +14,59 @@ from utils.config import Config
 logger = logging.getLogger("flexie.jobs.handler")
 
 
+_EDIT_VERB_BODY = (
+    r"(?:update|edit|modify|improve|change|tweak|fix|"
+    r"add\s+(?:a\s+)?(?:feature|button|page|section|dark\s+mode|dual\s+theme|option)|"
+    r"make\s+(?:it\s+)?(?:responsive|darker|lighter|animated))\b"
+)
+_EDIT_VERBS = re.compile(r"\b" + _EDIT_VERB_BODY, re.IGNORECASE)
+_NEW_BUILD = re.compile(
+    r"\b(?:build|create|make|develop|generate|code|start)\s+(?:me\s+)?(?:a|an|another|new)\b"
+    r"|\bnew\s+(?:project|app|application|website|site)\b|\bfrom\s+scratch\b",
+    re.IGNORECASE,
+)
+_REFERS_EXISTING = re.compile(
+    r"\b(?:my|the|this|that|current|existing|last|previous)\s+(?:\w+\s+)?"
+    r"(?:app|application|project|website|site|page|build|code|ui|calculator|game|dashboard)\b",
+    re.IGNORECASE,
+)
+_JOB_REF = re.compile(r"\bjob\s+#?([0-9a-f]{8})\b", re.IGNORECASE)
+_POLITE = re.compile(
+    r"^(?:can you please|could you please|can you|could you|please|kindly|i want you to|i need you to|help me)\s+",
+    re.IGNORECASE,
+)
+_STARTS_WITH_EDIT = re.compile(r"^" + _EDIT_VERB_BODY, re.IGNORECASE)
+
+
+def _referenced_job_id(command: str) -> str | None:
+    m = _JOB_REF.search(command or "")
+    return m.group(1).lower() if m else None
+
+
+def is_edit_request(command: str) -> bool:
+    """True only when the request clearly targets the existing project.
+
+    A normal build request that merely contains 'update/change/improve' (for example
+    "build a todo app that lets users edit items") is NOT an edit.
+    """
+    text = (command or "").strip()
+    if not text or not _EDIT_VERBS.search(text):
+        return False
+    if _referenced_job_id(text):
+        return True
+    if _STARTS_WITH_EDIT.match(_POLITE.sub("", text)):
+        return True
+    return bool(_REFERS_EXISTING.search(text)) and not _NEW_BUILD.search(text)
+
+
+def _job_is_live(mgr: Any, job: Any) -> bool:
+    """True when a worker really owns/queues this job (not just a stale status on disk)."""
+    try:
+        return bool(mgr.is_job_live(job.id))
+    except Exception:
+        return False
+
+
 def handle_job_intent(orch: Any, intent: str, command: str) -> bool:
     """Single entry point for orchestrator dispatch to the background job runner."""
     mgr = JobManager.get_instance()
@@ -37,29 +90,36 @@ def handle_job_intent(orch: Any, intent: str, command: str) -> bool:
         mgr.register_notifier(_job_notify)
         mgr._orch_bridge_attached = True
 
-    command.strip().lower()
+    command = (command or "").strip()
 
     if intent in ("dev_build", "build_project"):
-        # Route edit/update/improve requests for an existing job to debug_job (repair pass)
-        _edit_verbs = re.compile(
-            r"\b(?:update|edit|modify|improve|change|add\s+(?:a\s+)?(?:feature|button|page|section|dark\s+mode|dual\s+theme|option)|make\s+(?:it\s+)?(?:responsive|darker|lighter|animated))\b",
-            re.IGNORECASE,
-        )
-        if _edit_verbs.search(command):
-            existing = mgr.get_latest_job()
-            if existing:
-                ok = mgr.debug_job(command, job_id=existing.id)
+        from core.jobs.models import JobStatus
+
+        existing = mgr.get_latest_job()
+        edit_job_id = _referenced_job_id(command)
+        if edit_job_id:
+            referenced = mgr.get_latest_job(edit_job_id)
+            if referenced:
+                existing = referenced
+        if existing and is_edit_request(command):
+            if _job_is_live(mgr, existing):
                 orch.speak(
-                    f"Updating {existing.title} — running a repair pass for your changes."
-                    if ok
-                    else "No recent project found to update."
+                    f"'{existing.title}' is still being built. Say 'cancel build' to stop it, "
+                    "or ask for your change again once it finishes."
                 )
                 return True
+            ok = mgr.debug_job(command, job_id=existing.id)
+            orch.speak(
+                f"Updating {existing.title} — running a repair pass for your changes."
+                if ok
+                else "I couldn't start an update for that project right now."
+            )
+            return True
 
-        # Deduplication: don't spawn a second job while one is already running/queued
-        from core.jobs.models import JobStatus
-        _active = mgr.get_latest_job()
-        if _active and _active.status in (JobStatus.RUNNING, JobStatus.QUEUED):
+        # Deduplication: don't spawn a second job while one is genuinely running/queued.
+        # Stale RUNNING/QUEUED rows on disk (nothing alive behind them) do not count.
+        _active = existing
+        if _active and _active.status in (JobStatus.RUNNING, JobStatus.QUEUED) and _job_is_live(mgr, _active):
             orch.speak(
                 f"A build for '{_active.title}' is already in progress. "
                 "Say 'build status' to check it or 'cancel build' to stop it first."
@@ -162,9 +222,13 @@ def handle_job_intent(orch: Any, intent: str, command: str) -> bool:
         if res.get("vscode_opened"):
             parts.append("opened the project folder in VS Code")
         if not parts:
-            import os
-            os.startfile(job.workspace_path)
-            parts.append(f"opened the project folder at {job.workspace_path}")
+            from core.jobs.launcher import open_folder
+            opened, detail = open_folder(job.workspace_path)
+            if opened:
+                parts.append(f"opened the project folder at {job.workspace_path}")
+            else:
+                orch.speak(f"I couldn't open the project. {detail}")
+                return True
         orch.speak(f"Done — {' and '.join(parts)}.")
 
         if hasattr(orch, "send_to_ui"):

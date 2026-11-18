@@ -9,10 +9,12 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import webbrowser
 from typing import Any
 
 from core.jobs.models import BuildJob
+from core.jobs.process import scrubbed_env
 
 logger = logging.getLogger("flexie.jobs.launcher")
 
@@ -45,8 +47,52 @@ def find_vscode_executable() -> str | None:
     return None
 
 
+def _vscode_argv(code_path: str, workspace_dir: str) -> list[str] | str:
+    """Command for VS Code that survives spaces in BOTH the program and project paths.
+
+    Preference order: the real ``Code.exe`` beside ``bin/code.cmd`` (no shell at all);
+    a plain .cmd/.bat goes through ``cmd.exe /c`` - as an argv list when neither path
+    has spaces, otherwise as the canonical ``cmd /d /s /c ""prog" "arg""`` string so
+    cmd's quote-stripping rule cannot mangle the two quoted paths.
+    """
+    if not code_path.lower().endswith((".cmd", ".bat")):
+        return [code_path, workspace_dir]
+    exe = os.path.join(os.path.dirname(os.path.dirname(code_path)), "Code.exe")
+    if os.path.isfile(exe):
+        return [exe, workspace_dir]
+    if " " not in code_path and " " not in workspace_dir:
+        return ["cmd.exe", "/c", code_path, workspace_dir]
+    if any(ch in code_path + workspace_dir for ch in '"%&^|<>!'):
+        raise ValueError("unsafe characters in VS Code or workspace path")
+    return f'cmd.exe /d /s /c ""{code_path}" "{workspace_dir}""'
+
+
+def open_folder(path: str) -> tuple[bool, str]:
+    """Open a folder in the platform file manager. Never raises; returns (ok, message)."""
+    if not path or not os.path.isdir(path):
+        return False, f"The folder no longer exists: {path or '(none)'}"
+    try:
+        if sys.platform == "win32" and hasattr(os, "startfile"):
+            os.startfile(path)  # type: ignore[attr-defined]
+            return True, "opened"
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        exe = shutil.which(opener)
+        if exe:
+            subprocess.Popen(
+                [exe, path], shell=False, env=scrubbed_env(),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return True, "opened"
+        if webbrowser.open("file:///" + os.path.abspath(path).replace(os.sep, "/")):
+            return True, "opened"
+        return False, "No file manager is available to open the folder."
+    except (OSError, AttributeError, ValueError) as e:
+        logger.warning("Could not open folder %s: %s", path, e)
+        return False, f"Could not open the folder: {e}"
+
+
 def launch_in_vscode(workspace_dir: str) -> bool:
-    """Open workspace_dir in VS Code, falling back to os.startfile on Windows."""
+    """Open workspace_dir in VS Code, falling back to the file manager."""
     if not os.path.isdir(workspace_dir):
         logger.error("Cannot launch VS Code: workspace directory '%s' does not exist", workspace_dir)
         return False
@@ -54,14 +100,10 @@ def launch_in_vscode(workspace_dir: str) -> bool:
     code_path = find_vscode_executable()
     if code_path:
         try:
-            if code_path.lower().endswith((".cmd", ".bat")):
-                cmd = ["cmd.exe", "/c", code_path, workspace_dir]
-            else:
-                cmd = [code_path, workspace_dir]
-
             subprocess.Popen(
-                cmd,
+                _vscode_argv(code_path, workspace_dir),
                 shell=False,
+                env=scrubbed_env(),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -70,16 +112,10 @@ def launch_in_vscode(workspace_dir: str) -> bool:
         except Exception as e:
             logger.warning("Failed to launch VS Code via executable '%s': %s", code_path, e)
 
-    # Fallback to os.startfile / explorer
-    try:
-        if hasattr(os, "startfile"):
-            os.startfile(workspace_dir)
-            logger.info("Opened workspace folder via os.startfile: %s", workspace_dir)
-            return True
-    except Exception as e:
-        logger.error("Fallback folder open failed for '%s': %s", workspace_dir, e)
-
-    return False
+    ok, msg = open_folder(workspace_dir)
+    if not ok:
+        logger.error("Fallback folder open failed for '%s': %s", workspace_dir, msg)
+    return ok
 
 
 def open_in_browser(target: str) -> bool:

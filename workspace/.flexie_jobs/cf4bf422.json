@@ -5,60 +5,60 @@
   "phase_list": [
     {
       "name": "scaffold",
-      "status": "pending",
-      "output": "",
-      "started_at": null,
-      "completed_at": null,
+      "status": "done",
+      "output": "Project scaffolded with templates, configs, and spec docs.",
+      "started_at": 1794993773.6186776,
+      "completed_at": 1794993773.7447407,
       "git_commit": null,
       "error": null
     },
     {
       "name": "core_logic",
-      "status": "pending",
-      "output": "",
-      "started_at": null,
-      "completed_at": null,
+      "status": "done",
+      "output": "Core logic implementation complete.",
+      "started_at": 1794993773.771879,
+      "completed_at": 1794993773.847792,
       "git_commit": null,
       "error": null
     },
     {
       "name": "ui",
-      "status": "pending",
-      "output": "",
-      "started_at": null,
-      "completed_at": null,
+      "status": "done",
+      "output": "UI layer generated: 2/2 files written.",
+      "started_at": 1794993773.8843114,
+      "completed_at": 1794993773.9275613,
       "git_commit": null,
       "error": null
     },
     {
       "name": "tests_and_lint",
-      "status": "pending",
-      "output": "",
-      "started_at": null,
-      "completed_at": null,
+      "status": "done",
+      "output": "Tests and lint verified cleanly (static).",
+      "started_at": 1794993773.9584491,
+      "completed_at": 1794993773.9837942,
       "git_commit": null,
       "error": null
     },
     {
       "name": "verify_and_launch",
-      "status": "pending",
-      "output": "",
-      "started_at": null,
-      "completed_at": null,
+      "status": "done",
+      "output": "Static web project verified: index.html present and non-empty.",
+      "started_at": 1794993774.0154371,
+      "completed_at": 1794993774.0611906,
       "git_commit": null,
       "error": null
     }
   ],
-  "status": "queued",
-  "current_phase": 0,
+  "status": "done",
+  "current_phase": 5,
   "attempts": 0,
   "log_path": "C:\\Users\\Dhanush\\Downloads\\simple-web-based-calculator-cf4bf422\\.flexie_build.log",
   "workspace_path": "C:\\Users\\Dhanush\\Downloads\\simple-web-based-calculator-cf4bf422",
-  "tokens_used": 0,
-  "elapsed_seconds": 0.0,
+  "tokens_used": 3053,
+  "elapsed_seconds": 0.44736409187316895,
   "created_at": 1792934111.0313704,
-  "updated_at": 1792934111.3139532,
-  "completed_at": null,
+  "updated_at": 1794993774.0953343,
+  "completed_at": 1794993774.0953343,
   "error": null,
   "metadata": {
     "spec": {
@@ -98,6 +98,7 @@
       ],
       "template_used": null,
       "assumptions_made": []
-    }
+    },
+    "tokens_total": 0
   }
 }

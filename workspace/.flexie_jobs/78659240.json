@@ -5,60 +5,60 @@
   "phase_list": [
     {
       "name": "scaffold",
-      "status": "pending",
-      "output": "",
-      "started_at": null,
-      "completed_at": null,
+      "status": "done",
+      "output": "Project scaffolded with templates, configs, and spec docs.",
+      "started_at": 1794993774.1502962,
+      "completed_at": 1794993774.189365,
       "git_commit": null,
       "error": null
     },
     {
       "name": "core_logic",
-      "status": "pending",
-      "output": "",
-      "started_at": null,
-      "completed_at": null,
+      "status": "done",
+      "output": "Core logic implementation complete.",
+      "started_at": 1794993774.2257006,
+      "completed_at": 1794993774.284779,
       "git_commit": null,
       "error": null
     },
     {
       "name": "ui",
-      "status": "pending",
-      "output": "",
-      "started_at": null,
-      "completed_at": null,
+      "status": "done",
+      "output": "UI layer generated: 2/2 files written.",
+      "started_at": 1794993774.3142548,
+      "completed_at": 1794993774.3596675,
       "git_commit": null,
       "error": null
     },
     {
       "name": "tests_and_lint",
-      "status": "pending",
-      "output": "",
-      "started_at": null,
-      "completed_at": null,
+      "status": "done",
+      "output": "Tests and lint verified cleanly (static).",
+      "started_at": 1794993774.3890548,
+      "completed_at": 1794993774.414626,
       "git_commit": null,
       "error": null
     },
     {
       "name": "verify_and_launch",
-      "status": "pending",
-      "output": "",
-      "started_at": null,
-      "completed_at": null,
+      "status": "done",
+      "output": "Static web project verified: index.html present and non-empty.",
+      "started_at": 1794993774.4425998,
+      "completed_at": 1794993774.4872983,
       "git_commit": null,
       "error": null
     }
   ],
-  "status": "queued",
-  "current_phase": 0,
+  "status": "done",
+  "current_phase": 5,
   "attempts": 0,
   "log_path": "C:\\Users\\Dhanush\\Downloads\\digital-clock-with-attractive-ui-78659240\\.flexie_build.log",
   "workspace_path": "C:\\Users\\Dhanush\\Downloads\\digital-clock-with-attractive-ui-78659240",
-  "tokens_used": 0,
-  "elapsed_seconds": 0.0,
+  "tokens_used": 2088,
+  "elapsed_seconds": 0.34346485137939453,
   "created_at": 1792934046.0234115,
-  "updated_at": 1792934049.1578155,
-  "completed_at": null,
+  "updated_at": 1794993774.5201504,
+  "completed_at": 1794993774.5201504,
   "error": null,
   "metadata": {
     "spec": {
@@ -91,6 +91,7 @@
       ],
       "template_used": null,
       "assumptions_made": []
-    }
+    },
+    "tokens_total": 0
   }
 }

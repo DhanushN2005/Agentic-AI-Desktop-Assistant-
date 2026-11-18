@@ -233,10 +233,25 @@ def run_usage(t: dict) -> tuple[bool, str]:
         set_tracker(previous)
 
 
+def run_split(t: dict) -> tuple[bool, str]:
+    from core.plan_text import split_clauses
+
+    got = split_clauses(t["text"])
+    return got == t["expect"], "" if got == t["expect"] else f"split into {got}"
+
+
+def run_wording(t: dict) -> tuple[bool, str]:
+    """Does this request (as plain wording) need approval at the baseline permission level?"""
+    ps = PermissionSystem(default_level=PermissionLevel.SAFE_ACTION)
+    needs = not ps.check_permission(t["text"], t["text"])[0]
+    return needs == t["expect"], "" if needs == t["expect"] else f"needs_approval={needs}"
+
+
 RUNNERS = {
     "plan": run_plan, "permission": run_permission, "executor_permission": run_executor_permission,
     "budget": run_budget, "confirm": run_confirm, "forget": run_forget,
     "specialist": run_specialist, "route": run_route, "taint": run_taint, "usage": run_usage,
+    "split": run_split, "wording": run_wording,
 }
 
 

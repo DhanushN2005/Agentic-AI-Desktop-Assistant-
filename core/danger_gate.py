@@ -55,11 +55,43 @@ class DangerGate:
             re.IGNORECASE,
         )
 
+    # A clause that only ASKS about something ("how do I delete a file", "what is a good python
+    # tutorial") or stores a reminder is not itself a risky action. Modal questions ("can you
+    # delete my files") are requests in disguise and are deliberately NOT treated as benign.
+    _INFO_LEAD = re.compile(
+        r"^\s*(?:please\s+)?(?:(?:hey\s+)?flexie?[,\s]+)?"
+        r"(?:what|who|whom|whose|where|when|why|how(?!\s+about)|which|is|are|was|were|"
+        r"explain|define|describe|tell\s+me\s+(?:about|how|what|why)|read\s+about|learn\s+about|"
+        r"look\s*up|search(?:\s+the\s+web)?(?:\s+for)?|find\s+out|research|compare)\b",
+        re.IGNORECASE,
+    )
+    _REMINDER = re.compile(
+        r"^\s*(?:please\s+)?(?:remind\s+me\b|(?:set|add|create|make)\s+(?:a\s+)?(?:reminder|note|to-?do)\b|"
+        r"take\s+a\s+note\b|note\s+that\b)|\breminder\b\s*$",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def is_benign_clause(cls, clause: str) -> bool:
+        """True for a clause that only asks a question or stores a reminder."""
+        return bool(clause and (cls._INFO_LEAD.match(clause) or cls._REMINDER.search(clause)))
+
     def detect(self, command: str) -> bool:
-        """Returns True if the command matches a high-risk, irreversible intent."""
+        """Returns True if the command matches a high-risk, irreversible intent.
+
+        Each clause is judged on its own, so "search for old files and delete them" is flagged
+        (the second clause is an action) while "how do I delete a file" is not.
+        """
         if not command:
             return False
-        return any(p.search(command) for p in self._compiled)
+        from core.plan_text import split_clauses
+
+        clauses = split_clauses(command) or [command]
+        return any(
+            any(p.search(clause) for p in self._compiled)
+            for clause in clauses
+            if not self.is_benign_clause(clause)
+        )
 
     # Words that may appear in a pure approval reply. Anything else (e.g. "ok but
     # first delete everything", "sure, what does that do?") is NOT an approval.

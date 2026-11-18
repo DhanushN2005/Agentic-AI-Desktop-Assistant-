@@ -60,11 +60,12 @@ def test_executor_stops_a_runaway_plan_and_cancels_the_rest():
     assert done.count(StepStatus.CANCELLED) == 34         # nothing after it ran
 
 
-def test_executor_stops_repeating_step_loop():
+def test_distinct_steps_with_identical_text_are_not_a_loop():
+    """Five different 'press next' steps are five legitimate actions, not a loop."""
     calls = []
     ex = _ex(lambda cmd, **k: calls.append(cmd) or "executed")
     res = ex.execute(TaskGraph(goal_id="g", original_goal="g", steps=_steps(10, same=True)), speak=False)
-    assert len(calls) == 3 and "loop detected" in res.message
+    assert len(calls) == 10 and res.success
 
 
 def test_retries_count_against_the_budget():

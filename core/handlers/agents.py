@@ -22,10 +22,21 @@ def handle_capability_delegation(orch, intent, c, silent):
                 return True
         elif capability == "specialist":
             if hasattr(orch, "agent_team") and orch.agent_team:
-                res = orch.agent_team.delegate(c)
-                if res and not silent:
-                    orch.speak(res)
-                return True
+                history = []
+                try:  # recent turns so follow-ups ("do that again") make sense to the specialist
+                    history = orch.get_conversation_history(current_query=c, limit=6) or []
+                except Exception as _e:
+                    orch.logger.debug("[AGENT_DELEGATION] no history: %s", _e)
+                result = orch.agent_team.delegate_full(c, history=history)
+                text = (result.content or "").strip()
+                if not text:
+                    return False  # nothing usable came back: let the legacy loop handle it
+                cut_short = result.metadata.get("budget_tripped") or result.metadata.get("max_turns_exceeded")
+                if cut_short and not result.metadata.get("budget_tripped"):
+                    text = f"I ran out of steps before finishing. Here is where I got to: {text}"
+                if not silent:
+                    orch.speak(text)
+                return not (result.metadata.get("failed") or cut_short)
         elif capability == "sdd":
             from sdd.engineer import SDDEngineer
             engineer = SDDEngineer(orch.brain)

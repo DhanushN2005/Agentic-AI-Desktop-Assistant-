@@ -10,9 +10,12 @@ import json
 import logging
 import os
 import re
+import shlex
+import sys
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from core.jobs.safe_paths import safe_rel_error
 from utils.config import Config
 
 logger = logging.getLogger("flexie.jobs.planner")
@@ -72,24 +75,154 @@ class ProjectSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ProjectSpec:
-        raw_files = data.get("files", [])
-        files = [
-            f if isinstance(f, ProjectFileSpec) else ProjectFileSpec(f.get("name", "app.py"), f.get("purpose", ""))
-            for f in raw_files
-        ]
+        """Build a validated spec; raises PlanValidationError with a clear message."""
+        if not isinstance(data, dict):
+            raise PlanValidationError(f"plan must be a JSON object, got {type(data).__name__}")
+        files = _coerce_files(data.get("files", []))
+        run_command = data.get("run_command")
+        run_command = "python main.py" if run_command is None else _as_str(run_command, "run_command")
+        parse_run_command(run_command)  # raises PlanValidationError when unsafe
+        phases = [
+            p.strip() for p in _as_str_list(data.get("phases"), "phases") if p.strip()
+        ] or list(STANDARD_PHASES)
+        criteria = data.get("acceptance_criteria")
         return cls(
-            title=data.get("title", "Autonomous Project"),
-            stack=data.get("stack", "python"),
-            summary=data.get("summary", ""),
-            run_command=data.get("run_command", "python main.py"),
-            test_command=data.get("test_command", "pytest"),
+            title=_one_line(_as_str(data.get("title"), "title", "Autonomous Project"), 120) or "Autonomous Project",
+            stack=_one_line(_as_str(data.get("stack"), "stack", "python"), 60) or "python",
+            summary=_as_str(data.get("summary"), "summary", ""),
+            run_command=run_command,
+            test_command=_as_str(data.get("test_command"), "test_command", "pytest"),
             files=files,
-            dependencies=data.get("dependencies", []),
-            acceptance_criteria=data.get("acceptance_criteria", ["App starts cleanly", "Tests pass"]),
-            phases=data.get("phases", list(STANDARD_PHASES)),
-            template_used=data.get("template_used"),
-            assumptions_made=data.get("assumptions_made", []),
+            dependencies=_as_str_list(data.get("dependencies"), "dependencies"),
+            acceptance_criteria=(
+                ["App starts cleanly", "Tests pass"]
+                if criteria is None
+                else _as_str_list(criteria, "acceptance_criteria")
+            ),
+            phases=phases,
+            template_used=(
+                None if data.get("template_used") is None
+                else _as_str(data.get("template_used"), "template_used")
+            ),
+            assumptions_made=_as_str_list(data.get("assumptions_made"), "assumptions_made"),
         )
+
+
+class PlanValidationError(ValueError):
+    """The LLM/stored plan does not match the expected schema."""
+
+
+_MAX_PLAN_FILES = 200
+
+# Launchers a planned run_command may start. No shells, no downloaders.
+ALLOWED_LAUNCHERS = frozenset({
+    "python", "python3", "py", "node", "npm", "npx", "pnpm", "yarn", "flask", "uvicorn",
+    "gunicorn", "vite", "deno", "bun", "streamlit", "http-server", "serve",
+})
+RUN_COMMAND_SENTINELS = frozenset({"", "none", "open index.html"})
+_CHAIN_CHARS = re.compile(r"[&|;<>`$\n\r^%]")
+
+
+def parse_run_command(command: object, windows: bool | None = None) -> list[str]:
+    """Validate and tokenize a planned run command into a safe argv list.
+
+    Returns ``[]`` for the 'nothing to run' sentinels. Raises PlanValidationError
+    for non-strings, chaining/redirect characters, unbalanced quotes and
+    launchers outside :data:`ALLOWED_LAUNCHERS` (so no cmd/powershell/sh/curl...).
+    """
+    if not isinstance(command, str):
+        raise PlanValidationError(f"run_command must be a string, got {type(command).__name__}")
+    text = command.strip()
+    if text.lower() in RUN_COMMAND_SENTINELS:
+        return []
+    if len(text) > 300:
+        raise PlanValidationError("run_command is too long")
+    if _CHAIN_CHARS.search(text):
+        raise PlanValidationError(f"run_command contains shell chaining/redirect characters: {text!r}")
+    win = (sys.platform == "win32") if windows is None else windows
+    try:
+        parts = shlex.split(text, posix=not win)
+    except ValueError as e:
+        raise PlanValidationError(f"run_command has unbalanced quotes: {e}") from e
+    parts = [
+        p[1:-1] if len(p) >= 2 and p[0] == p[-1] and p[0] in "\"'" else p
+        for p in parts
+    ]
+    if not parts:
+        return []
+    launcher = parts[0]
+    if "/" in launcher or "\\" in launcher:
+        raise PlanValidationError(f"run_command launcher must be a bare command name: {launcher!r}")
+    name = launcher.lower()
+    for suffix in (".exe", ".cmd", ".bat"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    if name not in ALLOWED_LAUNCHERS:
+        raise PlanValidationError(
+            f"run_command launcher {launcher!r} is not allowed (allowed: {', '.join(sorted(ALLOWED_LAUNCHERS))})"
+        )
+    return parts
+
+
+def _one_line(text: str, limit: int) -> str:
+    return re.sub(r"\s+", " ", text).strip()[:limit]
+
+
+def _as_str(value: Any, field_name: str, default: str = "") -> str:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    raise PlanValidationError(f"'{field_name}' must be a string, got {type(value).__name__}")
+
+
+def _as_str_list(value: Any, field_name: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if not isinstance(value, (list, tuple)):
+        raise PlanValidationError(f"'{field_name}' must be a list, got {type(value).__name__}")
+    out: list[str] = []
+    for item in value:
+        if item is None:
+            continue
+        s = _as_str(item, f"{field_name}[]")
+        if s.strip():
+            out.append(s.strip())
+    return out
+
+
+def _coerce_files(raw: Any) -> list[ProjectFileSpec]:
+    if raw is None:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        raise PlanValidationError(f"'files' must be a list, got {type(raw).__name__}")
+    if len(raw) > _MAX_PLAN_FILES:
+        raise PlanValidationError(f"plan lists {len(raw)} files (max {_MAX_PLAN_FILES})")
+    files: list[ProjectFileSpec] = []
+    seen: set[str] = set()
+    for item in raw:
+        if isinstance(item, ProjectFileSpec):
+            name, purpose = item.name, item.purpose
+        elif isinstance(item, dict):
+            name, purpose = item.get("name"), item.get("purpose", "")
+        elif isinstance(item, str):
+            name, purpose = item, ""
+        else:
+            raise PlanValidationError(f"file entry must be an object, got {type(item).__name__}")
+        reason = safe_rel_error(name)
+        if reason:
+            raise PlanValidationError(f"unsafe file name in plan ({reason})")
+        norm = "/".join(x for x in re.split(r"[\\/]+", str(name).strip()) if x not in ("", "."))
+        key = norm.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        files.append(ProjectFileSpec(norm, _as_str(purpose, "files[].purpose", "")))
+    return files
 
 
 def is_vague_request(request: str) -> bool:

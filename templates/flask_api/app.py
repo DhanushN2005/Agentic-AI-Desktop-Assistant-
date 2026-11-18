@@ -1,4 +1,6 @@
 """Flask Application entrypoint."""
+import os
+
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
@@ -27,5 +29,18 @@ def add_item():
     return jsonify(item), 201
 
 
+def _port() -> int:
+    """Port to bind: the PORT environment variable when valid, otherwise 5000."""
+    try:
+        port = int(os.environ.get("PORT", "5000"))
+    except ValueError:
+        return 5000
+    return port if 0 < port < 65536 else 5000
+
+
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(
+        host="127.0.0.1",
+        port=_port(),
+        debug=os.environ.get("FLASK_DEBUG", "1") == "1",
+    )

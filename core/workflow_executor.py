@@ -7,6 +7,7 @@ import uuid
 
 from core.action_result import ActionResult
 from core.execution_graph import ExecutionNode
+from core.run_budget import RunBudget
 from core.task_classifier import TaskState
 from engines.system import SystemCtrl
 
@@ -39,6 +40,12 @@ class WorkflowExecutor:
             _intent, _ = orch.router.route(normalized.lower().strip())
             timeout = orch.ACTION_TIMEOUTS.get(_intent, orch.ACTION_TIMEOUTS["default"])
 
+        # The queue is drained by ONE worker thread. If we are already on it, queueing and
+        # waiting would block the very thread that must run the command until the timeout
+        # expires (and the command would then run late). Run it directly instead.
+        if threading.get_ident() == getattr(orch, "_action_thread_id", None):
+            return self._run_inline(cmd)
+
         done_event = threading.Event()
         result_holder = []
 
@@ -52,6 +59,18 @@ class WorkflowExecutor:
 
         orch.logger.error(f"[BLOCKING_EXECUTE] Timeout after {timeout}s for: '{cmd}'")
         return ActionResult.fail(message=f"Timeout after {timeout}s", intent=cmd)
+
+    _FAIL_STATUSES = frozenset({"blocked", "awaiting_confirmation", "failed", "delegated", "cancelled"})
+
+    def _run_inline(self, cmd: str, **kwargs) -> ActionResult:
+        """Run a command on the calling (action) thread and report what really happened."""
+        try:
+            status = self.orch.handle_command(cmd, **kwargs)
+        except Exception as e:
+            return ActionResult.fail(message=str(e), intent=cmd)
+        if status is False or (isinstance(status, str) and status in self._FAIL_STATUSES):
+            return ActionResult.fail(message=str(status), intent=cmd)
+        return ActionResult.ok(message="Executed", intent=cmd)
 
     def verify_step(self, step: str, pre_state: dict, intent: str, max_retries: int = 2):
         """
@@ -220,7 +239,8 @@ class WorkflowExecutor:
         lock_id = "workflow_execution"
         if not orch.arbitrator.acquire_lock(lock_id, "main_orchestrator", timeout=3.0):
             orch.logger.error("[ARBITRATOR] Could not acquire lock for workflow execution. Another agent is running.")
-            return
+            orch.speak("I'm still busy with another task, so I couldn't start that plan. Please try again in a moment.")
+            return False
 
         try:
             orch.speak(f"Initializing semantic plan with {len(steps)} sequential steps.")
@@ -229,26 +249,16 @@ class WorkflowExecutor:
             except Exception as _e:
                 logging.debug("[core/workflow_executor.py:214] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
-            # --- PHASE 1: DAG PLANNER INTEGRATION (Minimal Intrusion) ---
-            try:
-                if len(steps) <= 4:
-                    from core.dag_planner import DAGTask
-                    dag_tasks = []
-                    for i, step in enumerate(steps):
-                        clean_step = re.sub(r"(?i)^step\s+\d+[\.:]?\s*", "", step).strip()
-                        deps = [f"task_{i-1}"] if i > 0 else []
-                        dag_tasks.append(DAGTask(task_id=f"task_{i}", command=clean_step, dependencies=deps))
-                    orch.logger.info("[DAG] Dispatching to DAG Planner.")
-                    orch.dag_planner.execute_graph(dag_tasks)
-                    return  # Exit if successful, skipping sequential fallback
-            except Exception as dag_err:
-                orch.logger.warning(f"[DAG] Execution failed, falling back to sequential: {dag_err}")
-
+            # ONE execution path for every plan size. (A separate "DAG" path for plans of 4 steps or
+            # fewer used to run here; it deadlocked on the single action worker and skipped
+            # verification and reporting, so behaviour also changed with the step count.)
             # FIX 13: Short workflow ID for correlated log entries across all steps
             workflow_id = str(uuid.uuid4())[:8]
             total_steps = len(steps)
-            executed_intents = set()
-            failed_steps = []
+            failed_steps = []        # the step itself failed or raised: eligible for ONE rephrased retry
+            unconfirmed_steps = []   # ran, but the heuristic check could not confirm it: never re-run
+            completed_count = 0
+            budget = RunBudget()
 
             for idx, step in enumerate(steps):  # FIX 1: ALL execution logic is now INSIDE the loop
                 task_state = TaskState.PENDING
@@ -271,11 +281,18 @@ class WorkflowExecutor:
                     logging.debug("[core/workflow_executor.py:254] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass  # Non-fatal; fall back to "unknown"
 
-                # Deduplication Check - only skip exact duplicate commands, not same intent
-                if clean_step in executed_intents:
-                    orch.logger.info(f"[Workflow Deduplication] Skipping duplicate command in same workflow: {clean_step}")
-                    continue
-                executed_intents.add(clean_step)
+                # Honour a stop request and the run limits between steps (identical consecutive steps
+                # are legitimate - "press next" five times - so only a real loop trips the guard).
+                stop = getattr(orch, "stop_event", None)
+                if stop is not None and stop.is_set():
+                    orch.speak("Stopping the plan as requested.")
+                    break
+                tripped = budget.charge("", {}, clean_step, key=f"wf-step-{idx}")
+                if tripped:
+                    orch.logger.warning(f"[Workflow {workflow_id}] stopped: {tripped}")
+                    orch.speak(f"I stopped the plan: {tripped}.")
+                    failed_steps = []
+                    break
 
                 # Watchdog Heartbeat Update
                 orch.last_command_time = time.time()
@@ -292,9 +309,14 @@ class WorkflowExecutor:
                 }
 
                 # Execute step (FIX 15: catch per-step errors — do NOT abort entire workflow)
+                action_failed = False
                 try:
-                    orch.handle_command(clean_step, is_subcommand=True, silent=True, source="planner", depth=depth)
+                    outcome = orch.handle_command(clean_step, is_subcommand=True, silent=True, source="planner", depth=depth)
+                    if outcome is False or (isinstance(outcome, str) and outcome in self._FAIL_STATUSES):
+                        action_failed = True
+                        orch.logger.warning(f"[Workflow {workflow_id}] Step {idx + 1} reported: {outcome}")
                 except Exception as e:
+                    action_failed = True
                     orch.logger.error(f"[Workflow {workflow_id}] Step {idx + 1} execution error: {e}")
                     orch.logger.info(f"[FAILED] {clean_step}")
                     orch.speak("Step execution error. Attempting self-healing recovery.")
@@ -315,7 +337,7 @@ class WorkflowExecutor:
                     logging.debug("[core/workflow_executor.py:297] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     pass  # Safe fallback
 
-                if verified:
+                if verified and not action_failed:
                     task_state = TaskState.COMPLETED
                 else:
                     task_state = TaskState.FAILED
@@ -345,15 +367,25 @@ class WorkflowExecutor:
                 res_node.add_edge(node_id, "result_of")
                 orch.execution_graph.add_node(res_node)
 
-                if task_state == TaskState.FAILED:
-                    orch.speak(f"Step {idx + 1} did not pass automatic verification. Attempting manual fallback.")
-                    orch.logger.warning(f"[Workflow {workflow_id}] Step {idx + 1}/{total_steps} FAILED.")
-                    orch.adaptive_router.record_route(clean_step, step_intent, False)  # FIX 5: intent, not clean_step
+                learnable = step_intent not in ("unknown", "conversational", "", None)
+                if task_state == TaskState.FAILED and action_failed:
+                    orch.speak(f"Step {idx + 1} did not work. I'll try another way at the end.")
+                    orch.logger.warning(f"[Workflow {workflow_id}] Step {idx + 1}/{total_steps} FAILED (action).")
+                    if learnable:
+                        orch.adaptive_router.record_route(clean_step, step_intent, False)  # FIX 5: intent, not clean_step
                     failed_steps.append(clean_step)
-                elif task_state == TaskState.COMPLETED:
+                elif task_state == TaskState.FAILED:
+                    # The action ran without error; only the heuristic check was inconclusive.
+                    # Re-running it could repeat a real effect, so report it instead.
+                    orch.speak(f"Step {idx + 1} ran, but I couldn't confirm it worked.")
+                    orch.logger.warning(f"[Workflow {workflow_id}] Step {idx + 1}/{total_steps} unconfirmed.")
+                    unconfirmed_steps.append(clean_step)
+                else:
+                    completed_count += 1
                     orch.logger.info(f"[COMPLETE] {clean_step}")
                     orch.logger.info(f"[Workflow {workflow_id}] Step {idx + 1}/{total_steps} COMPLETED in {step_duration:.2f}s.")
-                    orch.adaptive_router.record_route(clean_step, step_intent, True)   # FIX 5: intent, not clean_step
+                    if learnable:  # only learn routes from steps that really succeeded and were confirmed
+                        orch.adaptive_router.record_route(clean_step, step_intent, True)   # FIX 5: intent, not clean_step
 
                 # FIX 13: Emit structured step result entry
                 self.log_step_result(
@@ -386,6 +418,16 @@ class WorkflowExecutor:
                     orch.logger.info(f"[GoalEvaluator] {eval_res.summary}")
                 except Exception as _e:
                     logging.debug("[core/workflow_executor.py:369] Swallowed exception: %s: %s", type(_e).__name__, _e)
+
+            # Tell the user how it went (this path used to end silently).
+            problems = len(failed_steps) + len(unconfirmed_steps)
+            if problems == 0 and completed_count:
+                orch.speak(f"Done. All {completed_count} steps completed.")
+            elif completed_count or problems:
+                orch.speak(f"Finished {completed_count} of {total_steps} steps"
+                           f"{f'; {len(failed_steps)} did not work' if failed_steps else ''}"
+                           f"{f'; {len(unconfirmed_steps)} could not be confirmed' if unconfirmed_steps else ''}.")
+            return not failed_steps
 
         finally:
             orch.arbitrator.release_lock(lock_id, "main_orchestrator")

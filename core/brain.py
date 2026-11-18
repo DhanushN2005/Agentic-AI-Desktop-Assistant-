@@ -333,9 +333,12 @@ class Brain:
                 # If it's not a rate limit or network error, or we exceeded max attempts, raise it so the fallback mechanism triggers
                 raise e
 
-        self._cache[key] = result
-        if len(self._cache) > self._cache_max:
-            self._cache.popitem(last=False)
+        # Never cache failures: an empty reply (offline, provider error) would otherwise be
+        # served for the same prompt forever, long after the connection came back.
+        if isinstance(result, str) and result.strip():
+            self._cache[key] = result
+            if len(self._cache) > self._cache_max:
+                self._cache.popitem(last=False)
         return result
 
     def _ask_impl(self, prompt: str, img_path: str | None, system_override: str | None, use_chat: bool, use_rag: bool, max_tokens: int | None = None, history=None) -> str:
