@@ -2238,7 +2238,8 @@ class FlexieUI(QWidget):
             n = int(count)
         except (ValueError, TypeError):
             n = 0
-        if n > 0:
+        # Hidden by default; set FLEXIE_ORB_MAIL_BADGE=1 to show the unread count on the orb.
+        if n > 0 and os.environ.get("FLEXIE_ORB_MAIL_BADGE") == "1":
             self.mail_badge.setText(str(n if n < 100 else "99+"))
             self.mail_badge.show()
             self.mail_badge.raise_()

@@ -1,0 +1,16 @@
+{
+  "name": "flexie-orb",
+  "version": "1.0.0",
+  "private": true,
+  "description": "3D hand-gesture orb panel for the Flexie web dashboard. Built into ../static/ (committed), so Node is only needed to rebuild.",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "0.10.35",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

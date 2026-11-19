@@ -53,7 +53,7 @@ All long-form docs live in [`docs/`](docs/README.md):
 
 Flexie is a **desktop-native autonomous AI agent** — *AI Agent is the core identity; voice, chatbot, automation, browser extension, dev assistant, and desktop control are capabilities of the agent.*
 
-It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language, **plans multi-step tasks** (`GoalPlanner` + `DAGPlanner`), **executes tools** (`ToolRegistry` 30+ tools, `DesktopControl`, `BrowserEngine`), **remembers** (VectorStore + MemoryManager), **delegates to specialist agents** (Coder, Researcher, System), **connects to any MCP server**, and **verifies** (`GoalEvaluator` + self-correction) — not just chat.
+It listens to voice (VAD) or keyboard (the PyQt6 floating-orb HUD; the web dashboard opens only when you ask for it), understands natural language, **plans multi-step tasks** (`GoalPlanner` + `DAGPlanner`), **executes tools** (`ToolRegistry` 30+ tools, `DesktopControl`, `BrowserEngine`), **remembers** (VectorStore + MemoryManager), **delegates to specialist agents** (Coder, Researcher, System), **connects to any MCP server**, and **verifies** (`GoalEvaluator` + self-correction) — not just chat.
 
 **Resume title:** *Flexie 2.0 — Agentic AI Desktop Assistant* — A Windows-native AI agent capable of voice interaction, multi-step task planning, autonomous build jobs, MCP integration, specialist delegation, browser extension, REST API, IDE integration, and task verification.
 
@@ -61,7 +61,7 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 
 **Not a cloud SaaS** — data stays on your machine. External calls only to free LLM APIs (Groq, Gemini) and free public APIs (weather, news, Wikipedia).
 
-**2,054 tests across 70 test files** (1 skipped) plus a 59-case agent eval and a 158-case routing eval — CI runs pytest and ruff (both blocking) on every push via `.github/workflows/ci.yml`. Tests that touch the build-job system are isolated to a temp folder (`tests/conftest.py`), so a test run no longer writes into your Downloads folder.
+**2,119 tests across 72 test files** (2 skipped) plus a 59-case agent eval and a 158-case routing eval — CI runs pytest and ruff (both blocking) on every push via `.github/workflows/ci.yml`. Tests that touch the build-job system are isolated to a temp folder (`tests/conftest.py`), so a test run no longer writes into your Downloads folder.
 
 ---
 
@@ -134,9 +134,9 @@ It listens to voice (VAD) or keyboard (PyQt6 HUD), understands natural language,
 flowchart TD
     subgraph IN["Input"]
         V["Voice (VAD + ASR)<br/>asleep until 'Flexie'"]
-        K["Keyboard / PyQt HUD"]
+        K["Keyboard / Qt HUD (floating orb)<br/>Ctrl+F spotlight, tray"]
         API["REST API :8768<br/>Browser extension"]
-        WS["Web dashboard<br/>WebSocket bridge :8765"]
+        WS["Web dashboard (only on request)<br/>WebSocket bridge :8765"]
     end
 
     V --> CT
@@ -263,13 +263,13 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    A["'open vision mode'"] --> B{"vision/node_modules exists?"}
-    B -->|no| C["npm ci<br/>(first run, a few minutes)"]
+    A["'open vision mode'"] --> B{"web bridge running?"}
+    B -->|no| C["ensure_web_bridge starts it<br/>(interface/launcher.py helper,<br/>web_ui_bridge.py, token injected)"]
     B -->|yes| D
-    C --> D["npm run dev on first free port from 3000"]
-    D --> E["Wait until it answers"]
-    E --> F["Open in browser<br/>press G for hand gestures"]
-    G["'close vision mode'"] --> H["Kill the dev server process tree<br/>(also on Flexie exit)"]
+    C --> D["open http://localhost:8766/#orb<br/>and send PANEL:orb to an open dashboard"]
+    D --> E["Orb tab: interface/static/orb.js<br/>driven by STATE / SAY messages"]
+    E --> F["press G: hand gestures on<br/>(MediaPipe loads lazily, camera asked then)"]
+    G["'close vision mode'"] --> H["PANEL:close hides the orb panel"]
 
     I["'download 5 images of cats'"] --> J["DuckDuckGo image search<br/>or images on a page URL"]
     J --> K{"Public http(s) address?<br/>(redirects re-checked)"}
@@ -294,7 +294,10 @@ flowchart LR
 - `core/mcp_adapter.py` — MCP stdio client, tools default to *confirm* unless listed read-only
 - `core/specialists.py` — Lead/Coder/Researcher/System delegation with scoped tools
 - `core/jobs/` — autonomous build jobs
-- `interface/api_server.py` — FastAPI REST + SSE at :8768; `interface/web_ui_bridge.py` — authenticated WebSocket bridge
+- `interface/ui.py` — the desktop UI: PyQt6 floating-orb HUD (a 300x300 always-on-top orb), Ctrl+F spotlight popup, tray icon (Show Controls / Wake Flexie / Exit), API-keys dialog, approval popup. Started by `main.py` as its own process (`run_ui`)
+- `interface/launcher.py` — helper for the web dashboard: `ensure_bridge` / `stop_bridge` / `open_dashboard` (used by `ensure_web_bridge` in `core/handlers/system.py`). It also contains an optional tray + global-hotkey `Launcher` class (default Ctrl+Alt+F, `FLEXIE_HOTKEY`) that `main.py` does **not** start, because the Qt HUD has its own
+- `interface/web_ui_bridge.py` + `interface/web_ui.html` + `interface/static/` — the web dashboard (opened on request), authenticated WebSocket bridge, safe `/static/<file>` route; `interface/api_server.py` — FastAPI REST + SSE at :8768
+- `interface/orb/` — source of the 3D orb, built into `interface/static/orb.js`; `core/settings_service.py` — API-key/model settings for the dashboard (masked hints only)
 - `utils/lazy.py`, `utils/path_jail.py`, `utils/name_index.py`, `utils/sqlite_util.py`, `utils/udp_auth.py` — lazy imports, file jail, bounded file-name index, shared WAL SQLite connection, signed UDP
 - `extension/` — Chrome/Edge Manifest V3 extension
 
@@ -305,7 +308,7 @@ flowchart LR
 | Area | Features |
 |---|---|
 | **Voice** | VAD (RMS + webrtcvad), barge-in, Edge neural TTS + SAPI fallback (text passed via environment, never on the command line), sentence-batched speech, streaming, 8 s stuck watchdog. Flexie sleeps until it hears a wake word ("Flexie") and says so (at most once a minute) instead of silently ignoring speech |
-| **Browser** | Playwright persistent context on a single owner thread; navigate/click/fill/scroll (typed values are never logged or spoken), multi-tab research, gmail_read. "open chrome and search for X" opens the search directly in that browser |
+| **Browser** | Playwright persistent context on a single owner thread, started lazily the first time something needs it (no blank Chrome window at launch; `FLEXIE_PREWARM_BROWSER=1` opts in to pre-warming); navigate/click/fill/scroll (typed values are never logged or spoken), multi-tab research, gmail_read. "open chrome and search for X" opens the search directly in that browser |
 | **Files** | create/rename/delete (exact-name match, full path read back before delete, Recycle Bin only), organize desktop with an undo log, bounded name index (`utils/name_index.py`) |
 | **Code** | Local search `engines/code_search.py`, generation `handlers/code_gen.py` |
 | **Research** | Web search DDG + LLM summary `handlers/research.py` → save to file (report goes to `data/research/`) |
@@ -319,7 +322,8 @@ flowchart LR
 | **Extension** | Chrome/Edge Manifest V3 sidebar, floating pill, context menus, page assist (endpoint allow-list, sender checks) |
 | **REST API** | FastAPI :8768, Bearer token, `/command`, `/health`, `/api/flexie/*`, SSE state stream, approvals by request id |
 | **Images** | "download 5 images of cats" (web search) or from a page URL — public http(s) only, size/type/decode checks, new folder under `Downloads\Flexie Images` |
-| **Vision mode** | "open vision mode" starts the hand-gesture orb UI in `vision/` and opens it in the browser; "close vision mode" stops it |
+| **Desktop UI** | The PyQt6 HUD (`interface/ui.py`) starts with `python main.py`: a floating orb, a Ctrl+F spotlight popup, a tray icon, an API-keys dialog and an approval popup. The **web dashboard** at `http://localhost:8766/` (chat, CPU/RAM/battery, volume/brightness, mode switch, Orb tab, approval and API-keys dialogs, mail badge) opens **only on request** ("open web ui", or the HUD's dashboard button) |
+| **Vision mode** | "open vision mode" opens the dashboard's Orb tab (`http://localhost:8766/#orb`): a 3D orb that follows the assistant's state, with optional hand gestures (off by default); "close vision mode" closes the panel |
 | **Screen** | screenshot (says where it was saved), analyze/summarize screen through a vision model, OCR text fallback when no vision model answers |
 | **Model Hub** | Task-based provider choice, cheap-first cascade, circuit breaker with half-open recovery |
 | **Telemetry** | Every LLM call recorded (tokens, cost, latency, failures) in `data/telemetry.db`; traces in `data/traces.db`; `/api/flexie/usage` |
@@ -371,9 +375,9 @@ flowchart LR
   - Floating "Ask Flexie" pill appears on text selection — explain, rewrite, debug.
   - Right-click context menus on any page, image, or code snippet.
   - Permission approval prompts before sensitive page actions.
-- **Vision mode / orb UI** (`vision/`, Next.js + Three.js + MediaPipe) — a hand-gesture 3D orb. Start it by saying "open vision mode" (see *Vision mode* below).
-  - Real-time hand tracking — pinch to spin, two hands to zoom; `G` toggles gestures, `R` resets.
-  - `JarvisOrb.tsx` tries to open a WebSocket to the bridge at `ws://127.0.0.1:8765` to show assistant state, **but the hardened bridge only accepts its own dashboard origin and requires an `AUTH:<token>` first message, so from `http://localhost:3000` that connection is rejected.** The orb works standalone; the live link to Flexie is not wired (known gap).
+- **Vision mode / orb** — besides the Qt HUD's floating orb, the hand-gesture 3D orb is also a panel of the web dashboard (`interface/orb/` source, built into `interface/static/orb.js`; ported from the `vision/` Next.js app, which stays in the repo as a standalone demo and is no longer launched by Flexie). Say "open vision mode" (see *Vision mode* below).
+  - Hand tracking — pinch to spin, two hands to zoom. Off by default: the `G` key or the button turns it on, and only then does the page load MediaPipe (from `cdn.jsdelivr.net` and `storage.googleapis.com`) and ask for the camera.
+  - The orb shares the dashboard's origin and authenticated WebSocket, so it shows live assistant state (`STATE:` / `SAY:` / `PANEL:` messages).
 
 ---
 
@@ -404,7 +408,9 @@ The system prompt also tells the model what Flexie is and not to claim actions i
 
 **Image download** (`engines/image_downloader.py`, `core/handlers/images.py`). "download 5 images of cats" searches (DuckDuckGo images, safe-search on) and saves up to 20 images into `Downloads\Flexie Images\<topic>-<time>\`; "download images from <page URL>" takes `<img>`/`og:image`/linked image files from that page. Only public http(s) addresses (redirects re-checked), at most 15 MB each, must declare an image type *and* decode as an image, duplicates skipped, files get fresh names. It cannot read the tab open in your own Chrome.
 
-**Vision mode** (`engines/vision_mode.py`, `core/handlers/vision_mode.py`). "open/start/launch vision mode" (or "start the orb") runs `npm ci` once if `vision/node_modules` is missing, starts `npm run dev` on the first free port from 3000, waits until it answers and opens it. "close/stop vision mode" kills that process tree; it is also stopped when Flexie exits. Needs Node.js/npm.
+**Vision mode** (`engines/vision_mode.py`, `core/handlers/vision_mode.py`, `interface/orb/`, `interface/static/orb*.js`). "open/start/launch vision mode" (or "start the orb") starts the web bridge if it is not running (`ensure_web_bridge`, delegating to the launcher), opens `http://localhost:8766/#orb` and sends `PANEL:orb` so an already-open dashboard switches to the Orb tab; "close/stop vision mode" sends `PANEL:close`. There is no Node.js step and no dev server: the orb is a committed bundle (`orb.js`, 595 KB; `orb-gestures.js` loads only when gestures are switched on). `engines/vision_mode.py` is only a check that the bundle files exist. The page's Content-Security-Policy allows `cdn.jsdelivr.net` (script) and `storage.googleapis.com` (connect), `'wasm-unsafe-eval'` and `worker-src blob:` solely for MediaPipe hand tracking.
+
+**Desktop UI: Qt HUD first, dashboard on request** (`interface/ui.py`, `interface/launcher.py`, `interface/web_ui.html`, `interface/static/panels.js`). `python main.py` starts the PyQt6 HUD (`interface/ui.py`) as its own process: the **floating orb**, a **Ctrl+F** spotlight popup, a tray icon (*Show Controls*, *Wake Flexie*, *Exit*), an API-keys dialog and an approval popup. Nothing opens a browser or starts the web bridge at launch. The dashboard comes up only when you ask: say "open web ui" (or press the HUD's dashboard button, or say "open vision mode"); `ensure_web_bridge` then starts the bridge (tracked, given the per-run token, stopped by `handle_exit` / `main.py` shutdown) and opens `http://localhost:8766/`. `interface/launcher.py` is a helper (bridge start/reuse/stop, `open_dashboard`); its optional tray + global-hotkey `Launcher` class (Ctrl+Alt+F, `FLEXIE_HOTKEY`) is **not** started by `main.py`. A replacement of the HUD by the dashboard plus that launcher was built and then reverted at the user's request. The dashboard kept the parts added during that work: an **approval modal** (`APPROVAL_REQUEST`; Approve sends `APPROVE:<id>`, Reject sends `REJECT:<id>`, Esc rejects), an **API keys and models dialog** (`GET_SETTINGS` / `SAVE_SETTINGS` over the authenticated WebSocket, handled by `core/settings_service.py`: key fields are write-only, the server answers with masked hints only, key values are never logged), a **mail badge**, a **quit notice** and the **Orb tab**.
 
 **Project builder.** A model failure message ("I've searched for you…") is never written into a source file: the generator retries with a pause, then fails that file clearly (resume later). A file that is empty or comments only is not written. The static-site verifier checks that every linked script/stylesheet exists, is not a stub and contains no failure text, so a job is no longer "done" with an empty `app.js`.
 
@@ -585,8 +591,8 @@ tell me binary search code and save to downloads  # single code_gen, not split
 | Weather/News/Wiki | OpenWeather, NewsAPI, Wikipedia | Yes |
 | Memory | Chroma PersistentClient, SQLite MemoryManager | Yes |
 | Automation | AutomationScheduler (daily/hourly/interval 60s poll) | Yes |
-| Vision | VisionEngine: screenshot (pyautogui), Gemini vision, Tesseract OCR fallback; `vision/` orb UI (Next.js, Three.js, MediaPipe) | Yes |
-| UI | PyQt6 HUD, web dashboard + WebSocket bridge (HTTP 8766, WS 8765), signed UDP 9886 (Qt UI) / 9888 (web bridge) / 9887 (assistant) | Yes |
+| Vision | VisionEngine: screenshot (pyautogui), Gemini vision, Tesseract OCR fallback; orb panel in the dashboard (`interface/orb`, Three.js, MediaPipe on demand) | Yes |
+| UI | PyQt6 floating-orb HUD (`interface/ui.py`, signed UDP 9886), web dashboard on request (HTTP 8766) + WebSocket bridge (WS 8765, signed UDP 9888), assistant input on signed UDP 9887 | Yes (PyQt6 is GPL v3 / commercial: licence question open) |
 
 ---
 
@@ -789,7 +795,7 @@ Scheduler `engines/automation.py:54` checks every 60s, triggers `orch.cmd_queue.
 - **TTS (neural, default)** Edge neural voices via `edge-tts` → temp mp3 → pygame playback. Voice: `FLEXIE_VOICE` (default `en-GB-RyanNeural`, Jarvis-style British male). **Offline fallback**: Windows SAPI via PowerShell `System.Speech` (`_speak_sapi`). Mode switch: `FLEXIE_TTS_MODE=neural|sapi`.
 - **Natural pacing** `prepare_speech_text()` strips markdown/emojis/symbols from spoken text (`&`→"and", `%`→"percent", bullets→pauses); `speak()` batches ~2 sentences per clip to avoid choppy per-sentence playback.
 - **TTS guard** long replies (>300 chars) truncate at the last **sentence boundary** with "I've posted the full text to your screen." — never mid-word.
-- **Streaming** `brain.ask_stream(stream=True)` yields chunks, `orchestrator.speak_stream` splits `(?<=[.!?])` sends `STREAM` UDP `9886` → `web_ui_bridge` WS `8765`.
+- **Streaming** `brain.ask_stream(stream=True)` yields chunks, `orchestrator.speak_stream` splits `(?<=[.!?])` sends `STREAM` over signed UDP `9888` → `web_ui_bridge` WS `8765`.
 
 ---
 
@@ -801,7 +807,7 @@ Scheduler `engines/automation.py:54` checks every 60s, triggers `orch.cmd_queue.
 - **Tools** `core/tool_registry.py` — permission gate, per-tool timeouts, thread-affine tool tags, `idempotent` flag (only `idempotent=True` calls are ever retried), argument schema with bounds. `core/capabilities.py` — undeclared capabilities are refused. `terminal.run` — per-binary subcommand/flag policy, no shell, global deadline; `python.exec` — Docker sandbox with CPU/memory/pid limits, read-only filesystem, no network by default, timeout 1–120 s. Desktop-control actions pass the same gate; Win-key combos, Enter, Alt+F4 need confirmation.
 - **File jail** `utils/path_jail.py` — writes denied under `.git`, `.github`, source folders and for `.env*`, keys, tokens, `pyproject.toml`; secret files cannot be read; UNC/other-drive/`..`/junction/8.3/NTFS-stream paths rejected.
 - **Mail** — send/reply read back "To X, subject Y — send it?" and need voice confirmation; addresses are validated (single address, no header injection); the REST send/reply endpoints block until approved. IMAP deletes use UIDs and copy-then-delete.
-- **Web bridge / API / UDP** `interface/web_ui_bridge.py`, `interface/api_server.py`, `utils/udp_auth.py` — per-run token, Host and Origin checks (DNS-rebinding defence), no wildcard CORS, token given only to the dashboard origin, signed UDP datagrams (`FLEXIE_ALLOW_UNSIGNED_UI=1` only as a migration aid), bounded request sizes and queues. The extension validates endpoints against an allow-list and checks `sender.id`.
+- **Web bridge / API / UDP** `interface/web_ui_bridge.py`, `interface/api_server.py`, `utils/udp_auth.py` — per-run token, Host and Origin checks (DNS-rebinding defence), no wildcard CORS, token given only to the dashboard origin, signed UDP datagrams (`FLEXIE_ALLOW_UNSIGNED_UI=1` only as a migration aid), bounded request sizes and queues. The extension validates endpoints against an allow-list and checks `sender.id`. The bridge also serves `/static/<file>` from `interface/static/` only for flat file names with known extensions (no sub-folders, no `..`, Host checked).
 - **Privacy** — clipboard history is opt-in (`FLEXIE_CLIPBOARD_MONITOR=1`) and never stores OTP/card/secret-like text; typed form values are never logged or spoken; telemetry and traces redact secrets and prune after 30 days (`FLEXIE_RETENTION_DAYS`).
 - **Image/network fetches** — `engines/image_downloader.py` resolves every host and refuses loopback, private, link-local and reserved addresses (including after redirects).
 - **Log rotation** `RotatingFileHandler 5MB×3`.
@@ -833,7 +839,7 @@ cp .env.example .env
 # OPENAI_API_KEY=... (optional, fallback)
 
 # 5. Run core assistant
-python main.py  # starts orchestrator + PyQt HUD
+python main.py  # starts the orchestrator, the REST API and the Qt floating-orb HUD; the web dashboard opens only when you say 'open web ui' (or press the HUD's dashboard button)
 
 # Or run web bridge only
 python interface/web_ui_bridge.py  # ws://localhost:8765
@@ -841,8 +847,8 @@ python interface/web_ui_bridge.py  # ws://localhost:8765
 # Or run REST/SSE API (for browser extension + external apps)
 python interface/api_server.py  # http://localhost:8768
 
-# 5b. Vision mode (optional): needs Node.js + npm. Say "open vision mode";
-#     the first run does `npm ci` inside vision/ (a few minutes), then opens http://localhost:3000
+# 5b. Vision mode (optional): say "open vision mode"; it opens
+#     http://localhost:8766/#orb. No Node.js needed; press G there for hand gestures.
 
 # 6. Browser Extension (optional)
 #    chrome://extensions/ → Developer mode → Load unpacked → select extension/
@@ -869,6 +875,8 @@ python interface/api_server.py  # http://localhost:8768
 | `OLLAMA_URL` | `http://localhost:11434` | Local engine (probe times out after 0.8 s) |
 | `FLEXIE_VOICE` / `FLEXIE_TTS_MODE` | `en-GB-RyanNeural` / `neural` | Edge neural voice, or `sapi` for offline |
 | `FLEXIE_MIC_DEVICE` | auto | Microphone device |
+| `FLEXIE_HOTKEY` | `ctrl+alt+f` | Hotkey of the optional `Launcher` helper in `interface/launcher.py` (needs at least one modifier). `main.py` does not start it; the Qt HUD's own hotkey is a fixed Ctrl+F |
+| `FLEXIE_PREWARM_BROWSER` | off | Start Flexie's Playwright Chromium at launch (3 s after start) for a faster first browser/YouTube command. Off by default because it opens a visible blank Chrome window |
 | `FLEXIE_EMAIL` / `FLEXIE_PASS` | `""` | EmailEngine IMAP/SMTP (cached connection) |
 | `FLEXIE_DATA_DIR` | project root | Where databases and runtime files live |
 | `FLEXIE_CODE_OUTPUT_DIR` | `~/Downloads` | Where build-job project folders are created |
@@ -910,17 +918,18 @@ flexie_v2/
 │   └── jobs/                    planner, generator, scaffold, verifier, git_ops, manager, store, models, process, safe_paths
 ├── engines/                     43 modules: system, files, browser, email_engine, vision, vision_mode,
 │                                image_downloader, memory*, knowledge, automation, music, weather, … (see list above)
-├── interface/                   voice.py, ui.py (PyQt6), web_ui_bridge.py + web_ui.html, api_server.py
+├── interface/                   voice.py, ui.py (PyQt6 floating-orb HUD), launcher.py (bridge helper), web_ui_bridge.py + web_ui.html,
+│                                static/ (orb + panels bundles), orb/ (orb source + build), api_server.py
 ├── extension/                   Chrome/Edge Manifest V3 (background.js, sidebar, content.js, popup)
-├── vision/                      Next.js orb UI (hand tracking), started by "open vision mode"
-├── flexie_web/                  web client scaffold
+├── vision/                      standalone Next.js orb demo (the orb in the dashboard was ported from it; not launched by Flexie)
+├── flexie_web/                  standalone React/Vite client prototype (not used by Flexie)
 ├── context/                     compiler.py (memory → prompt), Chroma data
 ├── agents/ sandbox/ skills/ templates/   specialist agents, Docker executor, skill files, project templates (plugins/ is created by you, opt-in)
 ├── evals/                       run.py (routing), agent_run.py (agent), bench.py, tasks/*.jsonl
 ├── utils/                       config, paths, lazy, path_jail, name_index, sqlite_util, udp_auth, installer, preflight, voice_parse, helpers
 ├── recovery/analyzer.py         failure diagnosis for workflow steps (shared instance)
 ├── verification/                step validators (capability / semantic / strict) used by WorkflowExecutor.verify_step
-├── tests/                       70 files, 2,054 tests (conftest.py isolates build output)
+├── tests/                       72 files, 2,119 tests (conftest.py isolates build output)
 ├── data/                        runtime: telemetry.db, traces.db, memory_structured.db, persona/ (git-ignored where personal)
 ├── workspace/                   job state (git-ignored)
 └── .github/workflows/ci.yml     ruff + pytest (coverage floor) + routing and agent eval gates
@@ -933,7 +942,7 @@ flexie_v2/
 ```bash
 # Full suite (about 4 minutes on Windows: the slowest tests spawn real git/npm processes)
 python -m pytest tests -p no:warnings
-# 2054 passed, 1 skipped (70 test files)
+# 2119 passed, 2 skipped (72 test files)
 
 # Lint (CI blocks on it)
 python -m ruff check .
@@ -958,7 +967,9 @@ Set `GIT_CEILING_DIRECTORIES` to the repo's parent when running tests so git-bas
 | `test_fix_tools.py`, `test_mcp_adapter.py`, `test_capabilities.py` | path jail, terminal policy, MCP trust, capability policy, retries |
 | `test_fix_memory.py`, `test_fix_leftovers_core.py` | transactions, forget, TTL, reminders, prune, background maintenance |
 | `test_fix_llm.py` | cache, fallbacks, circuit breaker, telemetry, traces |
-| `test_fix_interfaces.py` | bridge/API auth, extension validation, TTS injection, UDP signing |
+| `test_fix_interfaces.py`, `test_udp_connectivity.py` | bridge/API auth, extension validation, TTS injection, UDP signing and ports |
+| `test_fix_launcher.py`, `tests/js/panels_jsdom.mjs` | hotkey parsing, bridge start/reuse/stop with fakes, soft failures, the Qt HUD is present and `main.py` does not open the dashboard or start the tray/hotkey, dashboard modals under jsdom (skips if jsdom is not installed) |
+| `test_fix_orb_panel.py` | `/static` route safety, orb bundle contents, dashboard wiring and CSP, vision-mode handler |
 | `test_fix_heavy.py` | files, email, system, browser, scheduler, knowledge, clipboard |
 | `test_fix_utilities.py` | every small handler (hash, JSON, reminders, alarms, converter, …) |
 | `test_fix_router.py`, `test_fix_chrome_commands.py` | routing regressions, chrome/close/search, vision mode, dismissals |
@@ -978,12 +989,13 @@ These tests use fakes: they do not exercise live models, voice, the extension, a
 **Phase 5 Model Hub ✓** - Task-based LLM routing, cheap-first cascade, OpenAI bridge
 **Phase 6 IDE Integration ✓** - VSCode extension, workspace launcher, React/Vite scaffold template
 **Phase 7 Dev Assistant ✓** - 5-phase build jobs, specialist agents, MCP adapter, REST/SSE API, browser extension, orb UI
-**Phase 8 Hardening ✓** (Nov 2026) - safety/approval redesign, tool jail and capability policy, memory transactions and forgetting, LLM fallbacks and telemetry, interface auth, engine fixes, lazy startup (14.5 s → 1.9 s), self-awareness, image download, vision mode, build-job failure handling
+**Phase 8 Hardening ✓** (Nov 2026) - safety/approval redesign, tool jail and capability policy, memory transactions and forgetting, LLM fallbacks and telemetry, interface auth, engine fixes, lazy startup (14.5 s → 1.9 s), self-awareness, image download, vision mode, build-job failure handling, web dashboard gains an Orb tab, approval and API-keys dialogs (the PyQt6 HUD stays the desktop UI), no browser window at startup (browser pre-warm is opt-in), `open web ui` / `run command` routing fixed, bridge stopped on exit
 
 **Next (Phase 8+):**
 - Plugin marketplace `capability_registry.py:23` — publish/install community tools
 - Mobile PWA `flexie_web/` — React PWA packaged for Android/iOS
-- Wire the orb UI (`vision/`) to the hardened WebSocket bridge (needs an allowed origin and the token) so it shows live assistant state
+- Browser-test the dashboard (Orb tab, approval and API-keys dialogs) and exercise the Qt HUD's Ctrl+F hotkey and tray menu and the camera hand tracking on a real desktop
+- Decide the PyQt6 (GPL v3 / commercial) licence question for an MIT project
 - Provider hedging (start a second provider if the first is slow) and a dedicated small routing model
 - Remove the unused LangGraph loop (`core/agent_loop.py`)
 - Vision always-on — continuous screen monitoring
@@ -999,7 +1011,7 @@ These tests use fakes: they do not exercise live models, voice, the extension, a
 - Needs mic permission; `pyaudio` optional but `SpeechRecognition` needs it.
 - Groq free-tier rate limits — Flexie tries Groq's sibling models, then the next provider; if every provider fails it says so (it does not invent an answer).
 - Only Gemini can look at images. If Gemini is overloaded or the key is missing, "describe my screen" falls back to reading the text on screen (needs Tesseract).
-- The orb UI in `vision/` is started and stopped by Flexie but is not connected to its live state (see Roadmap).
+- Not exercised in a real browser or by eye: the dashboard's Orb tab, approval and API-keys dialogs, the Qt HUD's Ctrl+F hotkey and tray menu, what the Qt floating orb looks like, and camera hand tracking. What was run live: `python main.py` shows a 300x300 Qt tool window and opens no browser or bridge until asked, "open web ui" brings the dashboard up in about 2 s, "exit" leaves no process or port open, and no Chromium is started at launch. Also run: the dashboard page and all static files over HTTP, the WebSocket authenticating from the dashboard origin with a command round-trip, the settings message (masked hints), and jsdom checks of the modals. Hand gestures also need internet access to `cdn.jsdelivr.net` and `storage.googleapis.com`.
 - Speech recognition depends on Google ASR; without Vosk/ffmpeg there is no offline fallback, and misheard commands are a known weak point.
 - The first command after launch can wait a few seconds while the vector store and model clients finish starting in the background.
 - Nothing in this repository has been tested against live voice input, a real model session, the browser extension, a real IMAP server, Docker or MCP servers in an automated way; those paths are covered by fakes only.
@@ -1019,10 +1031,14 @@ These tests use fakes: they do not exercise live models, voice, the extension, a
 
 MIT — see [LICENSE](LICENSE).
 
-All listed dependencies are permissively licensed and MIT-compatible. PDF
+Most dependencies are permissively licensed and MIT-compatible. PDF
 reading uses `pypdf` (BSD-3-Clause); the previous AGPL `pymupdf` dependency was
 removed so that distributing binaries carries no copyleft obligation.
 
+**Open licence question:** the desktop HUD uses PyQt6, which is GPL v3 / commercial. That sits
+uneasily with an MIT project and needs a decision (stay with PyQt6 under a commercial licence,
+relicense, or move the HUD to a permissively licensed toolkit).
+
 ---
 
-*Flexie 2.0 — Built for Dhanush. 2,054 tests. Voice → Controller (safety) → Router → Hybrid → ModelHub → Planner → DAG → Specialist → Jobs → MCP → Verify → Memory → Stream → API → Extension → Self-model.*
+*Flexie 2.0 — Built for Dhanush. 2,119 tests. Voice → Controller (safety) → Router → Hybrid → ModelHub → Planner → DAG → Specialist → Jobs → MCP → Verify → Memory → Stream → API → Extension → Self-model.*

@@ -169,7 +169,7 @@ class TestJobManagerLifecycle:
         mgr.submit_job(job)
 
         # Wait for worker thread to process
-        for _ in range(50):
+        for _ in range(300):   # up to 30 s: git subprocesses are slow when the machine is busy
             time.sleep(0.1)
             updated = mgr.store.load(job.id)
             if updated and updated.status in (JobStatus.DONE, JobStatus.FAILED):

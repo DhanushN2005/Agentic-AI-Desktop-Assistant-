@@ -12,6 +12,9 @@
     ["script", "style", "noscript", "iframe", "svg"].forEach(sel =>
       clone.querySelectorAll(sel).forEach(el => el.remove())
     );
+    // A detached clone has no layout, so block boundaries vanish ("Pricing" + "Our plan" -> "PricingOur plan").
+    clone.querySelectorAll("p,div,li,h1,h2,h3,h4,h5,h6,tr,td,th,section,article,header,footer,nav,button,label,br,ul,ol,table")
+      .forEach(el => el.append(" "));
     return (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim().slice(0, 8000);
   }
 
@@ -63,8 +66,7 @@
     el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mouseup",   { bubbles: true }));
-    el.click();
-    el.dispatchEvent(new MouseEvent("click",     { bubbles: true }));
+    el.click();      // exactly ONE click (a second synthetic click event here used to fire every handler twice)
   }
 
   /** Set an input's value and fire both React and native events. */
@@ -120,13 +122,21 @@
 
     // ── Fill a single input ──
     if (type === "DOM_FILL") {
-      const el = document.querySelector(request.selector) ||
-                 Array.from(document.querySelectorAll("input,textarea")).find(i =>
-                   (i.placeholder || i.name || i.id || "").toLowerCase().includes(
-                     (request.label || "").toLowerCase()
-                   )
-                 );
+      let el = null;
+      try { el = request.selector ? document.querySelector(request.selector) : null; } catch (_) { el = null; }
+      const label = (request.label || "").toLowerCase().trim();
+      if (!el && label) {      // (an empty label used to match the FIRST input on the page)
+        el = Array.from(document.querySelectorAll("input,textarea")).find(i =>
+          (i.placeholder || i.name || i.id || i.getAttribute("aria-label") || "").toLowerCase().includes(label));
+      }
       if (!el) return sendResponse({ ok: false, error: "Input not found" }), true;
+      // When Flexie (not the user in the sidebar) is typing, never touch secrets.
+      if (request.viaFlexie) {
+        const hint = `${el.type || ""} ${el.name || ""} ${el.id || ""} ${el.autocomplete || ""}`.toLowerCase();
+        if (/password|passwd|pwd|card|cc-|cvv|cvc|one-time-code|otp|ssn|secret|pin\b/.test(hint)) {
+          return sendResponse({ ok: false, error: "Flexie will not type into a password, card or code field." }), true;
+        }
+      }
       fillInput(el, request.value);
       highlightElement(el, 1500);
       sendResponse({ ok: true });

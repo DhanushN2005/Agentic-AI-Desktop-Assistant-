@@ -9,7 +9,7 @@ This report replaces the earlier version (736 tests, 45 routing cases, 43 agent 
 
 | Gate | Result |
 |---|---|
-| Test suite | **2,054 passed, 1 skipped, 0 failed** (70 test files; ~4 minutes, mostly tests that start real `git`/`npm` processes) |
+| Test suite | **2,119 passed, 2 skipped, 0 failed** (72 test files; ~4 minutes, mostly tests that start real `git`/`npm` processes) |
 | Lint | `ruff check .` — all checks passed |
 | Routing eval | **158 / 158** (100%), default pass threshold 0.9; part of the set was written from outputs the router already produced, so treat 100% as an upper bound |
 | Agent evals | **59 / 59** (100%): budget 3, confirm 5, executor_permission 2, forget 1, permission 6, plan 10, route 6, specialist 4, split 6, taint 5, usage 4, wording 7 |
@@ -91,7 +91,7 @@ Bugs found *by running real text commands* (not by unit tests): a patch of mine 
 - **Not exercised live:** voice recognition and barge-in, voice approval, the browser extension, desktop/browser automation end to end, real IMAP/Docker/MCP servers, Gemini vision (the service answered HTTP 503 "high demand" during testing), the GitHub Actions run. Text commands through the real orchestrator were tried by hand.
 - **End-to-end latency of a spoken command** (mic → recognition → model → speech) was not measured; only start-up and the deterministic stack were.
 - **Per-command tokens/cost** are recorded by `core/telemetry` with real provider usage where returned, but this benchmark uses a fake model, so only the tracking overhead (~8 µs in memory, ~112 µs with the SQLite row) is measured here. No head-to-head against OpenJarvis was run.
-- **Still open:** orchestrator is ~1,530 lines (target < 600) and has unproven races (clarification prompt listens in the action worker; clarification reply can re-queue itself; the 90 s watchdog does not stop the hung worker; unbounded speech queue); stores still sit side by side behind `MemoryFacade`; skill/MCP trust tiers; provider hedging; the `vision/` orb cannot authenticate to the WebSocket bridge; unused `supervisor/` and `runtime/` modules; signed installer / rollback.
+- **Still open:** orchestrator is ~1,530 lines (target < 600) and has unproven races (clarification prompt listens in the action worker; clarification reply can re-queue itself; the 90 s watchdog does not stop the hung worker; unbounded speech queue); stores still sit side by side behind `MemoryFacade`; skill/MCP trust tiers; provider hedging; unused `supervisor/` and `runtime/` modules; signed installer / rollback.
 - Regex/wording-based safety (`DangerGate`, permission classifier) still judges user phrasing for handler-routed steps; typed tool permissions are the stronger layer.
 - Loop-guard thresholds (20 steps / 300 s / 3 repeats) are untuned defaults.
 - Benchmark is one run on one machine; treat latencies as order-of-magnitude, not guarantees.

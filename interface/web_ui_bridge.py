@@ -12,7 +12,7 @@ Security model:
     before any other traffic is relayed to the Orchestrator.
   - Both HTTP and WebSocket servers bind to 127.0.0.1 only.
 
-Start this INSTEAD of (or alongside) ui.py when you want the HTML/JS UI.
+Normally started on demand by interface/launcher.py (hotkey, tray, 'open web ui').
 Usage:  python interface/web_ui_bridge.py
 """
 
@@ -21,6 +21,7 @@ import atexit
 import hmac
 import logging
 import os
+import re
 import secrets
 import socket
 import sys
@@ -49,7 +50,7 @@ except ImportError as _e:
 
 # ── Config ─────────────────────────────────────────────────────────────────
 ORCHESTRATOR_UDP_IN  = 9887   # bridge sends commands TO orchestrator here
-ORCHESTRATOR_UDP_OUT = 9888   # orchestrator fans STATE updates out here (Qt UI keeps 9886)
+ORCHESTRATOR_UDP_OUT = 9888   # orchestrator fans STATE updates out here
 WS_PORT              = 8765   # WebSocket port the browser connects to
 HTTP_PORT            = 8766   # localhost HTTP port serving the auth'd UI page
 HTML_FILE = os.path.join(os.path.dirname(__file__), "web_ui.html")
@@ -67,6 +68,11 @@ ALLOWED_WS_HOSTS = frozenset({f"localhost:{WS_PORT}", f"127.0.0.1:{WS_PORT}"})
 ALLOWED_ORIGINS = frozenset({f"http://localhost:{HTTP_PORT}", f"http://127.0.0.1:{HTTP_PORT}"})
 # Non-browser clients (no Origin header) must present the token in this header.
 WS_TOKEN_HEADER = "X-Flexie-Token"
+
+
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+_STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
+                 ".png": "image/png", ".json": "application/json", ".woff2": "font/woff2", ".woff": "font/woff"}
 
 
 def _host_allowed(host: str | None) -> bool:
@@ -101,7 +107,11 @@ class _AuthedUIHandler(BaseHTTPRequestHandler):
         if not _host_allowed(self.headers.get("Host")):
             self.send_error(421, "Misdirected Request")
             return
-        if self.path not in ("/", "/index.html"):
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/static/"):
+            self._serve_static(path[len("/static/"):])
+            return
+        if path not in ("/", "/index.html"):
             self.send_error(404)
             return
         body = _render_html()
@@ -112,6 +122,34 @@ class _AuthedUIHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_static(self, name: str):
+        """Serve one file from interface/static/ (same origin as the page, so no CORS).
+
+        Only a flat file name with a known extension is accepted - no sub-folders, no ``..`` -
+        and the resolved path must stay inside the static folder.
+        """
+        ctype = _STATIC_TYPES.get(os.path.splitext(name)[1].lower())
+        if not ctype or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}", name):
+            self.send_error(404)
+            return
+        full = os.path.realpath(os.path.join(STATIC_DIR, name))
+        if os.path.dirname(full) != os.path.realpath(STATIC_DIR) or not os.path.isfile(full):
+            self.send_error(404)
+            return
+        try:
+            with open(full, "rb") as f:
+                body = f.read()
+        except OSError:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 
@@ -286,8 +324,9 @@ async def main():
             print(f"[Bridge] WARNING: no UDP token available ({type(e).__name__}: {e}) — "
                   "the orchestrator will reject relayed commands.")
 
-    webbrowser.open(f"http://localhost:{HTTP_PORT}/")
-    print(f"[Bridge] Opened browser at: http://localhost:{HTTP_PORT}/")
+    if os.getenv("FLEXIE_BRIDGE_NO_BROWSER") != "1":  # the launcher opens the page itself, on demand
+        webbrowser.open(f"http://localhost:{HTTP_PORT}/")
+        print(f"[Bridge] Opened browser at: http://localhost:{HTTP_PORT}/")
 
     print(f"[Bridge] WebSocket server running on ws://localhost:{WS_PORT}")
     async with websockets.serve(ws_handler, "127.0.0.1", WS_PORT):

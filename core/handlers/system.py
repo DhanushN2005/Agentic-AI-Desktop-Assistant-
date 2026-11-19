@@ -34,6 +34,11 @@ def _mode_speech():
 
 def handle_mode(orch, c, silent):
     mode = re.sub(r"(set mode to|set mode|switch mode to|switch mode|change mode to|change mode|mode to| flexie| mode)", "", c).strip()
+    if mode not in Config.MODES:
+        # "switch to hacker mode", "activate hacker mode", "enable minimal mode": find the mode name anywhere
+        found = [m for m in Config.MODES if re.search(rf"\b{re.escape(m)}\b", c)]
+        if len(found) == 1:
+            mode = found[0]
     if not mode:
         orch.speak(f"There are {len(Config.MODES)} modes: {_mode_speech()}. Which one would you like?")
         return True
@@ -51,6 +56,13 @@ def handle_exit(orch):
     orch.browser.cleanup()
     orch.speak("Goodbye!")
     orch.send_to_ui("QUIT", "NOW")
+    try:
+        # os._exit below skips atexit and main()'s shutdown, so stop a dashboard bridge started by
+        # "open web ui" here (otherwise it keeps running, orphaned, on ports 8765/8766)
+        from interface.launcher import stop_bridge
+        stop_bridge()
+    except Exception as e:
+        logging.debug("[handle_exit] bridge stop failed: %s: %s", type(e).__name__, e)
     time.sleep(0.5)
     os._exit(0)
 
@@ -231,6 +243,85 @@ def _open_browser_only(orch, browser_name: str, silent: bool):
     return True
 
 
+_NUMBER_WORDS = {"one": 1, "first": 1, "two": 2, "second": 2, "three": 3, "third": 3, "four": 4, "fourth": 4,
+                 "five": 5, "fifth": 5, "six": 6, "sixth": 6}
+_CANCEL_WORDS = ("cancel", "none", "nothing", "never mind", "nevermind", "no ", "stop", "leave it", "forget it")
+
+
+def _pick_window(orch, target: str, windows: list):
+    """Read the open windows back and wait for the user's choice.
+
+    Returns ("one", window), ("all", None) or None (cancel, silence or unclear: close nothing).
+    """
+    shown = windows[:6]
+    listing = "; ".join(f"{i + 1}: {w['title'][:48]}" for i, w in enumerate(shown))
+    more = f", and {len(windows) - len(shown)} more" if len(windows) > len(shown) else ""
+    orch.speak(f"I found {len(windows)} {target} windows. {listing}{more}. "
+               "Which one should I close? Say a number, 'all', or 'cancel'.")
+    try:
+        ans = (orch.voice.listen(timeout=8) or "").strip().lower()
+    except Exception:
+        ans = ""
+    if not ans or any(w in ans + " " for w in _CANCEL_WORDS):
+        return None
+    if re.search(r"\ball\b|\bevery\b|\beverything\b", ans):
+        return ("all", None)
+    m = re.search(r"\b(\d+)\b", ans)
+    idx = int(m.group(1)) if m else next((n for w, n in sorted(_NUMBER_WORDS.items(), key=lambda kv: -len(kv[0])) if re.search(rf"\b{w}\b", ans)), 0)
+    if 1 <= idx <= len(shown):
+        return ("one", shown[idx - 1])
+    named = [w for w in shown if len(ans) >= 3 and ans in w["title"].lower()]
+    return ("one", named[0]) if len(named) == 1 else None
+
+
+def _close_target(orch, target: str, silent: bool) -> None:
+    """Close an app. With several windows open, ask which one (never close them all unasked)."""
+    windows = SystemCtrl.list_app_windows(target)
+    if len(windows) >= 2:
+        choice = _pick_window(orch, target, windows)
+        if choice is None:
+            if not silent:
+                orch.speak("Okay, I didn't close anything.")
+            return
+        kind, win = choice
+        if kind == "all":
+            if orch.voice.confirm(f"Close all {len(windows)} {target} windows? Unsaved work may be lost."):
+                SystemCtrl.close_app(target)
+                if not silent:
+                    orch.speak(f"Closed all {target} windows.")
+            elif not silent:
+                orch.speak("Okay, I left them open.")
+            return
+        sent = SystemCtrl.close_window(win["hwnd"])
+        if not silent:
+            orch.speak(f"Closing '{win['title'][:60]}'." if sent else "I couldn't close that window.")
+        return
+    if len(windows) == 1:
+        # exactly one window: ask it to close politely so the app can still offer to save
+        sent = SystemCtrl.close_window(windows[0]["hwnd"])
+        if not silent:
+            orch.speak(f"Closing {target}." if sent else f"I couldn't close {target}.")
+        return
+    closed = SystemCtrl.close_app(target)   # no visible window (background process): the old behaviour
+    if not silent:
+        orch.speak("I couldn't find a running app called " + target + "." if closed is False else f"Closed {target}.")
+
+
+def handle_close_web_ui(orch, c):
+    """"close the web ui / dashboard": stop the dashboard bridge (whoever started it)."""
+    try:
+        orch.send_to_ui("PANEL", "close")
+    except Exception as _e:
+        logging.debug("[close_web_ui] panel close failed: %s", _e)
+    from interface.launcher import stop_any_bridge
+    if stop_any_bridge():
+        orch.speak("The web UI is closed. If its browser tab is still open, you can close it. "
+                   "Say 'open web ui' to start it again.")
+    else:
+        orch.speak("The web UI isn't running.")
+    return True
+
+
 def handle_app_op(orch, c, silent):
     cl = c.lower()
 
@@ -295,9 +386,7 @@ def handle_app_op(orch, c, silent):
             elif not silent:
                 orch.speak("Okay, I left your apps open.")
             return True
-        closed = SystemCtrl.close_app(target)
-        if not silent:
-            orch.speak("I couldn't find a running app called " + target + "." if closed is False else f"Closed {target}.")
+        _close_target(orch, target, silent)
     else:
         t_path = None
         if "same" in cl or " it" in cl or "this" in cl or "that" in cl:
@@ -459,6 +548,28 @@ def handle_run_cmd(orch, c):
     return True
 
 
+WEB_UI_URL = "http://localhost:8766"
+
+
+def _bridge_alive() -> bool:
+    """True when the web bridge is listening (probe its WebSocket port, 8765)."""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", 8765), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def ensure_web_bridge(orch) -> bool:
+    """Start the web bridge (dashboard + WebSocket) if it is not running; True when it is up."""
+    from interface.launcher import bridge_alive, ensure_bridge  # one place starts, tracks and stops the bridge
+    if _bridge_alive() and bridge_alive():
+        return True
+    orch.speak("Starting the web UI bridge.")
+    return ensure_bridge()
+
+
 def handle_open_web_ui(orch, c):
     """Open the web UI dashboard, auto-starting the bridge if it isn't running.
 
@@ -466,37 +577,8 @@ def handle_open_web_ui(orch, c):
     orchestrator and handled exactly like a normal command.
     """
     try:
-        import socket
-
-        url = "http://localhost:8766"
-
-        def _bridge_alive() -> bool:
-            # Probe the WebSocket port the bridge listens on (8765).
-            try:
-                with socket.create_connection(("127.0.0.1", 8765), timeout=0.5):
-                    return True
-            except OSError:
-                return False
-
-        if not _bridge_alive():
-            orch.speak("Starting the web UI bridge.")
-            bridge_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "interface",
-                "web_ui_bridge.py",
-            )
-            subprocess.Popen(
-                [sys.executable, bridge_path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            # Wait up to ~5s for the bridge's HTTP/WS server to come up.
-            for _ in range(25):
-                if _bridge_alive():
-                    break
-                time.sleep(0.2)
-
-        webbrowser.open(url)
+        ensure_web_bridge(orch)
+        webbrowser.open(WEB_UI_URL)
         orch.speak("Web UI opened. Type or speak anything in the dashboard and I will handle it.")
         return True
     except Exception as e:

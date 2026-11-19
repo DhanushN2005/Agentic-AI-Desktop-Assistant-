@@ -74,13 +74,19 @@ DESC = {
     "engines.text_tools": "word count, case, extract emails/urls, sort", "engines.tip_calc": "tip and bill split", "engines.uuid_gen": "UUIDs",
     "engines.vision": "VisionEngine: screenshots, vision-model analysis, OCR fallback, camera",
     "engines.weather": "weather (geocode + forecast, cached)", "engines.wiki": "Wikipedia summaries", "engines.youtube_controller": "YouTube control on the shared browser worker",
-    "interface.ui": "PyQt6 HUD / orb (separate process)", "interface.voice": "VoiceInterface: mic VAD, ASR, TTS (neural + SAPI)",
+    "interface.launcher": "helper: ensure_bridge / stop_bridge / open_dashboard for the web dashboard, plus an optional tray + hotkey Launcher that main.py does not start",
+    "interface.ui": "PyQt6 floating-orb HUD (separate process): orb, Ctrl+F spotlight, tray, API-keys dialog, approval popup, signed UDP 9886",
+    "interface.web_ui_bridge": "web bridge: serves the dashboard page + /static, authenticated WebSocket <-> signed UDP relay",
+    "interface.api_server": "FastAPI REST + SSE API (:8768): commands, page assist, approvals, mail, usage",
+    "core.settings_service": "settings for the dashboard: masked key hints, validated saves (dashboard counterpart of the Qt keys dialog)",
+    "utils.udp_auth": "signed UDP datagrams, per-run token file, registry of UI ports (9888 web bridge)",
+    "interface.voice": "VoiceInterface: mic VAD, ASR, TTS (neural + SAPI)",
     "recovery.analyzer": "RecoveryAnalyzer: LLM diagnosis of a failed step (shared instance)",
-    "runtime.durable": "DurableWorkflowRuntime (legacy, unused)", "sandbox.executor": "SandboxExecutor: Docker python.exec with resource limits",
-    "sdd.engineer": "SDDEngineer: idea -> build plan", "supervisor.manager": "Supervisor/Worker (legacy, unused)",
+    "sandbox.executor": "SandboxExecutor: Docker python.exec with resource limits",
+    "sdd.engineer": "SDDEngineer: idea -> build plan",
     "utils.config": "Config: env/.env settings, providers, ports, limits", "utils.helpers": "find_executable, is_online, get_numbers",
-    "utils.installer": "install missing dependencies on first run", "verification.capability_validator": "validates capability declarations (legacy)",
-    "verification.semantic_validator": "semantic result check (legacy)", "verification.strict_validator": "strict result check (legacy)",
+    "utils.installer": "install missing dependencies on first run", "verification.capability_validator": "CapabilityValidator: checks a capability really took effect (file, app, camera, clipboard)",
+    "verification.semantic_validator": "SemanticValidator: checks a step outcome made sense", "verification.strict_validator": "StrictValidator: is the named app actually running",
     "voice.tts_guard": "TTSGuard: drops repeated spoken messages",
 }
 
@@ -256,7 +262,7 @@ def folder_map() -> str:
         "Entry": ["main", "adapters"],
         "Brain of the system (core)": ["core (root)", "core.handlers", "core.jobs", "core.telemetry", "core.traces", "core.event_bus",
                                        "core.inference", "core.skills", "core.agents"],
-        "Capabilities": ["engines", "agents", "sandbox", "context", "recovery", "sdd", "verification", "supervisor", "runtime", "voice"],
+        "Capabilities": ["engines", "agents", "sandbox", "context", "recovery", "sdd", "verification", "voice"],
         "Interfaces": ["interface"],
         "Support": ["utils", "evals", "tools", "templates"],
     }
@@ -383,12 +389,12 @@ def build() -> str:
                "where engines share code.\n")
     out.append(graph(engines, "LR", short=True) + "\n")
     out.append("### 3.12 `interface/`, `utils/`, `agents/`, `adapters/`, `context/`, `recovery/`, `sandbox/`, `sdd/`, `voice/`, `evals/`, `tools/`, "
-               "`verification/`, `supervisor/`, `runtime/`\n")
+               "`verification/`\n")
     for title, pred in (("interface/", lambda n: n.startswith("interface.")), ("utils/", lambda n: n.startswith("utils.")),
                         ("agents/ and adapters/", lambda n: n.startswith(("agents", "adapters"))),
                         ("context/, recovery/, sandbox/, sdd/, voice/", lambda n: n.split(".")[0] in ("context", "recovery", "sandbox", "sdd", "voice")),
                         ("evals/ and tools/", lambda n: n.split(".")[0] in ("evals", "tools")),
-                        ("verification/, supervisor/, runtime/ (legacy)", lambda n: n.split(".")[0] in ("verification", "supervisor", "runtime"))):
+                        ("verification/", lambda n: n.split(".")[0] == "verification")):
         names = sorted(n for n in mods if pred(n))
         if names:
             out.append(f"**{title}**\n")

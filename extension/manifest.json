@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "Flexie Browser Assistant",
   "version": "2.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxhWu9DlVBAU+qgPZN7SB2vinWRplhhjHOFUPS+Zb0P7P4uLnftotnVG+IsRB79ETF+LgkuPCTAPOCJrVkB2uu4BrKmxtf1iScdjBUMXOO+sgRAu9r7gZAErBCtDRpWb7F/0eb3uruluTLdJ9rp6DHc2DEXTLnT/iJIG7i3ttpRw8WYs4z+Gp1zRax5fvFJidEM4ujFa096Ah/M0e8v5jJ+daDNkFx8aPghvgOjmggPV0Mn6gSXBjaBOyzmLclkvmQwilHgk8tT1jL64ozLcTMq0AzBkuhGRJZ8dP8zSB/eRdqtc6Rl3W5mCE3rm8rO0EgIw73UgnZWPvBSdWF+ZE0wIDAQAB",
   "description": "Voice and AI-powered browser copilot for webpage analysis, summarization, automation, and research.",
   "permissions": [
     "activeTab",

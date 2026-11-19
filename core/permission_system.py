@@ -102,6 +102,10 @@ class PermissionSystem:
                 r"\b(set mode|switch mode|change mode)\b",
             ],
             PermissionLevel.USER_CONFIRMATION: [
+                # Changing the page the user is looking at in their REAL browser through the extension
+                # (click / type / press / go to / submit). Reading, finding and scrolling need no confirmation.
+                r"^\s*(?:please\s+)?(?:click|type|enter|write|fill|press|submit|send\s+the\s+form|go\s+to|navigate|open|visit|load)\b.*"
+                r"\b(?:(?:this|the\s+current|my\s+current|current|that)\s+(?:tab|page|website|site|web\s*page)|(?:in|on)\s+my\s+(?:browser|chrome|edge))\b",
                 r"\b(move|rename|copy|paste|create|write|save)\s+(file|folder|document)\b",
                 r"\b(send|compose|reply|forward)\s+(an?\s+)?(email|mail|message|text)\b",
                 r"\b(delete|remove|erase)\s+(file|folder|document)\b",
@@ -110,7 +114,9 @@ class PermissionSystem:
                 r"\b(git\s+(add|commit|push|pull|merge|rebase|reset|stash))\b",
                 r"\b(organize|sort|clean|arrange)\s+(desktop|folder|files)\b",
                 r"\b(run|execute)\s+(script|code|python|node|npm|pip)\b",
-                r"\b(powershell|bash|sh|cmd|python|node|npx|pip)\b",
+                # Using an interpreter/package tool (a clause that STARTS with it plus arguments), not merely
+                # mentioning the word: "generate python code" or "tell me about python" are harmless.
+                r"^\s*(?:please\s+)?(?:powershell|bash|sh|cmd|python|node|npx|pip)\b\s+\S",
                 # Outbound messaging / publishing — judged per clause, so verbs at the START of a clause
                 r"\breply\s+(?:to\s+)?all\b",
                 r"\bforward\s+(?:this|it|that|the\s+\w+|everything)\s+to\b",

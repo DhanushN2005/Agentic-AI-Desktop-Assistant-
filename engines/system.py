@@ -311,6 +311,77 @@ class SystemCtrl:
         return killed
 
     @staticmethod
+    def app_process_names(app_name: str) -> set:
+        """Executable names that count as ``app_name`` (the same rule close_app uses)."""
+        target = (app_name or "").lower().replace(".exe", "").strip()
+        if not target or SystemCtrl.is_close_all(target):
+            return set()
+        names = {n.lower() for n in SystemCtrl._APP_ALIASES.get(target, [])}
+        if re.fullmatch(r"[a-z0-9_.\- ]+", target):
+            names.add(target + ".exe")
+        return names - SystemCtrl._PROTECTED_PROCESSES
+
+    @staticmethod
+    def list_app_windows(app_name: str) -> list:
+        """Visible top-level windows of ``app_name`` as [{hwnd, title, pid}].
+
+        Flexie's own windows and Flexie's own browser (profile ``browser_session``) are never listed,
+        so "close chrome" can only ever offer the user's windows. Returns [] when unsupported."""
+        names = SystemCtrl.app_process_names(app_name)
+        if not names:
+            return []
+        try:
+            import win32con
+            import win32gui
+            import win32process
+        except ImportError:
+            return []
+        own = SystemCtrl._own_pids()
+        out: list = []
+
+        def _flexie_browser(pid: int) -> bool:
+            try:
+                return "browser_session" in " ".join(psutil.Process(pid).cmdline()).replace("\\", "/")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return False
+
+        def _cb(hwnd, _):
+            try:
+                if not win32gui.IsWindowVisible(hwnd) or win32gui.GetWindow(hwnd, win32con.GW_OWNER):
+                    return True
+                if win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOOLWINDOW:
+                    return True
+                title = (win32gui.GetWindowText(hwnd) or "").strip()
+                if not title:
+                    return True
+                pid = win32process.GetWindowThreadProcessId(hwnd)[1]
+                if pid in own:
+                    return True
+                if (psutil.Process(pid).name() or "").lower() in names and not _flexie_browser(pid):
+                    out.append({"hwnd": hwnd, "title": title, "pid": pid})
+            except Exception as _e:
+                logging.debug("list_app_windows skip: %s", _e)
+            return True
+
+        try:
+            win32gui.EnumWindows(_cb, None)
+        except Exception as _e:
+            logging.debug("EnumWindows failed: %s", _e)
+        return out
+
+    @staticmethod
+    def close_window(hwnd: int) -> bool:
+        """Ask ONE window to close (WM_CLOSE, so the app can still offer to save). True if it was sent."""
+        try:
+            import win32con
+            import win32gui
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            return True
+        except Exception as e:
+            logging.debug("close_window failed: %s", e)
+            return False
+
+    @staticmethod
     def close_all_known_apps() -> list:
         """After explicit confirmation: close every running app from the curated alias list."""
         closed = []

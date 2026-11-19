@@ -6,7 +6,7 @@ Source: `MODULE_AUDIT_REPORT.md` (IDs match). Status is updated only after an it
 **Efficiency guard:** no fix may slow a hot path by more than ~10%. Speed is re-measured with `python -m evals.bench` against the baseline in `evals/results/bench-20261118-141406.json` before this is closed.
 
 ## Gates (must be green before anything is called done)
-- [x] Full test suite passes (`pytest tests`, run with `GIT_CEILING_DIRECTORIES` set) — latest: 2,054 passed, 1 skipped
+- [x] Full test suite passes (`pytest tests`, run with `GIT_CEILING_DIRECTORIES` set) — latest: 2,119 passed, 2 skipped
 - [x] `ruff check .` clean
 - [x] Agent evals 59/59 and the routing eval (158 cases, default threshold 0.9) pass
 - [~] Benchmark within 10% of baseline on every hot path — **not met**: routing is ~9x faster, but registry execute, tool loop, plan execution and memory paths are slower (see `../BENCHMARK_REPORT.md` §2); startup time recorded (import + construct ~14.5 s → ~1.9 s)
@@ -204,7 +204,7 @@ Source: `MODULE_AUDIT_REPORT.md` (IDs match). Status is updated only after an it
 - [ ] LG-6 arbitrator depth count/timeout · LG-7 goal evaluator/critic thresholds · LG-8 SDD output validation
 - [ ] LG-10 packaging: `pyproject` ↔ `requirements` drift, `flexie` console script, PyInstaller hidden imports/UPX, split core/optional deps, lockfile
 - [ ] LG-11 CI: Python matrix, type check, dependency audit, secret scan, build smoke test, honest coverage floor
-- [ ] LG-12 PyQt6 (GPL) vs MIT licensing — *legal decision needed*
+- [ ] LG-12 PyQt6 (GPL) vs MIT licensing — **open again**: PyQt6 was removed during Round 5, then restored at the user's request (the Qt floating-orb HUD is the desktop UI); a licence decision is needed
 
 ## Known structural limits (documented, not fixable by code alone)
 - Handler steps on the older text-command path cannot be interrupted or independently confirmed.
@@ -249,4 +249,41 @@ Not tested live: real models, voice, browser extension, real IMAP/Docker/MCP.
 - **Wake-word hint:** while asleep, speech without the wake word is logged and (at most once a minute) answered with "I'm asleep. Say 'Flexie' first…".
 - **Known gaps found while documenting (not fixed):** the `vision/` orb and `flexie_web/` connect to `ws://localhost:8765` but the bridge accepts only its own dashboard origin and an `AUTH:` token, so they cannot connect; `flexie_web`'s provider list still shows retired default models; `engines/self_awareness.py` capability/limitation text does not yet mention image download or vision mode; `supervisor/`, `runtime/` and `Brain.react()` / `core/agent_loop.py` are unused; `FINAL_REPORT.html` still shows the old counts (736 tests, 45/45 routing, 43/43 agent evals); "is there any important mail" is not understood as a question about importance.
 - **Documentation refreshed to the current code:** `README_FEATURES.md`, `OPENJARVIS_ADAPTATION.md` (new §12), `../BENCHMARK_REPORT.md` (re-run; honest about slower paths), `evals/README.md`, `extension/README.md`, `flexie_web/README.md`, banner on `MODULE_AUDIT_REPORT.md`, `evals/bench.py` "not measured" text.
-- **Current totals:** pytest 2,054 passed / 1 skipped; `ruff check .` clean; agent evals 59/59; routing eval 158/158; 96 intents, 197 overrides, 43 engines, 49 handler modules, 70 test files.
+- **Totals after Round 4:** pytest 2,054 passed / 1 skipped; `ruff check .` clean; agent evals 59/59; routing eval 158/158; 96 intents, 197 overrides, 43 engines, 49 handler modules, 70 test files.
+
+## Round 5 — one web UI built, then reverted (Nov 18-19, 2026)
+- [x] Built: dashboard-only desktop UI (`interface/ui.py` and PyQt6 removed, `interface/launcher.py` with tray + Ctrl+Alt+F hotkey started by `main.py`, Qt UDP port 9886 removed)
+- [x] **Reverted at the user's request (Nov 19):** the PyQt6 floating-orb HUD (`interface/ui.py`), `run_ui` in `main.py`, PyQt6 in requirements/pyproject/`flexie.spec`/installer and UDP 9886 are back; the web dashboard opens only when asked ("open web ui"). `interface/launcher.py` is now a helper (bridge start/reuse/stop, `open_dashboard`); its tray/hotkey class is not started by `main.py`
+- [x] Kept from Round 5 (dashboard side): Orb tab (`interface/orb/` -> `interface/static/orb.js`, `orb-gestures.js`, `orb.css`, `orb-panel.js`), approval modal, API-keys/models dialog (`core/settings_service.py`, `GET_SETTINGS` / `SAVE_SETTINGS`, masked hints only), mail badge, quit notice, safe `/static/<file>` route; "open vision mode" opens `http://localhost:8766/#orb`, "close vision mode" sends `PANEL:close` (no npm, no Next.js dev server)
+- [ ] LG-12 (PyQt6 GPL vs MIT) is open again
+- [ ] Not verified: Ctrl+F hotkey and tray menu clicks, what the Qt window looks like, the Orb tab and modals in a real browser, camera hand tracking
+
+## Round 6 — found by running the real app (Nov 19, 2026)
+- [x] "open web ui" and "run command" were routed with confidence 9 / 10 and had no dispatcher branch, so the model answered "Done" without doing anything. Overrides are now 0.97, `dispatch_intent` has branches for both, and a test checks every override has a valid confidence and a dispatch branch
+- [x] The dashboard bridge started by "open web ui" was left running (ports 8765/8766) after "exit", because `handle_exit` ends with `os._exit(0)`, which skips `atexit` and `main.py`'s shutdown. `handle_exit` and `_shutdown` now call `stop_bridge()`. Verified live: after "exit" the API, bridge and WebSocket ports are closed and no Flexie process is left
+- [x] A visible blank Chromium window opened at every startup: `YouTubeController` pre-warmed Flexie's Playwright browser 3 s after launch (`headless=False`). Pre-warm is now opt-in (`FLEXIE_PREWARM_BROWSER=1`); `test_browser_is_not_prewarmed_unless_asked` covers it. Verified live: no Chromium process on the `browser_session/` profile and no new "pre-warmed" log line after a start
+- [x] Live checks: the Qt HUD window (300x300 tool window) appears at startup; no bridge or browser until asked; "open web ui" brings the dashboard up in about 2 s
+- [x] Totals: pytest 2,119 passed / 2 skipped (72 test files); `ruff check .` clean; agent evals 59/59; routing eval 158/158
+
+## Round 7 — found in the user's live session log (Nov 19, 2026)
+- **"generate python code for hello world" asked to confirm ("destructive or irreversible")**: the permission rule matched the bare word `python` (also `node`, `pip`, `cmd`, `bash`). It now matches only a clause that STARTS with an interpreter plus arguments ("python script.py", "pip install x"); "run python script" still confirms. The prompt now says "That will change something on your computer" unless the danger gate actually fired.
+- **UI / API approve, reject and cancel were ignored**: the orchestrator looks for `self.controller`, which nothing set, so a rejected prompt stayed pending and re-asked on every later command ("close the web ui" got "Say confirm…"). `main.py` now sets `assistant.controller`; approvals are resolved on the action worker through the command queue (a stale approval for another request id is ignored).
+- **"close the web ui"**: new intent `close_web_ui`; stops the dashboard bridge whoever started it (only a process listening on 8765/8766 whose command line is `web_ui_bridge`), tells open dashboards to close the panel, and says the browser tab itself may still be open.
+- **"close chrome" with several windows**: lists the user's windows (numbered, titles), asks which one, accepts a number, ordinal, title words, "all" (second confirmation) or "cancel"; silence or an unclear answer closes nothing. One window is closed politely (WM_CLOSE); none falls back to ending the process. Flexie's own browser (`browser_session`) is never offered.
+- **Picking by ordinal**: "the second one" used to select item 1 (dict order matched "one" first) in BOTH this picker and the file-delete picker; longer words are checked first now.
+- **Test timing**: `test_create_and_run_job_lifecycle` waited at most 5 s for a job that runs real `git`; it failed under a loaded machine. Ceiling raised to 30 s (early exit unchanged).
+- Verified live on this machine: Chrome window listing (2 real windows found, answer "cancel" closed nothing), `close the web ui` stopped the bridge and a second ask said it wasn't running, UI reject cleared the pending prompt (on a private UDP port). NOT verified: closing a real window by number, voice recognition of the answer, and the dashboard in a browser.
+
+## Round 8 — browser extension did not work (Nov 19, 2026)
+- **Cause 1:** the API gave the bearer token only to requests whose `Origin` was on a trust list that needed `FLEXIE_EXTENSION_IDS` set to the extension's random ID before Flexie started. Nobody does that, so the sidebar said ONLINE (the health check succeeds) while every real request returned 401.
+- **Cause 2 (found by loading the extension into a real Chromium):** Chrome sends **no `Origin` header at all** on requests from an extension's own pages, so even a correctly configured ID could never match.
+- **Fix:** pairing key. Flexie creates `extension/pairing.key` (random 256-bit, git-ignored); the extension reads its own copy and sends it as `X-Flexie-Pairing` on `/health`; the token is issued only for that key (constant-time compare). Not in the CORS allow-list, so web pages cannot send it; unreadable to web pages and other extensions. Also fixed the extension ID via a `key` in `manifest.json` (`mhamnndilobijpbcpjfacaeiadnlffom`).
+- **Status badge** now says `NOT PAIRED` instead of a misleading ONLINE when no token is issued; the popup's inline script (blocked by Manifest V3) moved to `popup.js`.
+- Verified in a real Chromium (Playwright, extension loaded unpacked, real Flexie API server, no configuration): extension id matches, sidebar ONLINE + token stored, `POST /command` reached the orchestrator queue, `POST /page-assist` answered, popup ONLINE + token with no console errors; no header / wrong key / unknown extension origin get no token. NOT verified: selection pill, context menus, side panel in the user's own Chrome, voice dictation, DOM tasks.
+
+## Round 9 — Flexie reads and controls the current tab (Nov 19, 2026)
+- **Built:** a polling channel (`core/extension_bridge.py`, `/api/flexie/extension/{poll,result,status}`, polling loop in `background.js`) and `core/handlers/tab.py` with its router override (`browser_tab`). Tasks: active_tab, list_tabs, read_page, extract_tables, extract_links, find_text, scroll, click, fill, key, navigate, submit. Act tasks need confirmation; reading falls back to Flexie's own browser when the extension is not connected.
+- **Bugs found by the real-browser run and fixed:** a click fired twice (`clickElement` clicked and also dispatched a synthetic click); `DOM_FILL` with an empty label filled the first input on the page; page-side `{ok:false}` was reported as success; extracted text had block elements glued together; a doubled `|` in a router regex matched every command; the optional preposition matched the "in" in "explain".
+- **Safety:** `viaFlexie` fills refuse password/card/code fields; http/https navigation only; typed values never echoed; page text marked untrusted.
+- **Verified** in a real Chromium with the unpacked extension (16/16: connect by polling, tab info, list, read, summarize, find, tables, links, scroll, click, type, password refusal, navigate, missing-element error, unreadable page) and by `tests/test_extension_bridge.py` (68 tests). Full suite 2214 passed, agent evals 59/59, routing 166/166, ruff clean. NOT verified: the user's own Chrome, selection pill, context menus, side panel, voice, the confirmation prompt end to end.
+

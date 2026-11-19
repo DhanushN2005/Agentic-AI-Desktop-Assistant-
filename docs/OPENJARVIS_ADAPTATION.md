@@ -2,7 +2,7 @@
 
 > Comparison baseline: OpenJarvis (`open-jarvis/OpenJarvis`, Apache-2.0, Stanford Hazy Research) vs Flexie 2.0.
 > Flexie audit performed on this repo (historical, Nov 9): 38,567 Python LOC, 36 test files, 627 tests collected, 979 ruff findings.
-> **Current state (Nov 18, 2026, evening): see §12.** About 47,000 Python LOC (excluding tests), 70 test files, 2,054 tests passing, ruff clean. §§0–9 are the original plan and baseline and are kept as written for history.
+> **Current state (Nov 19, 2026): see §12; §13 (one web UI, PyQt6 removed) was built and then reverted at the user's request, see the note under its heading.** About 47,000 Python LOC (excluding tests), 70 test files, 2,054 tests passing, ruff clean. §§0–9 are the original plan and baseline and are kept as written for history.
 > OpenJarvis is a **framework**; Flexie is a **Windows product**. Adopt the framework layer, not its research surface.
 
 ---
@@ -419,8 +419,20 @@ State measured on this machine: **2,054 tests pass (1 skipped), `ruff check .` c
 - **Trust tiers:** capability gating is deny-by-default for undeclared capabilities, but skills still have no per-skill capability sets and MCP servers have no trust tiers.
 - **Providers:** no request hedging (start a second provider if the first is slow); vision works only through Gemini.
 - **Orb link:** the `vision/` orb's WebSocket connection to the backend is rejected by the bridge's origin/token check; the orb runs standalone.
-- **Dead code:** `supervisor/` and `runtime/` (durable workflows) are not imported anywhere; `core/agent_loop.py` (LangGraph ReAct loop) is only reachable through `Brain.react()`, which nothing in the running system calls. None of it was deleted.
+- **Dead code:** `supervisor/` and `runtime/` (durable workflows) had no importers and were removed. `core/agent_loop.py` (LangGraph ReAct loop) is only reachable through `Brain.react()`, which nothing in the running system calls; it was not deleted. (`verification/` is *not* dead: `WorkflowExecutor.verify_step` uses its validators.)
 - **Packaging/CI:** no signed installer or rollback path; the GitHub Actions workflow exists (`.github/workflows/ci.yml`: ruff + pytest with a coverage floor on Windows) but a green run has not been verified from this machine.
 - **Not tested live:** real voice (recognition is unreliable in the logs without `ffmpeg`/Vosk fallbacks), the browser extension, real IMAP/Docker/MCP servers, Gemini vision (the service returned 503 overload errors during testing), and end-to-end latency of a spoken command.
 
 Fix tracking: `FIX_CHECKLIST.md`. Historical audit: `MODULE_AUDIT_REPORT.md`. Measurements: `../BENCHMARK_REPORT.md`.
+
+## 13. Update — Nov 18, 2026 (late): one web UI, no PyQt6
+
+> **Reverted (Nov 19, 2026), by the user's choice.** The PyQt6 floating-orb HUD (`interface/ui.py`) is the desktop UI again and starts with `python main.py`; the web dashboard opens only on request. What was kept from this section: the dashboard's Orb tab, approval modal, API-keys/models dialog (`core/settings_service.py`), mail badge, quit notice and the `/static` route. `interface/launcher.py` survives only as a bridge helper (its tray/hotkey class is not started). PyQt6 and the Qt UDP port 9886 are back, and the PyQt6 (GPL) licence question (LG-12) is open again. The text below describes the plan as it was built; it is kept for history.
+
+The desktop UI is now the web dashboard (`interface/web_ui.html`, `http://localhost:8766/`) plus an in-process launcher (`interface/launcher.py`: bridge start/reuse/stop, global hotkey Ctrl+Alt+F via `FLEXIE_HOTKEY`, pywin32 tray with Open Flexie / Open Orb / Wake Flexie / Quit, all fail-soft). `interface/ui.py` and the PyQt6 dependency are gone (this also settles the GPL-vs-MIT question; pywin32 is PSF-licensed). The Qt UDP port 9886 was removed; UDP is now 9887 (assistant input) and 9888 (web bridge, registered ports only).
+
+- **Dashboard gained** an approval modal, an API-keys/models dialog (`core/settings_service.py`, `GET_SETTINGS` / `SAVE_SETTINGS` over the authenticated WebSocket, masked hints only), a mail badge, a quit notice (`interface/static/panels.js`) and an **Orb** tab (`interface/orb/` → `interface/static/orb.js`, `orb-gestures.js`, `orb.css`, `orb-panel.js`; gestures off by default, MediaPipe loads lazily from `cdn.jsdelivr.net` / `storage.googleapis.com`, which the CSP allows for that purpose only).
+- **"open vision mode"** now opens `http://localhost:8766/#orb` (and sends `PANEL:orb`; "close vision mode" sends `PANEL:close`). No npm, no Next.js dev server, no port 3000. The orb's old connection problem is gone because it is same-origin with the authenticated WebSocket. The `vision/` and `flexie_web/` folders still exist as standalone projects and are not used by Flexie.
+- **Bridge:** serves `/static/<flat file>` from `interface/static/` (Host check, known extensions, no traversal).
+- **Verified:** full suite 2,115 passed / 1 skipped, ruff clean, agent evals 59/59, routing eval 158/158; a live run started the bridge through the launcher, loaded the dashboard (token injected) and all six static files, authenticated a WebSocket from the dashboard origin, round-tripped "what is 12 times 12" → "That equals 144.", got settings with masked key hints only, and saw a WebSocket from `http://localhost:3000` rejected (4003).
+- **Not verified:** pressing the hotkey, clicking the tray menu, the Orb tab and modals in a real browser, camera hand tracking.

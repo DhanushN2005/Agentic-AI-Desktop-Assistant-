@@ -37,6 +37,11 @@ security = HTTPBearer(auto_error=False)
 # Only the dashboard origin may receive the API token by default. Anything else
 # (dev servers, other localhost apps) must be listed explicitly in
 # FLEXIE_EXTRA_ORIGINS (comma-separated, e.g. "http://localhost:5173").
+# The Flexie browser extension has a FIXED id (extension/manifest.json carries a "key", and Chrome derives the
+# id from it, so it is the same on every install). Chrome sends no Origin header for an extension's own pages,
+# so trust is NOT granted by origin but by the pairing key below; the id is kept here for the tests and docs
+# (a test checks it matches the manifest). Other origins still need FLEXIE_EXTRA_ORIGINS / FLEXIE_EXTENSION_IDS.
+FLEXIE_EXTENSION_ID = "mhamnndilobijpbcpjfacaeiadnlffom"
 _DEFAULT_ORIGINS = (
     "http://localhost:8766", "http://127.0.0.1:8766",
 )
@@ -84,6 +89,56 @@ def _allowed_origins() -> set[str]:
         if origin.startswith(("http://", "https://")) and "*" not in origin:
             origins.add(origin)
     return origins
+
+
+# ── extension pairing ────────────────────────────────────────────────────────
+# A random per-install secret stored INSIDE the extension folder (git-ignored). The extension reads its own
+# copy (chrome.runtime.getURL) and sends it as X-Flexie-Pairing on /health; the server compares it here.
+PAIRING_HEADER = "X-Flexie-Pairing"
+PAIRING_KEY_FILE = os.path.join(_ROOT_DIR, "extension", "pairing.key")
+_pairing_lock = threading.Lock()
+
+
+def ensure_pairing_key(path: str | None = None) -> str:
+    """Return this install's pairing key, creating it (random, 256 bit) if the file does not exist."""
+    import secrets
+    path = path or PAIRING_KEY_FILE
+    with _pairing_lock:
+        try:
+            with open(path, encoding="utf-8") as f:
+                key = f.read().strip()
+            if len(key) >= 32:
+                return key
+        except OSError:
+            pass
+        key = secrets.token_hex(32)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(key + "\n")
+        except OSError as e:
+            logger.warning("could not write the extension pairing key (%s); the extension will stay unpaired", e)
+        return key
+
+
+def pairing_key_matches(supplied: str, path: str | None = None) -> bool:
+    """Constant-time check of a supplied pairing key against this install's key file."""
+    supplied = (supplied or "").strip()
+    if len(supplied) < 32:
+        return False
+    try:
+        with open(path or PAIRING_KEY_FILE, encoding="utf-8") as f:
+            expected = f.read().strip()
+    except OSError:
+        return False
+    return len(expected) >= 32 and hmac.compare_digest(supplied, expected)
+
+
+class ExtensionResultPayload(BaseModel):
+    """The extension's answer to a task it polled (data is trimmed by the bridge)."""
+    id: str = Field(max_length=64)
+    ok: bool
+    data: Any = None
+    error: str | None = Field(default=None, max_length=500)
 
 
 class CommandRequest(BaseModel):
@@ -164,6 +219,7 @@ def create_app(orch: Any = None) -> FastAPI:
     app = FastAPI(title="Flexiee API", version="2.0")
 
     allowed_origins = _allowed_origins()
+    ensure_pairing_key()   # so the extension can pair on its first health check after Flexie starts
     app.add_middleware(
         CORSMiddleware,
         allow_origins=sorted(allowed_origins),
@@ -179,11 +235,16 @@ def create_app(orch: Any = None) -> FastAPI:
             "service": "flexiee",
             "active": orch.active if orch else False,
         }
-        # The bearer token is only issued to explicitly trusted origins
-        # (dashboard / configured extension IDs). Unknown origins, other
-        # extensions and arbitrary localhost web apps never receive it.
-        if request.headers.get("origin", "") in allowed_origins:
+        # The bearer token is only issued to (a) explicitly trusted origins (the dashboard, configured
+        # extension IDs) or (b) a client that proves it is the Flexie extension by presenting this
+        # install's pairing key. (b) exists because Chrome sends NO Origin header on requests made by an
+        # extension's own pages, so the extension can never be recognised by origin. Web pages cannot
+        # send the header (it is not in the CORS allow-list) nor read the key file inside the extension,
+        # and other extensions cannot read another extension's files.
+        paired = pairing_key_matches(request.headers.get(PAIRING_HEADER, ""))
+        if paired or request.headers.get("origin", "") in allowed_origins:
             body["token"] = get_token()
+        body["paired"] = paired
         return body
 
     @app.post("/page-assist", dependencies=[Depends(verify_token)])
@@ -342,6 +403,27 @@ def create_app(orch: Any = None) -> FastAPI:
     @app.post("/api/jarvis/reject", dependencies=[Depends(verify_token)])
     def reject_action(payload: ApprovalRequestPayload):
         return _resolve(payload, False)
+
+    # ── Flexie -> extension channel (the extension polls for tasks; see core/extension_bridge.py) ──
+
+    @app.get("/api/flexie/extension/poll", dependencies=[Depends(verify_token)])
+    def extension_poll(wait: float = Query(20.0, ge=0, le=25)):
+        """Long-poll: returns the extension's next task (or {} after ``wait`` seconds)."""
+        from core.extension_bridge import get_bridge
+        task = get_bridge().poll(wait)
+        return {"task": task} if task else {}
+
+    @app.post("/api/flexie/extension/result", dependencies=[Depends(verify_token)])
+    def extension_result(payload: ExtensionResultPayload):
+        from core.extension_bridge import get_bridge
+        if not get_bridge().complete(payload.id, payload.ok, payload.data, payload.error):
+            raise HTTPException(status_code=404, detail="Unknown or expired task")
+        return {"status": "accepted"}
+
+    @app.get("/api/flexie/extension/status", dependencies=[Depends(verify_token)])
+    def extension_status():
+        from core.extension_bridge import get_bridge
+        return get_bridge().status()
 
     # ── Mail endpoints ────────────────────────────────────────────────────
 

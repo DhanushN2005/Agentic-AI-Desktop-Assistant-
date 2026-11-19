@@ -4,15 +4,19 @@ Flexie 2.0 is an advanced desktop AI assistant built for high-performance automa
 
 ---
 
-## 🎨 1. UI/UX & Aesthetics (Next-Gen HUD)
+## 🎨 1. UI/UX & Aesthetics (Qt floating-orb HUD + web dashboard on request)
 **Category: Interface & Visualization**
-*   **Glassmorphism Dashboard:** A premium, semi-transparent frosted glass UI with real-time background blur.
-*   **Minimalist "Copilot" Mode:** Triggered via `Ctrl+F`, this mode collapses the entire dashboard into a sleek, adaptive search bar and answer area.
-*   **Adaptive Window Reflow:** The popup dynamically grows or shrinks its height to perfectly fit AI responses, ensuring no wasted screen space.
-*   **Reactive Waveform:** A real-time visualizer that moves in sync with Flexie’s voice processing states.
-*   **System Metrics HUD:** Real-time tracking of CPU, RAM, and Battery usage with smooth custom progress bars.
-*   **Hardware Control Sliders:** Direct integrated control over System Volume and Screen Brightness.
-*   **AI Core Switcher:** Hot-swappable personality modes (Professional, Hacker, Focus, etc.).
+`python main.py` starts the **PyQt6 HUD** (`interface/ui.py`) as its own process: a 300x300 always-on-top **floating orb**, a **Ctrl+F** spotlight popup, a tray icon (*Show Controls*, *Wake Flexie*, *Exit*), an API-keys dialog and an approval popup. Nothing opens a browser or starts the web bridge at launch. The **web dashboard** (`http://localhost:8766/`, served by `interface/web_ui_bridge.py`, token injected) opens only when you ask ("open web ui", "open vision mode", or the HUD's dashboard button). A replacement of the HUD by the dashboard plus a tray/hotkey launcher was built and then reverted at the user's request; the dashboard kept the pieces below.
+*   **Glassmorphism Dashboard:** A semi-transparent frosted-glass page with a chat/command bar, streaming replies and toast notifications.
+*   **Reactive Waveform:** A visualizer that follows Flexie's voice-processing states (state updates arrive over the authenticated WebSocket).
+*   **System Metrics:** CPU, RAM and battery bars, with a warning toast above 90 % CPU.
+*   **Hardware Control Sliders:** System volume and screen brightness.
+*   **AI Core Switcher:** Hot-swappable personality modes (Professional, Hacker, Focus, etc.) from the mode selector.
+*   **Orb tab:** the 3D hand-gesture orb as a full-window overlay inside the dashboard (see section 6).
+*   **Approval dialog:** a risky command raises a modal with Approve / Reject (Esc rejects); it sends `APPROVE:<id>` / `REJECT:<id>` for that request.
+*   **API keys and models dialog:** set provider keys and models and the active provider from the page (`core/settings_service.py`). Key fields are write-only; the page only ever receives masked hints, and key values are never logged.
+*   **Mail badge** and a **quit notice** when Flexie shuts down.
+*   **Launcher helper:** `interface/launcher.py` starts, reuses and stops the web bridge for "open web ui" / "open vision mode" and is stopped on "exit". It also contains an optional tray + global-hotkey class (default Ctrl+Alt+F, `FLEXIE_HOTKEY`) that `main.py` does **not** start, because the Qt HUD already has its own tray and Ctrl+F hotkey.
 
 ## 🧠 2. Intelligent Brain & Core Logic
 **Category: Reasoning & NLP**
@@ -23,7 +27,7 @@ Flexie 2.0 is an advanced desktop AI assistant built for high-performance automa
 *   **Persistent SQLite Memory:** Remembers your history, URLs, and previous queries across restarts. Secrets are scrubbed before anything is stored, conversation memories expire (14 days), the stores are pruned hourly, and "forget" reaches every store (chat, facts, vector memory, activity, wiki).
 *   **Robust Intent Routing:** A high-speed regex and keyword-based router (96 intents, ~200 natural-language overrides, cached typo correction, ~0.5 ms median) that classifies commands (Search, Apps, Media, Calc …) before processing. The model is only used for open-ended requests.
 *   **Wake word:** After start-up Flexie sleeps until it hears "Flexie" (or another wake word). If it hears speech while asleep it logs it and, at most once a minute, says "I'm asleep. Say 'Flexie' first, then your command." instead of silently ignoring you.
-*   **Dual Response (Show & Tell):** Every query results in both a spoken response (TTS) and a Markdown-rendered visual result in the popup.
+*   **Dual Response (Show & Tell):** Every query results in both a spoken response (TTS) and a Markdown-rendered visual result in the dashboard.
 
 ## 🪞 3. Self-Awareness (live, not guessed)
 **Category: Introspection** (`core/self_model.py`)
@@ -51,13 +55,16 @@ Flexie 2.0 is an advanced desktop AI assistant built for high-performance automa
 
 ## 🔮 6. Vision Mode (hand-gesture orb)
 **Category: Interface**
-*   **"Open vision mode"** (also start/launch/run vision mode, "start the orb") launches the separate **ULTRON Orb UI** in `vision/` (Next.js + Three.js + MediaPipe) and opens it in your browser; **"close vision mode"** stops it (`engines/vision_mode.py`). The first launch runs `npm ci` (a few minutes, needs Node.js/npm); the dev server uses the first free port from 3000.
-*   Press **G** in the page and allow camera access to turn hand gestures on (pinch to spin, two-hand pinch to zoom). The orb tries to connect to the backend WebSocket (`ws://127.0.0.1:8765`), but the bridge only accepts the dashboard origin and requires an `AUTH:` token, so today the orb runs as a standalone visual.
+*   **"Open vision mode"** (also start/launch/run vision mode, "start the orb") starts the web bridge if needed and opens `http://localhost:8766/#orb`; an already-open dashboard switches to the Orb tab. **"Close vision mode"** closes the panel. There is no Node.js step and no separate server: the orb is a committed bundle (`interface/static/orb.js`, built from `interface/orb/`; it was ported from the standalone `vision/` Next.js app, which Flexie no longer launches).
+*   The orb shares the dashboard's origin and authenticated WebSocket, so it reflects Flexie's live state (idle, listening, thinking, speaking).
+*   Press **G** (or the button) to turn hand gestures on (pinch to spin, two-hand pinch to zoom). Gestures are **off by default**: only then does the page load MediaPipe (from `cdn.jsdelivr.net`, model from `storage.googleapis.com`; the page's CSP allows only those hosts for this) and ask for camera access, so gestures need internet access.
+*   Not yet exercised in a real browser: the orb rendering, the modals and camera hand tracking were checked with code tests, jsdom and a live bridge round-trip, not by eye.
 
 ---
 
 ## 🛑 Limitations
-*   **Windows-Centric:** Global hotkeys (`Ctrl+F`), brightness control, and process management currently rely on Windows API (`ctypes`, `win32`).
+*   **Windows-Centric:** The Qt HUD's Ctrl+F hotkey (`ctypes`), brightness control, and process management rely on Windows APIs (`ctypes`, `win32`).
+*   **PyQt6 licence:** the HUD depends on PyQt6 (GPL v3 / commercial) while the project is MIT; this is an open decision.
 *   **API Dependency:** High-quality reasoning requires a 3rd party API key (Groq/Gemini). While Ollama is supported for offline use, performance scales with hardware.
 *   **Manual Captcha:** Flexie is designed to be a "Human-in-the-loop" agent; she detects captchas but does not solve them (safeguard).
 *   **Browser Lock:** Some features work best with Chrome (Playwright's default targets). Flexie cannot read or act on the tab you are viewing in your own Chrome window; it opens pages/searches or works on a URL you give it.
@@ -69,7 +76,7 @@ Flexie 2.0 is an advanced desktop AI assistant built for high-performance automa
 *   **Selector Fragility:** If a website (e.g., Gmail) significantly changes its HTML layout, specific automation scripts may fail until updated.
 *   **API Rate Limits:** Usage on free tiers (especially Groq) can lead to temporary "Rate Limit Reached" errors.
 *   **STT Noise:** In extremely loud environments, the Speech-to-Text engine may fail to parse subtle wake-word triggers.
-*   **Port Conflicts:** Flexie needs these free on localhost: UDP `9886` (Qt UI, UI-bound updates), `9887` (orchestrator command input), `9888` (web bridge updates), WebSocket `8765`, HTTP `8766` (dashboard) and the REST/SSE API `8768` (browser extension; `main.py` disables the API and logs an error if the port is taken). Every UDP datagram, in both directions, carries the per-run `FLEXIE_UDP_TOKEN` (see `utils/udp_auth.py`; unsigned UI-bound datagrams are accepted only with `FLEXIE_ALLOW_UNSIGNED_UI=1`); `main.py` also writes the token to `.flexie_udp_token` so a bridge/UI started by hand authenticates. Open the dashboard at `http://localhost:8766/` (the bridge page where the token is injected) — opening `web_ui.html` from disk can never authenticate. The bridge answers HTTP 421 for any Host other than localhost/127.0.0.1 and closes WebSockets from any other Origin.
+*   **Port Conflicts:** Flexie needs these free on localhost: UDP `9887` (orchestrator command input) and `9888` (web bridge updates), WebSocket `8765`, HTTP `8766` (dashboard and `/static`) and the REST/SSE API `8768` (browser extension; `main.py` disables the API and logs an error if the port is taken). UDP `9886` is the Qt HUD's port (the HUD registers it and the orchestrator always sends it updates); the web bridge has its own port `9888`. Every UDP datagram, in both directions, carries the per-run `FLEXIE_UDP_TOKEN` (see `utils/udp_auth.py`; unsigned UI-bound datagrams are accepted only with `FLEXIE_ALLOW_UNSIGNED_UI=1`); `main.py` also writes the token to `.flexie_udp_token` so a bridge started by hand authenticates. Open the dashboard at `http://localhost:8766/` (the bridge page where the token is injected) — opening `web_ui.html` from disk can never authenticate. The bridge answers HTTP 421 for any Host other than localhost/127.0.0.1, closes WebSockets from any other Origin (so a page on another port, such as the old orb on `localhost:3000`, is rejected with close code 4003), and serves `/static/<file>` only for flat file names with known extensions.
 
 ## 🛡️ Safety behaviour you will notice
 *   **Confirmation before risk:** destructive, financial, outbound-message and publish actions are detected per sentence/clause ("what time is it. delete everything" still asks) and need a spoken "confirm" (a short pure approval such as "yes" or "do it"; "ok but first delete everything" is not approval). Approvals have an id, expire (120 s pending, 60 s once granted) and apply to that one action only.
@@ -77,9 +84,10 @@ Flexie 2.0 is an advanced desktop AI assistant built for high-performance automa
 *   **Clipboard privacy:** clipboard history is opt-in (`FLEXIE_CLIPBOARD_MONITOR=1`) and never stores OTPs, card numbers or token-looking text.
 
 ## 🔍 Edge Cases
-*   **Empty Clipboard:** Clicking `CLIP` when the clipboard has no text will trigger a "Clipboard Empty" warning instead of an analysis.
-*   **Concurrent Hotkeys:** If a system's native `Ctrl+F` is heavily intercepted by another high-priority app (like some full-screen games), the Flexie popup may be delayed.
-*   **Dual Monitors:** The popup currently spawns relative to the orb's position; on multi-monitor setups, ensuring the orb is on the primary screen is recommended for consistent spawning.
+*   **Ctrl+F is global while the HUD runs:** the Qt HUD registers Ctrl+F as a global hotkey (it opens the spotlight popup), so other apps lose Ctrl+F (Find). If another app already owns it, the HUD simply runs without the hotkey.
+*   **No HUD window or tray:** without a desktop session, or if PyQt6 is missing, the UI process exits and Flexie keeps running headless; say "open web ui" (or use the REST API) instead.
+*   **No blank Chrome at start-up:** Flexie's Playwright browser starts lazily, the first time something needs it. Set `FLEXIE_PREWARM_BROWSER=1` to pre-start it (it opens a visible blank Chromium window) for a faster first browser command.
+*   **Several dashboards open:** every open dashboard receives the same state updates; "open vision mode" opens an extra tab and also switches an open dashboard to its Orb tab.
 *   **Math Complexity:** While Flexie handles basic arithmetic and symbolic math, extremely high-order differential equations may require the "Browser Search" intent for full accuracy.
 
 ---

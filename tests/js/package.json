@@ -1,0 +1,7 @@
+{
+  "name": "flexie-panels-tests",
+  "private": true,
+  "type": "module",
+  "description": "jsdom checks for interface/static/panels.js. Run: npm install && node panels_jsdom.mjs ../../interface/static/panels.js",
+  "devDependencies": { "jsdom": "^26.0.0" }
+}

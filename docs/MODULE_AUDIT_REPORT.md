@@ -1,6 +1,7 @@
 # Flexie — Module-wise Bug Report, Efficiency Review and Improvement Plan
 
 > **Status (updated 2026-11-18, evening): this is a historical audit snapshot.** The findings below describe the code as it was when the audit ran (1,029 tests). Most Phase 0–2 items have since been fixed and are tracked, item by item, in `FIX_CHECKLIST.md`; current measurements are in `../BENCHMARK_REPORT.md` and the current architecture is in `ARCHITECTURE.md`, `../README.md` and `OPENJARVIS_ADAPTATION.md` §12. One correction: "what time is it" routing to the alarm handler is **intended** (that handler answers the time), not a misroute. The body is kept unchanged so findings can still be traced.
+> **UI update (2026-11-18, late):** the PyQt6 HUD (`interface/ui.py`) audited here was later replaced by `interface/launcher.py` plus the web dashboard; findings UI-9/UI-11 (the Qt UDP port) and LG-12 (PyQt6 licence) no longer apply to current code.
 
 Date: 2026-11-18 · Repo state: branch `hardening/security-agents-telemetry` · Tests at time of audit: 1,029 passing, ruff clean, 59/59 agent evals.
 

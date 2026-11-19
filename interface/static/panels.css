@@ -1,0 +1,40 @@
+/* Modals added by panels.js (approval, API keys). Colours fall back to the dashboard's own look. */
+.fx-overlay {
+  position: fixed; inset: 0; z-index: 9000; display: flex; align-items: center; justify-content: center;
+  background: rgba(2, 6, 14, 0.72); backdrop-filter: blur(6px);
+}
+.fx-modal {
+  width: min(640px, 92vw); max-height: 88vh; overflow: auto; padding: 22px 24px; border-radius: 16px;
+  background: rgba(10, 16, 28, 0.97); color: #e8f1ff; border: 1px solid rgba(0, 242, 255, 0.35);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); font: 13px/1.5 Inter, system-ui, sans-serif;
+}
+.fx-approval { width: min(480px, 92vw); border-color: rgba(255, 215, 0, 0.55); }
+.fx-title { margin: 0 0 4px; font-size: 16px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; }
+.fx-sub { margin: 0 0 12px; opacity: 0.7; }
+.fx-action {
+  margin: 0 0 10px; padding: 10px 12px; white-space: pre-wrap; word-break: break-word; border-radius: 10px;
+  background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.1); font: 12px/1.45 "JetBrains Mono", monospace;
+}
+.fx-level { display: inline-block; margin-bottom: 8px; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+  background: rgba(255, 215, 0, 0.15); color: #ffd700; }
+.fx-level:empty { display: none; }
+.fx-status { min-height: 18px; margin: 8px 0; color: #00ff87; font-weight: 600; }
+.fx-row { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+.fx-btn {
+  padding: 8px 18px; border-radius: 10px; cursor: pointer; color: #e8f1ff; font-weight: 600;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.18);
+}
+.fx-btn:hover, .fx-btn:focus-visible { border-color: rgba(0, 242, 255, 0.7); outline: none; }
+.fx-primary { background: linear-gradient(90deg, #00b4d8, #0066ff); border-color: transparent; }
+.fx-body { display: flex; flex-direction: column; gap: 12px; }
+.fx-card { padding: 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.09); }
+.fx-card-title { margin-bottom: 8px; font-weight: 700; }
+.fx-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.fx-label { font-size: 11px; opacity: 0.65; }
+.fx-input {
+  padding: 8px 10px; border-radius: 8px; color: #fff; font: 12px "JetBrains Mono", monospace;
+  background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.fx-input:focus { outline: none; border-color: rgba(0, 242, 255, 0.7); }
+.fx-help { font-size: 11px; opacity: 0.55; }
+.fx-keys-btn { cursor: pointer; color: inherit; font: inherit; }

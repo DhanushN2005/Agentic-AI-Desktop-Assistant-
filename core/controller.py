@@ -278,9 +278,14 @@ class FlexieController:
                 self.pending_request_id = req.get("id")
             if hasattr(self.orch, "send_to_ui"):
                 self.orch.send_to_ui("APPROVAL_REQUEST", command)
-            self.orch.speak(
-                "That action is destructive or irreversible. Say 'confirm' to proceed, or 'cancel' to abort."
-            )
+            if is_dangerous:
+                self.orch.speak(
+                    "That action is destructive or irreversible. Say 'confirm' to proceed, or 'cancel' to abort."
+                )
+            else:
+                self.orch.speak(
+                    "That will change something on your computer. Say 'confirm' to proceed, or 'cancel' to abort."
+                )
             self.telemetry.end_trace(trace, status="awaiting_confirmation")
             return "awaiting_confirmation"
 

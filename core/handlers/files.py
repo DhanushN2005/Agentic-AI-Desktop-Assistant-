@@ -23,7 +23,7 @@ def _choose_candidate(orch, cands):
         return None
     low = ans.lower()
     m = re.search(r"\b(\d+)\b", low)
-    idx = int(m.group(1)) if m else next((n for w, n in _NUMBER_WORDS.items() if re.search(rf"\b{w}\b", low)), 0)
+    idx = int(m.group(1)) if m else next((n for w, n in sorted(_NUMBER_WORDS.items(), key=lambda kv: -len(kv[0])) if re.search(rf"\b{w}\b", low)), 0)
     if 1 <= idx <= len(cands):
         return cands[idx - 1]
     named = [p for p in cands if os.path.basename(p).lower() == low or low in os.path.basename(p).lower()]

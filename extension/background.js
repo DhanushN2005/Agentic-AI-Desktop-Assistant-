@@ -29,13 +29,27 @@ chrome.runtime.onInstalled.addListener(() => {
 // Refresh token every 30 s while extension is alive
 chrome.alarms.create("flexie-token-refresh", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === "flexie-token-refresh") fetchAndStoreToken();
+  if (alarm.name === "flexie-token-refresh") { fetchAndStoreToken(); startPolling(); }
 });
+
+/** The pairing key Flexie wrote into this extension's own folder (extension/pairing.key). Chrome sends no
+ *  Origin header for an extension's own requests, so this key is how Flexie recognises the extension.
+ *  Web pages and other extensions cannot read it. Re-read each time: it may be created after install. */
+async function pairingHeaders() {
+  try {
+    const r = await fetch(chrome.runtime.getURL("pairing.key"), { cache: "no-store" });
+    if (!r.ok) return {};
+    const key = (await r.text()).trim();
+    return key ? { "X-Flexie-Pairing": key } : {};
+  } catch {
+    return {};
+  }
+}
 
 /** Pull the session bearer token from the Flexie health endpoint. */
 async function fetchAndStoreToken() {
   try {
-    const res = await fetch(`${API_BASE}/health`, { method: "GET" });
+    const res = await fetch(`${API_BASE}/health`, { method: "GET", headers: await pairingHeaders() });
     if (!res.ok) return;
     const data = await res.json();
     if (data.token) {
@@ -182,3 +196,129 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 });
+
+// ══ Flexie -> browser tasks ═══════════════════════════════════════════════════
+// Flexie cannot call into the extension, so the background worker long-polls Flexie for tasks ("read my
+// current tab", "scroll down", ...) and posts each result back. The worker is restarted by the alarm above
+// if Chrome stopped it; every poll returns within ~20 s, which keeps it under the 30 s idle limit.
+// Page text read this way is returned only to Flexie, only because the user asked for it.
+let flexiePolling = false;
+const TASK_MAX_AGE_S = 28;               // ignore a task that waited longer (Flexie has given up on it)
+const POLLABLE_SCHEMES = /^https?:\/\//i; // pages we may read or act on (no chrome://, no extension pages)
+const ACT_KINDS = new Set(["click", "fill", "key", "navigate", "submit"]);
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+async function startPolling() {
+  if (flexiePolling) return;
+  flexiePolling = true;
+  try {
+    while (true) {
+      const { flexie_token: token } = await chrome.storage.local.get(["flexie_token"]);
+      if (!token) { await fetchAndStoreToken(); await sleep(3000); continue; }
+      let task = null;
+      try {
+        const res = await fetch(`${API_BASE}/api/flexie/extension/poll?wait=20`, {
+          method: "GET", headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status === 401) { await fetchAndStoreToken(); await sleep(3000); continue; }
+        if (!res.ok) { await sleep(5000); continue; }
+        task = (await res.json().catch(() => ({}))).task || null;
+      } catch {
+        await sleep(5000);       // Flexie is not running: try again shortly
+        continue;
+      }
+      if (task) await runTask(task, token);
+    }
+  } finally {
+    flexiePolling = false;      // the alarm / next event restarts the loop
+  }
+}
+
+async function postResult(token, id, ok, data, error) {
+  try {
+    await fetch(`${API_BASE}/api/flexie/extension/result`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ id, ok, data: data ?? null, error: error ?? null }),
+    });
+  } catch { /* Flexie went away: nothing to do */ }
+}
+
+/** The tab the user is looking at (last focused normal window). */
+async function currentTab() {
+  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return tabs.find((t) => t.url && POLLABLE_SCHEMES.test(t.url)) || tabs[0] || null;
+}
+
+function toContent(tab, message) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tab.id, message, (res) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error("The page is not ready for Flexie. Reload the tab once, then ask again."));
+      } else {
+        resolve(res);
+      }
+    });
+  });
+}
+
+/** Ask the page to do something; a page-side {ok:false,error} becomes a real error for Flexie. */
+async function dom(tab, message) {
+  const res = await toContent(tab, message);
+  if (res && res.ok === false) throw new Error(res.error || "The page could not do that.");
+  return res;
+}
+
+async function runTask(task, token) {
+  const { id, kind, payload = {}, age = 0 } = task;
+  if (age > TASK_MAX_AGE_S) return postResult(token, id, false, null, "task was too old");
+  chrome.action.setBadgeText({ text: ACT_KINDS.has(kind) ? "▶" : "…" }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ color: ACT_KINDS.has(kind) ? "#ff8800" : "#00c8ff" }).catch(() => {});
+  try {
+    const data = await executeTask(kind, payload);
+    await postResult(token, id, true, data, null);
+  } catch (e) {
+    await postResult(token, id, false, null, e.message || String(e));
+  } finally {
+    setTimeout(() => chrome.action.setBadgeText({ text: "" }).catch(() => {}), 1500);
+  }
+}
+
+async function executeTask(kind, p) {
+  if (kind === "list_tabs") {
+    const tabs = await chrome.tabs.query({});
+    return tabs.slice(0, 60).map((t) => ({ title: t.title || "", url: t.url || "", active: !!t.active, windowId: t.windowId }));
+  }
+  const tab = await currentTab();
+  if (!tab) throw new Error("No browser tab is active.");
+  if (kind === "active_tab") return { title: tab.title || "", url: tab.url || "", id: tab.id };
+  if (kind === "navigate") {
+    if (!POLLABLE_SCHEMES.test(p.url || "")) throw new Error("Flexie can only open http or https addresses.");
+    await chrome.tabs.update(tab.id, { url: p.url });
+    return { navigated: p.url };
+  }
+  if (!POLLABLE_SCHEMES.test(tab.url || "")) {
+    throw new Error("This kind of page (browser settings, new tab, extension page) cannot be read.");
+  }
+  const via = { viaFlexie: true };    // content.js refuses password / card fields for these requests
+  switch (kind) {
+    case "read_page": {
+      const d = await toContent(tab, { type: "GET_PAGE_DATA" });
+      return { title: d.title, url: d.url, selectedText: (d.selectedText || "").slice(0, 2000),
+               text: (d.pageText || "").slice(0, 12000), codeBlocks: (d.codeBlocks || []).slice(0, 5), meta: d.meta };
+    }
+    case "extract_tables": return dom(tab, { type: "DOM_EXTRACT_TABLES" });
+    case "extract_links": return dom(tab, { type: "DOM_EXTRACT_LINKS" });
+    case "find_text": return dom(tab, { type: "DOM_FIND_TEXT", text: p.text });
+    case "scroll": return dom(tab, { type: "DOM_SCROLL", target: p.target, direction: p.direction, top: p.top });
+    case "click": return dom(tab, { type: "DOM_CLICK", target: p.target, ...via });
+    case "fill": return dom(tab, { type: "DOM_FILL", selector: p.selector, label: p.label, value: p.value, ...via });
+    case "key": return dom(tab, { type: "DOM_KEY", key: p.key, selector: p.selector, ...via });
+    case "submit": return dom(tab, { type: "DOM_SUBMIT", selector: p.selector, ...via });
+    default: throw new Error("Unknown task kind: " + kind);
+  }
+}
+
+chrome.runtime.onStartup.addListener(() => { startPolling(); });
+startPolling();      // service worker start (install, browser start, or woken by the alarm)

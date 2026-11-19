@@ -334,7 +334,7 @@ def dispatch_intent(orch, intent, c, silent):
             return handle_media(orch, c)
         if intent == "app_op":
             return handle_app_op(orch, c, silent)
-        if intent.startswith("vision_"):
+        if intent.startswith("vision_") and intent != "vision_mode":   # vision_mode has its own handler below
             return handle_vision(orch, intent, c)
         if intent == "camera_capture":
             return handle_camera_capture(orch)
@@ -401,6 +401,18 @@ def dispatch_intent(orch, intent, c, silent):
             return handle_memory(orch, c)
         if intent == "translate":
             return handle_translate(orch, c)
+        if intent == "browser_tab":
+            from core.handlers.tab import handle_browser_tab
+            return handle_browser_tab(orch, c)
+        if intent == "close_web_ui":
+            from core.handlers.system import handle_close_web_ui
+            return handle_close_web_ui(orch, c)
+        if intent == "open_web_ui":
+            from core.handlers.system import handle_open_web_ui
+            return handle_open_web_ui(orch, c)
+        if intent == "run_command":
+            from core.handlers.system import handle_run_cmd
+            return handle_run_cmd(orch, c)
         if intent == "vision_mode":
             from core.handlers.vision_mode import handle_vision_mode
             return handle_vision_mode(orch, c)

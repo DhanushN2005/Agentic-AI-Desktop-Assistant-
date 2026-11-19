@@ -341,10 +341,12 @@ NL_OVERRIDES = [
     (r"\b(word\s+count|character\s+count|count\s+(?:the\s+)?(?:words?|chars?|characters?|letters?)|how\s+many\s+(?:words?|characters?|letters?))\b", "text_tools", 0.9),
 
     # **NEW: Run/Execute CMD commands** - intercept before app_op "open" pattern
-    (r"\b(run|execute)\s+(?:command|cmd|terminal)\b", "run_command", 10),
+    (r"\b(run|execute)\s+(?:command|cmd|terminal)\b", "run_command", 0.97),
 
     # **NEW: Web UI Activation** - MUST come before app_op "open" pattern
-    (r"\b(open|start|activate)\s+web\s+ui\b", "open_web_ui", 9),
+    (r"\b(open|start|activate)\s+web\s+ui\b", "open_web_ui", 0.97),
+    # Closing the web dashboard stops its bridge (it is not an app window to look for)
+    (r"\b(?:close|stop|exit|quit|shut\s*down|turn\s+off|kill)\s+(?:the\s+)?(?:web\s*ui|web\s+dashboard|dashboard|web\s+interface|web\s+bridge)\b", "close_web_ui", 0.98),
 
     # Hash / Encoder
     (r"\b(reverse\s+(?:this|that|text|it|the\s+text)|make\s+(?:it|this|text)\s+(?:all\s+)?uppercase|make\s+(?:it|this|text)\s+(?:all\s+)?lowercase|title\s+case|sentence\s+case|snake\s+case|camel\s+case|kebab\s+case)\b", "text_tools", 0.9),
@@ -456,6 +458,21 @@ def _correct_word(w: str) -> str:
     close = get_close_matches(w, _TYPO_KEYS, n=1, cutoff=0.85)
     return TYPO_MAP[close[0]] if close else w
 
+
+# Commands about the tab/page the user is looking at ("read this page", "click sign in on this page",
+# "list my tabs") go through the Flexie browser extension. They must name the tab or page, so they never
+# collide with Flexie's own browser commands ("summarize page", "click on login", "new tab").
+from core.handlers.tab import _LIST_TABS  # noqa: E402
+from core.handlers.tab import ACTIVE_TAB as _ACTIVE_TAB  # noqa: E402
+from core.handlers.tab import SCOPE as _TAB_SCOPE  # noqa: E402
+
+_TAB_VERBS = (r"(?:read|summari[sz]e|explain|click|type|enter|write|fill|scroll|find|search\s+for|look\s+for|highlight|"
+              r"press|submit|send|extract|get|list|show|tell\s+me|what|go\s+to|navigate|open|visit|load|sum\s+up|give\s+me)")
+_TAB_OVERRIDE = (r"\b" + _TAB_VERBS + r"\b.*\b(?:" + _TAB_SCOPE + r")\b"
+                 + r"|^\s*(?:on|in|at)\s+(?:" + _TAB_SCOPE + r")\s*,\s*" + _TAB_VERBS + r"\b"
+                 + "|" + _LIST_TABS.pattern + "|" + _ACTIVE_TAB)
+assert "||" not in _TAB_OVERRIDE and not _TAB_OVERRIDE.endswith("|")   # an empty alternative matches EVERYTHING
+NL_OVERRIDES.insert(0, (_TAB_OVERRIDE, "browser_tab", 0.98))
 
 # Questions about Flexie itself are answered from live state (core/self_model.py), never by the LLM.
 NL_OVERRIDES.insert(0, (SELF_QUESTION_REGEX, "awareness", 0.97))

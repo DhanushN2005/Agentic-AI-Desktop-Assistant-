@@ -102,6 +102,13 @@ def _shutdown(assistant, ui_proc):
             except Exception as _e2:
                 logging.debug("[main.py:shutdown] ui kill failed: %s", _e2)
 
+    # 2b. The web dashboard bridge, if "open web ui" started one from this process (never orphan it)
+    try:
+        from interface.launcher import stop_bridge
+        stop_bridge()
+    except Exception as _e:
+        logging.debug("[main.py:shutdown] bridge stop failed: %s: %s", type(_e).__name__, _e)
+
     # 3. Final Hard Kill for any zombies (scoped to OUR child processes only)
     try:
         import psutil
@@ -186,6 +193,9 @@ def _run(ui_proc, FlexieOrchestrator):
 
     # Initialize the controller with the original logic
     controller = FlexieController(assistant, original_handle)
+    # UI/API approve, reject and cancel messages look the controller up here to clear its pending
+    # confirmation (without this they were silently ignored and the prompt kept re-asking).
+    assistant.controller = controller
 
     # Non-destructive overlay: Intercept command calls
     def wrapped_handle(cmd, *args, **kwargs):

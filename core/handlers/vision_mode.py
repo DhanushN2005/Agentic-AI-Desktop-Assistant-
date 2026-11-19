@@ -1,46 +1,41 @@
 import re
-import threading
 import webbrowser
 
 
-def _wants_stop(cl: str) -> bool:
+def _wants_close(cl: str) -> bool:
     return bool(re.search(r"\b(?:close|stop|exit|quit|end|shut|turn off|disable|kill)\b", cl))
 
 
 def handle_vision_mode(orch, c):
-    """"open vision mode" starts the hand-gesture orb UI; "close vision mode" stops it."""
+    """"open vision mode" opens the dashboard on its Orb panel; "close vision mode" closes the panel."""
     vm = getattr(orch, "vision_mode", None)
     if vm is None:
         orch.speak("Vision mode isn't available in this build.")
         return True
     cl = (c or "").lower()
 
-    if _wants_stop(cl):
-        orch.speak("Vision mode closed." if vm.stop() else "Vision mode isn't running.")
+    if _wants_close(cl):
+        # Any open dashboard hides the orb and releases its camera; nothing to kill.
+        orch.send_to_ui("PANEL", "close")
+        orch.speak("Vision mode closed.")
         return True
 
-    if vm.is_running():
-        webbrowser.open(vm.url)
-        orch.speak(f"Vision mode is already running. I've brought it up at {vm.url}. Press G to turn on hand gestures.")
-        return True
-    if vm.is_busy():
-        orch.speak("Vision mode is still starting. Give it a moment.")
-        return True
     why = vm.problem()
     if why:
         orch.speak(why)
         return True
 
-    orch.speak("Starting vision mode.")
-
-    def _go():
-        ok, msg = vm.start(say=lambda m: orch.speak(m))
-        if not ok:
-            orch.speak(msg)
-            return
-        webbrowser.open(msg)
-        orch.speak("Vision mode is ready and open in your browser. Press G to turn on hand gestures, "
-                   "and allow camera access.")
-
-    threading.Thread(target=_go, name="vision-mode-start", daemon=True).start()
+    from core.handlers.system import ensure_web_bridge
+    try:
+        if not ensure_web_bridge(orch):
+            orch.speak("I couldn't start the web UI bridge, so vision mode can't open.")
+            return True
+        webbrowser.open(vm.url)
+    except Exception as e:  # the browser or the bridge launch can fail on odd setups
+        orch.speak(f"I couldn't open vision mode: {str(e)[:100]}")
+        return True
+    # A dashboard that is already open switches to the orb too.
+    orch.send_to_ui("PANEL", "orb")
+    orch.speak("Vision mode is open in your browser. Press G there to turn on hand gestures, "
+               "and allow camera access.")
     return True

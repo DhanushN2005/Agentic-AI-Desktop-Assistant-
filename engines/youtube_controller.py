@@ -5,6 +5,11 @@ import time
 from engines.browser import BrowserEngine
 
 
+def prewarm_enabled() -> bool:
+    import os
+    return os.getenv("FLEXIE_PREWARM_BROWSER", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
 class YouTubeController(BrowserEngine):
     """Advanced YouTube Automation inheriting from BrowserEngine.
 
@@ -23,7 +28,11 @@ class YouTubeController(BrowserEngine):
 
         # The ONE Playwright worker thread is shared with BrowserEngine (see
         # engines.browser._PlaywrightWorker): every Playwright object lives on it.
-        threading.Thread(target=self._prewarm, daemon=True, name="flexie_yt_prewarm").start()
+        # Pre-warming launches a VISIBLE (blank) Chromium window at startup, so it is opt-in:
+        # set FLEXIE_PREWARM_BROWSER=1 to trade that window for a faster first browser command.
+        # By default the browser starts lazily, the first time something needs it.
+        if prewarm_enabled():
+            threading.Thread(target=self._prewarm, daemon=True, name="flexie_yt_prewarm").start()
 
     # ── persistent worker (shared with BrowserEngine) ────────────────────────
 

@@ -19,20 +19,41 @@ const pageTitle     = document.getElementById("pageTitle");
 const pageUrl       = document.getElementById("pageUrl");
 
 // ── Connection ───────────────────────────────────────────────────────
-function setOnlineState(online) {
-  isOnline = online;
-  statusBadge.textContent = online ? "ONLINE" : "OFFLINE";
-  statusBadge.className   = "status-badge " + (online ? "online" : "");
+function setOnlineState(online, paired = true) {
+  isOnline = online && paired;
+  // "ONLINE" only when Flexie answers AND handed us a token; otherwise say what is missing
+  statusBadge.textContent = !online ? "OFFLINE" : (paired ? "ONLINE" : "NOT PAIRED");
+  statusBadge.className   = "status-badge " + (online && paired ? "online" : "");
+  statusBadge.title       = online && !paired
+    ? "Flexie is running but did not accept this extension. Restart Flexie once so it creates extension/pairing.key."
+    : "";
+}
+
+/** The pairing key Flexie wrote into this extension's folder; Chrome sends no Origin for extension pages,
+ *  so this is how Flexie recognises us. Re-read each time (it may be created after the extension loaded). */
+async function pairingHeaders() {
+  try {
+    const r = await fetch(chrome.runtime.getURL("pairing.key"), { cache: "no-store" });
+    if (!r.ok) return {};
+    const key = (await r.text()).trim();
+    return key ? { "X-Flexie-Pairing": key } : {};
+  } catch {
+    return {};
+  }
 }
 
 async function checkConnection() {
   try {
-    const res = await fetch(`${API_BASE}/health`, { method: "GET", signal: AbortSignal.timeout(2500) });
-    setOnlineState(res.ok);
+    const res = await fetch(`${API_BASE}/health`, {
+      method: "GET", headers: await pairingHeaders(), signal: AbortSignal.timeout(2500),
+    });
     if (res.ok) {
       const data = await res.json().catch(() => ({}));
       // Cache token for background worker
       if (data.token) chrome.storage.local.set({ flexie_token: data.token });
+      setOnlineState(true, !!data.token);
+    } else {
+      setOnlineState(false);
     }
   } catch {
     setOnlineState(false);

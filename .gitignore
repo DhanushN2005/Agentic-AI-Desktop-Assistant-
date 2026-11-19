@@ -79,3 +79,4 @@ workspace/.flexie_jobs/
 data/automation_jobs.json
 data/knowledge_index.json
 data/research/
+extension/pairing.key

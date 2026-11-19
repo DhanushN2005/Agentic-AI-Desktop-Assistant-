@@ -1308,6 +1308,11 @@ class FlexieOrchestrator:
             "so the UI/bridge and the orchestrator share this run's token.",
         )
 
+    def _controller_pending(self) -> bool:
+        """True when the safety controller (set by main.py) is holding a command for confirmation."""
+        ctl = getattr(self, "controller", None)
+        return bool(ctl is not None and getattr(ctl, "pending_confirmation", None))
+
     def _network_loop(self):
         """Handle incoming commands from UDP (Legacy/Simple) or WebUI."""
         import select
@@ -1426,30 +1431,56 @@ class FlexieOrchestrator:
                             logging.debug("[orchestrator:mail_count] %s", _e)
                     elif msg in ("STOP", "CANCEL", "stop", "cancel"):
                         self.stop_event.set()
-                        if hasattr(self, 'controller') and self.controller and self.controller.pending_confirmation:
-                            self.controller._handle_confirmation("cancel")
-                        elif hasattr(self, 'permission_system') and self.permission_system:
-                            self.permission_system.reject_request()
-                        self.speak("Task cancelled from UI.")
+                        if self._controller_pending():
+                            # resolved on the action worker (thread-affine tools must not run on this thread)
+                            self.cmd_queue.put("cancel")
+                        else:
+                            if getattr(self, 'permission_system', None):
+                                self.permission_system.reject_request()
+                            self.speak("Task cancelled from UI.")
                     elif msg in ("CONFIRM", "confirm", "APPROVE", "approve") or msg.startswith(("CONFIRM:", "APPROVE:")):
                         req_id = msg.split(":", 1)[1].strip() if ":" in msg else None
                         handled = False
-                        if hasattr(self, 'controller') and self.controller and self.controller.pending_confirmation:
-                            self.controller._handle_confirmation("confirm")
-                            handled = True
-                        elif hasattr(self, 'permission_system') and self.permission_system:
+                        if self._controller_pending():
+                            pending_id = getattr(self.controller, "pending_request_id", None)
+                            if req_id and pending_id and req_id != pending_id:
+                                self.logger.info("[APPROVAL] ignored a stale approval (id mismatch)")
+                            else:
+                                self.cmd_queue.put("confirm")   # the controller runs the command it was holding
+                                handled = True
+                        elif getattr(self, 'permission_system', None):
                             handled = self.permission_system.approve_request(req_id)
+                            if handled:
+                                self.speak("Action approved.")
                         if handled:
                             self.send_to_ui("APPROVAL_RESOLVED", "approved")
-                            self.speak("Action approved.")
                     elif msg.startswith(("REJECT:", "DENY:")):
                         req_id = msg.split(":", 1)[1].strip()
-                        if hasattr(self, 'controller') and self.controller and self.controller.pending_confirmation:
-                            self.controller._handle_confirmation("cancel")
-                        elif hasattr(self, 'permission_system') and self.permission_system:
-                            self.permission_system.reject_request(req_id)
+                        if self._controller_pending():
+                            self.cmd_queue.put("cancel")
+                        else:
+                            if getattr(self, 'permission_system', None):
+                                self.permission_system.reject_request(req_id)
+                            self.speak("Action rejected.")
                         self.send_to_ui("APPROVAL_RESOLVED", "rejected")
-                        self.speak("Action rejected.")
+                    elif msg == "GET_SETTINGS":
+                        # Web dashboard settings dialog: masked key hints, models, active provider
+                        try:
+                            from core.settings_service import snapshot
+                            self.send_to_ui("SETTINGS", json.dumps(snapshot()))
+                        except Exception as e:
+                            self.logger.error("GET_SETTINGS failed: %s", type(e).__name__)
+                    elif msg.startswith("SAVE_SETTINGS:"):
+                        # Never log this message or its parts: it carries API keys.
+                        try:
+                            from core.settings_service import apply as _apply_settings
+                            changed, problems = _apply_settings(json.loads(msg.split(":", 1)[1]))
+                            if changed:
+                                self.brain.reload_providers()
+                            self.send_to_ui("SETTINGS_SAVED", json.dumps({"changed": changed, "problems": problems}))
+                        except Exception as e:
+                            self.logger.error("SAVE_SETTINGS failed: %s", type(e).__name__)
+                            self.send_to_ui("SETTINGS_SAVED", json.dumps({"changed": 0, "problems": ["settings could not be saved"]}))
                     else:
                         # New UI sends direct commands like "volume 50" or "mode hacker"
                         self.cmd_queue.put(msg)

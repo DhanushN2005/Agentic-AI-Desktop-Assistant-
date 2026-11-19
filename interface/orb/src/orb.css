@@ -1,0 +1,33 @@
+/* Orb panel (scoped with .forb-). Ported from the vision/ orb UI HUD styles. */
+.forb-root { position: absolute; inset: 0; background: #000; overflow: hidden; font-family: "Courier New", monospace; color: #ffaa30; user-select: none; }
+.forb-stage { position: absolute; inset: 0; cursor: grab; }
+.forb-stage:active { cursor: grabbing; }
+.forb-stage canvas { display: block; }
+.forb-vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,.7) 100%); }
+.forb-title { position: absolute; top: 20px; left: 24px; right: 24px; display: flex; align-items: center; gap: 16px; font-size: 16px; letter-spacing: .18em; font-weight: bold; text-shadow: 0 0 10px rgba(255,170,48,.8); }
+.forb-name { opacity: .8; }
+.forb-badge { font-size: 11px; padding: 3px 8px; border-radius: 3px; letter-spacing: .1em; border: 1px solid currentColor; }
+.forb-online { color: #00ffcc; border-color: rgba(0,255,204,.6); text-shadow: 0 0 8px rgba(0,255,204,.8); }
+.forb-offline { color: #ffaa30; border-color: rgba(255,170,48,.4); opacity: .7; }
+.forb-close { margin-left: auto; height: 32px; font-size: 12px; }
+.forb-btn { min-width: 44px; height: 44px; padding: 0 12px; background: rgba(20,10,0,.55); border: 1px solid rgba(255,170,48,.45); border-radius: 4px; color: #ffaa30; font: bold 15px "Courier New", monospace; letter-spacing: .08em; cursor: pointer; backdrop-filter: blur(2px); text-shadow: 0 0 6px rgba(255,170,48,.7); box-shadow: 0 0 12px rgba(255,140,20,.12) inset; transition: background .15s, border-color .15s, box-shadow .15s; }
+.forb-btn:hover { background: rgba(60,30,0,.7); border-color: rgba(255,200,100,.9); box-shadow: 0 0 14px rgba(255,150,30,.35); }
+.forb-btn:active { background: rgba(90,45,0,.8); }
+.forb-btn[aria-pressed="true"] { background: rgba(120,60,0,.6); border-color: #ffcc66; color: #ffcc66; }
+.forb-btn:disabled { opacity: .5; cursor: default; }
+.forb-speech { position: absolute; top: 72px; left: 24px; max-width: min(480px, 70vw); padding: 14px 18px; background: rgba(10,20,30,.75); border: 1px solid rgba(0,242,255,.4); border-radius: 8px; box-shadow: 0 0 24px rgba(0,242,255,.15); backdrop-filter: blur(12px); }
+.forb-speech-label { font-size: 10px; color: #00f2ff; letter-spacing: .2em; margin-bottom: 6px; }
+.forb-speech-text { font-size: 13px; line-height: 1.6; color: #e0f8ff; white-space: pre-wrap; max-height: 40vh; overflow: auto; }
+.forb-cmdbar { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; width: min(90%, 560px); }
+.forb-input { flex: 1; background: rgba(8,15,25,.85); border: 1px solid rgba(0,242,255,.45); border-radius: 6px; padding: 12px 18px; font: 14px "Courier New", monospace; color: #00f2ff; outline: none; box-shadow: 0 0 16px rgba(0,242,255,.12) inset; }
+.forb-input:focus { border-color: #00f2ff; box-shadow: 0 0 20px rgba(0,242,255,.35); }
+.forb-hint { position: absolute; bottom: 84px; left: 24px; font-size: 11px; letter-spacing: .1em; opacity: .55; pointer-events: none; text-shadow: 0 0 8px rgba(255,170,48,.6); }
+.forb-controls { position: absolute; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.forb-row { display: flex; gap: 8px; }
+.forb-error { font-size: 11px; letter-spacing: .15em; color: #ff5533; text-shadow: 0 0 8px rgba(255,60,30,.7); }
+.forb-camera { position: relative; width: 208px; height: 156px; display: none; border: 1px solid rgba(255,170,48,.45); border-radius: 4px; overflow: hidden; background: #0a0500; box-shadow: 0 0 16px rgba(255,140,20,.15); }
+.forb-camera.forb-visible { display: block; }
+.forb-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); filter: sepia(1) hue-rotate(-15deg) saturate(2.2) brightness(.75) contrast(1.15); opacity: .85; }
+.forb-overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+.forb-camstatus { position: absolute; bottom: 0; left: 0; right: 0; padding: 3px 6px; font-size: 10px; letter-spacing: .15em; color: #ffcc66; background: rgba(10,5,0,.65); }
+@media (max-width: 700px) { .forb-hint { display: none; } .forb-camera { width: 160px; height: 120px; } }

@@ -8,40 +8,39 @@ flowchart LR
         API["REST + SSE API (uvicorn thread)<br/>127.0.0.1:8768"]
         UDPIN["UDP receive loop<br/>127.0.0.1:9887 (signed)"]
         BRAIN["Brain + providers"]
+        LAUNCH["Launcher helper (interface/launcher.py)<br/>ensure_bridge / stop_bridge / open_dashboard<br/>(called by 'open web ui' and 'open vision mode')"]
     end
 
-    subgraph P2["Process 2: interface/ui.py (PyQt6 HUD)"]
-        QT["Qt window + orb<br/>UDP receive :9886"]
+    subgraph PQ["Process 2: interface/ui.py (PyQt6 HUD, started by main.py)"]
+        QT["Floating orb (300x300 always-on-top),<br/>Ctrl+F spotlight, tray icon,<br/>API-keys dialog, approval popup<br/>UDP receive :9886 (signed)"]
     end
 
-    subgraph P3["Process 3: interface/web_ui_bridge.py"]
-        HTTP["HTTP :8766<br/>serves web_ui.html with token"]
+    subgraph P2["Process 3 (started only on request): interface/web_ui_bridge.py"]
+        HTTP["HTTP :8766<br/>dashboard page with token, /static files"]
         WSB["WebSocket :8765<br/>Host + Origin check, AUTH:token"]
-    end
-
-    subgraph P4["Process 4 (on demand): vision/ npm run dev"]
-        ORB["Next.js orb UI<br/>first free port from 3000"]
     end
 
     subgraph EXT["Browser"]
         EXTN["Flexie extension<br/>(Manifest V3)"]
-        DASH["Dashboard page<br/>localhost:8766"]
+        DASH["Dashboard page localhost:8766<br/>chat, metrics, Orb tab, approval and API-keys dialogs"]
     end
 
     VOICE --> ORCH
     ORCH --> BRAIN
     ORCH -->|"signed UDP :9886"| QT
-    ORCH -->|"signed UDP :9888"| WSB
     QT -->|"signed UDP :9887"| UDPIN
+    ORCH -->|"signed UDP :9888"| WSB
     WSB -->|"signed UDP :9887"| UDPIN
     UDPIN --> ORCH
     DASH --> HTTP
     DASH <--> WSB
     EXTN -->|"Bearer token"| API
     API --> ORCH
-    QT -. "starts and stops" .-> P3
-    ORCH -. "open vision mode" .-> ORB
-    ORB -. "ws to :8765 is rejected by the hardened bridge" .-> WSB
+    P1 -. "run_ui() starts it" .-> PQ
+    LAUNCH -. "starts / reuses / stops the bridge" .-> P2
+    LAUNCH -. "open web ui: opens the page" .-> DASH
+    QT -. "dashboard button starts the bridge and opens the page" .-> P2
+    ORCH -. "open vision mode: PANEL:orb, PANEL:close" .-> DASH
 ```
 
 ```mermaid
@@ -82,13 +81,13 @@ sequenceDiagram
     participant I as utils/installer
     participant O as FlexieOrchestrator
     participant B as Brain
-    participant UI as run_ui() child process
+    participant UI as interface/ui.py (Qt HUD process)
     participant A as API server thread
 
     M->>I: install_missing()
     M->>M: check_single_instance()
     M->>M: create FLEXIE_UDP_TOKEN, publish to .flexie_udp_token, reset UI port list
-    M->>UI: start interface/ui.py (starts the web bridge too)
+    M->>UI: run_ui(): subprocess interface/ui.py (floating orb, Ctrl+F spotlight, tray)
     M->>O: FlexieOrchestrator()
     O->>O: memory, router, engines, tool registry, specialists, MCP manager, self model
     O-->>B: providers built in a background thread
@@ -97,7 +96,8 @@ sequenceDiagram
     M->>M: wrap handle_command with FlexieController.execute
     M->>O: run()
     O->>O: start worker threads, speak "systems are live", enter the listen loop
-    Note over M,O: on exit: stop UI + bridge, kill our own Playwright/Chrome children, cleanup each step in isolation
+    Note over M,O: no browser and no web bridge at launch: the bridge starts only on request (open web ui, open vision mode, the HUD dashboard button) through ensure_web_bridge
+    Note over M,O: on exit: stop the Qt HUD process and the web bridge (handle_exit also stops it, because os._exit skips atexit), kill our own Playwright/Chrome children, cleanup each step in isolation
 ```
 
 ### 2.2 Threads and queues inside the orchestrator
@@ -382,12 +382,12 @@ flowchart TD
     I3 -->|yes| I5["size cap, image content type, decodes as an image, no duplicates"]
     I5 --> I6["Downloads/Flexie Images/topic-time/"]
 
-    V1["'open vision mode'"] --> V2{"vision/node_modules?"}
-    V2 -->|no| V3["npm ci (first run)"]
+    V1["'open vision mode'"] --> V2{"web bridge running?"}
+    V2 -->|no| V3["ensure_web_bridge starts it (token injected)"]
     V2 -->|yes| V4
-    V3 --> V4["npm run dev on a free port from 3000"]
-    V4 --> V5["wait until it answers, open the browser"]
-    V6["'close vision mode' / Flexie exit"] --> V7["kill the dev server tree"]
+    V3 --> V4["open http://localhost:8766/#orb<br/>and send PANEL:orb to an open dashboard"]
+    V4 --> V5["Orb tab shows interface/static/orb.js<br/>driven by STATE / SAY; G turns gestures on (MediaPipe loads then)"]
+    V6["'close vision mode'"] --> V7["PANEL:close hides the orb panel"]
 ```
 
 ### 2.14 Tests, evals and CI
@@ -421,30 +421,40 @@ flowchart LR
     SBP --> BG
     BG --> API["Flexie REST API :8768"]
     BG --> ST["chrome.storage (token, page context)"]
+    BG -- "long-poll /api/flexie/extension/poll, answers via /result" --> BRG["core/extension_bridge.py<br/>task queue"]
+    BRG --- TAB["core/handlers/tab.py<br/>browser_tab intent: read, summarize, click, fill, navigate on the current tab"]
+    BG -- "DOM_* tasks" --> CS
 ```
 
-### 4.2 Web client and orb UI
+### 4.2 Web UI, orb and standalone web projects
 
 ```mermaid
 flowchart TB
-    subgraph WEB["flexie_web/ (React + Vite)"]
-        W1["src/App.tsx<br/>dashboard UI, settings, WebSocket client"]
-        W2["src/lib/handTracker.ts, gestureMapper.ts, useGestureControl.ts<br/>MediaPipe hand gestures -> commands"]
-        W3["src/main.tsx, index.css, App.css"]
+    subgraph UI["interface/ — the web dashboard served by the bridge (opened on request)"]
+        W0["web_ui.html<br/>dashboard page: chat, metrics, modes, toasts"]
+        W1["static/panels.js + panels.css<br/>approval modal, API-keys dialog, mail badge, quit notice"]
+        W2["static/orb-panel.js + orb.css<br/>Orb tab, #orb address, PANEL messages"]
+        W3["static/orb.js<br/>Three.js scene, window.FlexieOrb"]
+        W4["static/orb-gestures.js<br/>MediaPipe hand tracking, loaded only when gestures are on"]
+        W0 --> W1
+        W0 --> W2
+        W2 --> W3
+        W2 -.-> W4
     end
-    subgraph ORB["vision/ (Next.js + Three.js + MediaPipe)"]
-        O1["app/page.tsx, layout.tsx, globals.css"]
-        O2["components/JarvisOrb.tsx<br/>HUD, WebSocket client, input handling"]
-        O3["lib/orbScene.ts<br/>Three.js scene, bloom"]
-        O4["lib/handTracker.ts<br/>pinch to spin, two hands to zoom"]
-        O1 --> O2
-        O2 --> O3
-        O2 --> O4
+    SRC["interface/orb/ (src + build.mjs, esbuild)<br/>output is committed, no Node needed to run"] --> W3
+    SRC --> W4
+    BR["web_ui_bridge.py<br/>page + /static (flat files, known extensions), WebSocket :8765"] --> UI
+    UI <-->|"AUTH:token, commands, STATE / SAY / PANEL / SETTINGS"| BR
+    BR <-->|"signed UDP 9887 / 9888"| ORCH["orchestrator _network_loop<br/>GET_SETTINGS / SAVE_SETTINGS / APPROVE / REJECT"]
+    ORCH --> SS["core/settings_service.py<br/>masked key hints, validated saves"]
+    LN["interface/launcher.py<br/>bridge start/stop helper"] --> BR
+    QTUI["interface/ui.py<br/>PyQt6 floating-orb HUD (the desktop UI)"] -. "dashboard button starts the bridge" .-> BR
+
+    subgraph STAND["Standalone projects (not used by Flexie)"]
+        WEB["flexie_web/ (React + Vite prototype)"]
+        VIS["vision/ (Next.js orb demo)"]
     end
-    WEB -. "ws://localhost:8765" .-> BR["web_ui_bridge.py"]
-    ORB -. "ws://127.0.0.1:8765" .-> BR
-    BR -. "rejects other origins and clients without AUTH" .-> X["both UIs run standalone today"]
-    LAUNCH["engines/vision_mode.py<br/>npm ci + npm run dev"] --> ORB
+    VIS -. "orb scene and hand tracker were ported from here" .-> SRC
 ```
 
 ### 4.3 Templates, skills and data

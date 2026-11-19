@@ -97,7 +97,7 @@
 {"task_id": "route-097", "query": "give me a quote", "expected": "quotes"}
 {"task_id": "route-098", "query": "what's the news", "expected": "news"}
 {"task_id": "route-099", "query": "latest headlines", "expected": "news"}
-{"task_id": "route-100", "query": "summarize this page", "expected": "browser_extract"}
+{"task_id": "route-100", "query": "summarize this page", "expected": "browser_tab"}
 {"task_id": "route-101", "query": "screenshot", "expected": "vision_capture"}
 {"task_id": "route-102", "query": "open youtube", "expected": "browser_navigate"}
 {"task_id": "route-103", "query": "open gmail", "expected": "gmail"}
@@ -156,3 +156,11 @@
 {"task_id": "route-156", "query": "what do you remember about me", "expected": "awareness"}
 {"task_id": "route-157", "query": "who made you", "expected": "awareness"}
 {"task_id": "route-158", "query": "what tools do you have", "expected": "awareness"}
+{"task_id": "route-159", "query": "what tab am I on", "expected": "browser_tab"}
+{"task_id": "route-160", "query": "list my tabs", "expected": "browser_tab"}
+{"task_id": "route-161", "query": "read this page", "expected": "browser_tab"}
+{"task_id": "route-162", "query": "click sign in on this page", "expected": "browser_tab"}
+{"task_id": "route-163", "query": "scroll down on this page", "expected": "browser_tab"}
+{"task_id": "route-164", "query": "go to github.com in this tab", "expected": "browser_tab"}
+{"task_id": "route-165", "query": "click on login", "expected": "browser_control"}
+{"task_id": "route-166", "query": "summarize page", "expected": "browser_extract"}
