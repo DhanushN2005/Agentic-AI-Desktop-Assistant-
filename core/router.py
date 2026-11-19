@@ -95,6 +95,8 @@ NL_OVERRIDES = [
     # ── Download images (search words or a page URL) ──
     (r"\b(?:download|save|get|fetch|grab)\s+(?:me\s+)?(?:(?:\d{1,2}|a|an|some|all|the|few|several|more)\s+)?(?:\w+\s+)?(?:images?|pictures?|photos?|pics|wallpapers?)\b", "image_download", 0.97),
     # ── "wrong" only undoes when it is the whole utterance ("wrong", "that's wrong"), never inside a sentence ──
+    (r"^(?:please\s+)?(?:take\s+(?:that|it)\s+back|put\s+(?:it|that)\s+back|change\s+(?:it|that)\s+back|undo\s+(?:the\s+)?(?:last\s+)?(?:thing|action|change))\s*$", "undo", 0.97),
+    (r"^(?:please\s+)?(?:make\s+(?:it|the\s+screen)\s+)?(?:a\s+(?:bit|little)\s+)?(?:brighter|dimmer|darker)\s*$", "media", 0.97),
     (r"^(?:ok(?:ay)?[, ]+)?(?:that'?s |that is |that was |it'?s )?(?:wrong|a mistake|incorrect)(?: one)?[.!]?$", "undo", 0.9),
     # ── Screen requests: "check my screen", "open vision mode" ──
     (r"\b(?:check|look at|view|inspect|see)\s+(?:my\s+|the\s+)?(?:screen|display|desktop)\b", "vision_analyze", 0.97),
@@ -160,6 +162,9 @@ NL_OVERRIDES = [
     (r"\bsearch\s+(?:for\s+)?.+\s+in\s+(?:the\s+)?(?:open(?:ed)?\s+)?(?:chrome|edge|it|the\s+browser)\b", "browser_search", 0.98),
 
     # Alarm / Timer / Time
+    (r"^(?:please\s+)?(?:what(?:'?s|\s+is)\s+(?:the\s+|today'?s\s+)?(?:date|day)(?:\s+(?:today|now|is\s+it))?|today'?s\s+date|what\s+day\s+(?:is\s+(?:it|today)|of\s+the\s+week)|which\s+day\s+is\s+(?:it|today)|tell\s+me\s+(?:the|today'?s)\s+date)\s*\??$", "alarm", 0.95),
+    (r"^(?:please\s+)?(?:pause|resume|play|continue|previous|next|skip)(?:\s+(?:the\s+)?(?:music|song|track|video|playback|player|media))?\s*$", "media", 0.95),
+    (r"\b(?:wi-?fi|internet|network)\s+(?:status|connection)\b|\bam\s+i\s+(?:online|connected)\b|\bis\s+(?:the\s+)?(?:wi-?fi|internet)\s+(?:on|working|connected|up)\b", "status", 0.95),
     (r"\b(what(?:'?s|\s+is)\s+(?:the\s+)?time|current\s+time|tell\s+me\s+(?:the\s+)?time|time\s+is\s+it|whats?\s+the\s+time|what\s+hour)\b", "alarm", 0.95),
     (r"\b(set|start|begin|create|put|make)\s+(?:a\s+)?(?:timer|countdown|alarm|wake)\b", "alarm", 0.9),
     (r"\b(stop|cancel|clear|end|kill)\s+(?:the\s+)?(?:timer|alarm|countdown)\b", "alarm", 0.9),
@@ -248,16 +253,16 @@ NL_OVERRIDES = [
 
     # Dev Assistant — Job LAUNCH / OPEN (MUST be checked BEFORE dev_build to prevent wrong routing)
     # These patterns cover: 'run/open/launch/show the app/project/calendar I built'
-    (r"\bcan\s+you\s+(?:please\s+)?(?:run|open|launch|show|start|execute|preview)\s+(?:that|the|it|this)\s*(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|thing|one)?\b", "job_open", 0.97),
+    (r"\bcan\s+you\s+(?:please\s+)?(?:run|open|launch|show|start|execute|preview)\s+(?:that|the|it|this)(?!\s+(?:screen\s*shots?|screenshots?|pictures?|images?|photos?|pics?|files?|documents?|docs?|folders?|directory|links?|pages?|tabs?|windows?|videos?|pdfs?|mails?|emails?|messages?|chats?|notes?|code|text|downloads?|captures?|snapshots?))\s*(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|thing|one)?\b", "job_open", 0.97),
     (r"\b(?:run|open|launch|show|start)\s+(?:that|the|it)\s+(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|website|thing)\b", "job_open", 0.97),
     (r"\b(?:run|open|start|launch|show|execute|preview)\s+(?:the\s+)?(?:built|created|generated|finished|completed)\s+(?:app(?:lication)?|project|website|cal(?:e?nd[ae]r)?)\b", "job_open", 0.97),
     (r"\b(?:run|open|launch|show)\s+(?:the\s+)?(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?)\s+(?:in\s+(?:browser|edge|chrome|firefox)|for\s+me|now|please)?\b", "job_open", 0.96),
     (r"\b(?:can\s+(?:you\s+)?)?(?:run|start|open|launch)\s+(?:the\s+)?(?:opened|existing|last|previous)\s+(?:project|app(?:lication)?|build|workspace)\b", "job_open", 0.96),
-    (r"\b(?:open|launch|show|run|start)\s+(?:it|that|this)\s+(?:in\s+(?:browser|the\s+browser|edge|chrome|firefox))?\b", "job_open", 0.95),
+    (r"\b(?:open|launch|show|run|start)\s+(?:it|that|this)(?!\s+(?:screen\s*shots?|screenshots?|pictures?|images?|photos?|pics?|files?|documents?|docs?|folders?|directory|links?|pages?|tabs?|windows?|videos?|pdfs?|mails?|emails?|messages?|chats?|notes?|code|text|downloads?|captures?|snapshots?))\s+(?:in\s+(?:browser|the\s+browser|edge|chrome|firefox))?\b", "job_open", 0.95),
     # Existing patterns kept:
     (r"\b(open\s+(?:the\s+)?(?:project|workspace|in\s+vscode|in\s+code)|launch\s+(?:the\s+)?(?:project|app|application))\b", "job_open", 0.95),
     (r"\b(run|start|execute|show|preview)\s+(?:me\s+)?(?:the\s+)?(?:that\s+)?(?:built|created|generated|opened|app(?:lication)?|project|cal[l]*[ea]nd[ea]r)\s*(?:app(?:lication)?|project|for\s+me)?\b", "job_open", 0.94),
-    (r"\b(run|start|open|launch|show)\s+(?:that|it|the\s+app|the\s+project|the\s+calendar|that\s+app)\b", "job_open", 0.94),
+    (r"\b(run|start|open|launch|show)\s+(?:that|it|the\s+app|the\s+project|the\s+calendar|that\s+app)(?!\s+(?:screen\s*shots?|screenshots?|pictures?|images?|photos?|pics?|files?|documents?|docs?|folders?|directory|links?|pages?|tabs?|windows?|videos?|pdfs?|mails?|emails?|messages?|chats?|notes?|code|text|downloads?|captures?|snapshots?))\b", "job_open", 0.94),
     (r"\bcan\s+you\s+(?:run|start|open|launch|show)\s+(?:that|the)\s+(?:app|project|cal[l]*[ea]nd[ea]r)\b", "job_open", 0.94),
     # 'can you start running/opening the X that you built/created/made/generated now'
     (r"\bcan\s+you\s+(?:please\s+)?(?:start\s+)?(?:running|opening|launching|showing)\s+(?:the\s+)?(?:\w+\s+){0,6}(?:app(?:lication)?|project|cal(?:e?nd[ae]r)?|website)\b", "job_open", 0.97),

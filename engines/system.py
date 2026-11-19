@@ -58,49 +58,74 @@ class SystemCtrl:
             pass
 
     @staticmethod
-    def set_volume(level: int):
-        try:
-            import pythoncom
-            pythoncom.CoInitialize()
-        except Exception:
-            pass
-        try:
-            db_volume = max(0, min(100, level)) / 100.0
-            devices = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            volume = cast(interface, POINTER(IAudioEndpointVolume))
-            volume.SetMasterVolumeLevelScalar(db_volume, None)
-        except Exception as _e:
-            logging.debug("[engines/system.py:44] Swallowed exception: %s: %s", type(_e).__name__, _e)
-            pass
-        finally:
-            try:
-                import pythoncom
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
+    def _endpoint():
+        """The default speakers' volume control, for old and new pycaw versions.
+
+        pycaw 2024+ returns an ``AudioDevice`` wrapper that has ``.EndpointVolume`` and no ``.Activate``;
+        older versions return the raw device. Calling ``.Activate`` on the new one raised AttributeError,
+        which used to be swallowed, so every volume command silently did nothing."""
+        if AudioUtilities is None:
+            raise RuntimeError("pycaw is not installed")
+        speakers = AudioUtilities.GetSpeakers()
+        ready = getattr(speakers, "EndpointVolume", None)
+        if ready is not None:
+            return ready
+        interface = speakers.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        return cast(interface, POINTER(IAudioEndpointVolume))
 
     @staticmethod
-    def get_volume() -> int:
+    def _com(fn):
+        """Run ``fn`` with COM initialised on this thread; returns (ok, value). Errors are logged, never hidden."""
         try:
             import pythoncom
             pythoncom.CoInitialize()
-        except Exception:
-            pass
-        try:
-            devices = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            volume = cast(interface, POINTER(IAudioEndpointVolume))
-            return int(volume.GetMasterVolumeLevelScalar() * 100)
         except Exception as _e:
-            logging.debug("[engines/system.py:54] Swallowed exception: %s: %s", type(_e).__name__, _e)
-            return 50
+            logging.debug("CoInitialize skipped: %s", _e)
+        try:
+            return True, fn()
+        except Exception as e:
+            logging.warning("Windows volume control failed: %s: %s", type(e).__name__, e)
+            return False, None
         finally:
             try:
                 import pythoncom
                 pythoncom.CoUninitialize()
-            except Exception:
-                pass
+            except Exception as _e:
+                logging.debug("CoUninitialize skipped: %s", _e)
+
+    @staticmethod
+    def get_volume():
+        """Current master volume 0-100, or None when Windows audio cannot be reached (never a made-up 50)."""
+        ok, value = SystemCtrl._com(lambda: int(round(SystemCtrl._endpoint().GetMasterVolumeLevelScalar() * 100)))
+        return value if ok else None
+
+    @staticmethod
+    def set_volume(level: int) -> bool:
+        """Set master volume 0-100. Returns True only if Windows accepted it."""
+        scalar = max(0, min(100, int(level))) / 100.0
+        ok, _ = SystemCtrl._com(lambda: SystemCtrl._endpoint().SetMasterVolumeLevelScalar(scalar, None))
+        return ok
+
+    @staticmethod
+    def get_mute():
+        ok, value = SystemCtrl._com(lambda: bool(SystemCtrl._endpoint().GetMute()))
+        return value if ok else None
+
+    @staticmethod
+    def set_mute(muted: bool) -> bool:
+        ok, _ = SystemCtrl._com(lambda: SystemCtrl._endpoint().SetMute(1 if muted else 0, None))
+        return ok
+
+    @staticmethod
+    def get_brightness():
+        """Current screen brightness 0-100, or None when the display doesn't support it (desktop monitors often don't)."""
+        try:
+            value = sbc.get_brightness()
+            value = value[0] if isinstance(value, (list, tuple)) else value
+            return int(value)
+        except Exception as _e:
+            logging.debug("brightness read failed: %s: %s", type(_e).__name__, _e)
+            return None
 
     @staticmethod
     def set_brightness(v):

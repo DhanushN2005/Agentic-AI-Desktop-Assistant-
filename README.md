@@ -296,7 +296,7 @@ flowchart LR
 - `core/jobs/` — autonomous build jobs
 - `interface/ui.py` — the desktop UI: PyQt6 floating-orb HUD (a 300x300 always-on-top orb), Ctrl+F spotlight popup, tray icon (Show Controls / Wake Flexie / Exit), API-keys dialog, approval popup. Started by `main.py` as its own process (`run_ui`)
 - `interface/launcher.py` — helper for the web dashboard: `ensure_bridge` / `stop_bridge` / `open_dashboard` (used by `ensure_web_bridge` in `core/handlers/system.py`). It also contains an optional tray + global-hotkey `Launcher` class (default Ctrl+Alt+F, `FLEXIE_HOTKEY`) that `main.py` does **not** start, because the Qt HUD has its own
-- `interface/web_ui_bridge.py` + `interface/web_ui.html` + `interface/static/` — the web dashboard (opened on request), authenticated WebSocket bridge, safe `/static/<file>` route; `interface/api_server.py` — FastAPI REST + SSE at :8768
+- `interface/web_ui_bridge.py` + `interface/web_ui_v2.html` (default, Home + Settings) / `interface/web_ui.html` (classic, at `/classic`) + `interface/static/` — the web dashboard (opened on request), authenticated WebSocket bridge, safe `/static/<file>` route; `interface/api_server.py` — FastAPI REST + SSE at :8768
 - `interface/orb/` — source of the 3D orb, built into `interface/static/orb.js`; `core/settings_service.py` — API-key/model settings for the dashboard (masked hints only)
 - `utils/lazy.py`, `utils/path_jail.py`, `utils/name_index.py`, `utils/sqlite_util.py`, `utils/udp_auth.py` — lazy imports, file jail, bounded file-name index, shared WAL SQLite connection, signed UDP
 - `extension/` — Chrome/Edge Manifest V3 extension
@@ -322,7 +322,7 @@ flowchart LR
 | **Extension** | Chrome/Edge Manifest V3 sidebar, floating pill, context menus, page assist (endpoint allow-list, sender checks) |
 | **REST API** | FastAPI :8768, Bearer token, `/command`, `/health`, `/api/flexie/*`, SSE state stream, approvals by request id |
 | **Images** | "download 5 images of cats" (web search) or from a page URL — public http(s) only, size/type/decode checks, new folder under `Downloads\Flexie Images` |
-| **Desktop UI** | The PyQt6 HUD (`interface/ui.py`) starts with `python main.py`: a floating orb, a Ctrl+F spotlight popup, a tray icon, an API-keys dialog and an approval popup. The **web dashboard** at `http://localhost:8766/` (chat, CPU/RAM/battery, volume/brightness, mode switch, Orb tab, approval and API-keys dialogs, mail badge) opens **only on request** ("open web ui", or the HUD's dashboard button) |
+| **Desktop UI** | The PyQt6 HUD (`interface/ui.py`) starts with `python main.py`: a floating orb, a Ctrl+F spotlight popup, a tray icon, an API-keys dialog and an approval popup. The **web dashboard** at `http://localhost:8766/` (two modules: Home with live CPU/memory/disk/network, health, trends, activity and the assistant bar; Settings for API keys, routing, behaviour, modes and orb styles, applied live without a restart. The previous dashboard is at `/classic`) opens **only on request** ("open web ui", or the HUD's dashboard button) |
 | **Vision mode** | "open vision mode" opens the dashboard's Orb tab (`http://localhost:8766/#orb`): a 3D orb that follows the assistant's state, with optional hand gestures (off by default); "close vision mode" closes the panel |
 | **Screen** | screenshot (says where it was saved), analyze/summarize screen through a vision model, OCR text fallback when no vision model answers |
 | **Model Hub** | Task-based provider choice, cheap-first cascade, circuit breaker with half-open recovery |

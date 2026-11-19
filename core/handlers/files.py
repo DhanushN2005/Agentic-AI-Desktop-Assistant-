@@ -95,9 +95,19 @@ def handle_file_op(orch, c):
         orch.speak(orch.files.undo_organize())
     elif "organize" in c or "clean" in c:
         orch.speak(orch.files.organize_desktop())
+        if hasattr(orch, "push_undo") and hasattr(orch.files, "undo_organize"):
+            orch.push_undo("organizing the desktop", orch.files.undo_organize)
     elif "create" in c or "new folder" in c:
         path = orch.files.create_folder(c)
         orch.ctx.update(last_path=path)
+        if hasattr(orch, "push_undo") and path and os.path.isdir(path):
+            def _remove(p=path):
+                try:
+                    os.rmdir(p)                       # only ever removes an EMPTY folder
+                except OSError:
+                    return f"{os.path.basename(p)} isn't empty any more, so I left it."
+                return f"Removed the folder {os.path.basename(p)}."
+            orch.push_undo("the new folder", _remove)
         orch.speak(f"Created folder '{os.path.basename(path)}' at {os.path.dirname(path)}.")
     else:
         # Default to searching and opening

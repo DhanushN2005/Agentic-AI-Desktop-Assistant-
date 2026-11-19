@@ -18,8 +18,10 @@ _QUESTIONS: list[tuple[str, str]] = [
     (r"\bwhat\s+(?:model|llm|ai|brain|provider|engine)\b.*\b(?:you|your)\b|\b(?:which|what)\s+(?:model|llm)\b.*\b(?:you|your)\b|\bare\s+you\s+(?:gpt|chatgpt|openai|gemini|llama)\b|\bwho\s+(?:made|built|created|trained)\s+you\b", "model"),
     (r"\bwhy\s+(?:did|didn'?t|does|is|was)\b.*\b(?:that|it|this)\b.*\b(?:fail|failed|work|stop|wrong|error)|\bwhat\s+(?:went\s+wrong|was\s+the\s+(?:error|problem|issue))\b|\bwhy\s+(?:did|didn'?t)\s+(?:that|it)\b|\bwhat\s+failed\b", "why_failed"),
     (r"\bwhat\s+(?:did|have)\s+you\s+(?:just\s+)?(?:do|done|been\s+doing)\b|\bwhat\s+was\s+that\b|\b(?:recent|last)\s+(?:commands?|actions?|activity)\b|\bdid\s+(?:that|it)\s+work\b", "recent"),
+    (r"\bwhere\s+(?:did|have)\s+you\s+(?:just\s+)?(?:save|saved|put|store|stored|create|created|made)\b|\bwhere\s+(?:is|was)\s+(?:it|that|the\s+(?:screenshot|file|folder|project))\s*(?:saved|stored)?\s*$|\bwhat\s+(?:did|was)\s+i\s+(?:just\s+)?(?:ask|asked|say|said|tell|told)\b|\bwhat\s+(?:are|were)\s+we\s+(?:just\s+)?(?:working\s+on|doing|talking\s+about)\b|\bwhat\s+(?:do\s+you\s+have|is)\s+(?:in\s+)?(?:context|open\s+right\s+now)\b|\bwhat\s+(?:am\s+i|are\s+you)\s+referring\s+to\b", "context"),
     (r"\bare\s+you\s+(?:listening|awake|asleep|sleeping|online|connected|there|ready|busy|working)\b|\bcan\s+you\s+hear\s+me\b", "state"),
     (r"\bwhat\s+are\s+you\s+(?:doing|up\s+to|working\s+on)\b|\bwhat'?s\s+your\s+(?:status|state)\b|\bstatus\s+report\b|\bhow\s+are\s+you\s+(?:running|performing)\b", "state"),
+    (r"\bwhat\s+(?:are|were)\s+my\s+preferences\b|\bmy\s+preferences\b.*\b(?:what|list|show|tell)\b|\b(?:what|list|show|tell)\b.*\bmy\s+preferences\b|\bwhat\s+have\s+you\s+learn(?:ed|t)\s+about\s+me\b", "prefs"),
     (r"\bwhat\s+do\s+you\s+(?:remember|know)\s+about\s+me\b|\bwhat\s+have\s+you\s+(?:learned|learnt|remembered)\b|\bwhat\s+do\s+you\s+remember\b", "memory"),
     (r"\bwhat\s+(?:tools|abilities|skills|features|commands)\s+do\s+you\s+have\b|\bhow\s+many\s+(?:tools|intents|commands|skills)\b|\bwhat\s+(?:tools|apps)\s+can\s+you\s+use\b", "tools"),
     (r"\bwhat\s+(?:can'?t|cannot)\s+you\s+do\b|\byour\s+limit(?:ation)?s?\b|\bwhat\s+are\s+you\s+(?:bad|not\s+good)\s+at\b|\bwhat\s+don'?t\s+you\s+(?:know|support)\b", "limits"),
@@ -209,6 +211,23 @@ class SelfModel:
             reply = f" I told you: {it['reply']!r}." if it["reply"] else ""
             lines.append(f"{_ago(it['ts']).capitalize()} you said {it['cmd']!r}; I handled it as {it['intent']} and it {status}.{reply}")
         return " ".join(lines[:2])
+
+    def _a_prefs(self) -> str:
+        store = getattr(self.orch, "preferences", None)
+        items = store.all() if store else []
+        if not items:
+            return "I haven't learned any lasting preferences yet. Tell me things like 'I prefer short answers' or 'call me Sam'."
+        shown = "; ".join(i["text"] for i in items[:6])
+        more = f", and {len(items) - 6} more" if len(items) > 6 else ""
+        return f"I've learned {len(items)} thing{'s' if len(items) != 1 else ''} about your preferences: {shown}{more}. You can see or delete them in Settings under Memory."
+
+    def _a_context(self) -> str:
+        """What "it" and "that" would mean right now, and what the user last asked, from real state."""
+        refs = getattr(getattr(self.orch, "ctx", None), "refs", None)
+        log = getattr(self.orch, "command_log", None)
+        items = log.last(3) if log else []
+        asked = f"The last thing you asked was {items[-1]['cmd']!r}. " if items else ""
+        return asked + (refs.describe() if refs else "I'm not tracking what I produce yet.")
 
     def _a_why_failed(self) -> str:
         log = getattr(self.orch, "command_log", None)

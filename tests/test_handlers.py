@@ -418,9 +418,12 @@ def test_dispatch_status(monkeypatch):
     monkeypatch.setattr("core.handlers.tools.SystemCtrl.cpu_ram", lambda: (42, 67))
     monkeypatch.setattr("core.handlers.tools.SystemCtrl.battery_status", lambda: "87%")
     orch = make_orch()
-    handled = dispatch_intent(orch, "status", "what is my battery", False)
+    handled = dispatch_intent(orch, "status", "system status", False)
     assert handled is True
     assert any("42" in s and "67" in s and "87%" in s for s in orch.spoken)
+    orch2 = make_orch()
+    dispatch_intent(orch2, "status", "what is my battery", False)                 # a battery question gets a battery answer
+    assert any(s.startswith("Battery is at 87%") for s in orch2.spoken) and not any("CPU" in s for s in orch2.spoken)
 
 
 def test_dispatch_memory_remember(monkeypatch):
@@ -656,18 +659,25 @@ def test_dispatch_snap_keywords_before_intent(monkeypatch):
     assert orch.browser.navigated == []
 
 
+def _fake_audio(monkeypatch, start=50):
+    state = {"v": start, "m": False}
+    monkeypatch.setattr("engines.system.SystemCtrl.get_volume", lambda: state["v"])
+    monkeypatch.setattr("engines.system.SystemCtrl.set_volume", lambda v: state.update({"v": v}) or True)
+    monkeypatch.setattr("engines.system.SystemCtrl.get_mute", lambda: state["m"])
+    monkeypatch.setattr("engines.system.SystemCtrl.set_mute", lambda m: state.update({"m": m}) or True)
+    return state
+
+
 def test_dispatch_volume(monkeypatch):
-    monkeypatch.setattr("engines.system.SystemCtrl.set_volume", lambda v: None)
+    curr = _fake_audio(monkeypatch)
     orch = make_orch()
     handled = dispatch_intent(orch, "media", "set volume 40", False)
-    assert handled is True
+    assert handled is True and curr["v"] == 40
     assert any("40 percent" in s for s in orch.spoken)
 
 
 def test_dispatch_volume_relative(monkeypatch):
-    curr = {"v": 50}
-    monkeypatch.setattr("engines.system.SystemCtrl.get_volume", lambda: curr["v"])
-    monkeypatch.setattr("engines.system.SystemCtrl.set_volume", lambda v: curr.update({"v": v}))
+    curr = _fake_audio(monkeypatch)
     orch = make_orch()
     handled = dispatch_intent(orch, "media", "down volume by 20", False)
     assert handled is True
@@ -1249,9 +1259,10 @@ def test_capability_delegation_sdd(monkeypatch):
 
 
 def test_volume_default_when_no_number(monkeypatch):
-    monkeypatch.setattr("engines.system.SystemCtrl.set_volume", lambda v: None)
+    curr = _fake_audio(monkeypatch)
     orch = make_orch()
     assert handle_volume(orch, "turn volume up", True) is True
+    assert curr["v"] == 60                      # one step is 10 points now (5 was too small to notice)
     assert orch.spoken == []
 
 

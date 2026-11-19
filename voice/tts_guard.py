@@ -10,6 +10,10 @@ class TTSGuard:
         self._spoken_cache = {}
         self.cache_timeout = cache_timeout
 
+    def forget(self, text: str) -> None:
+        """Let an intentional repeat ("say that again") through the duplicate filter."""
+        self._spoken_cache.pop(text, None)
+
     def should_speak(self, text: str) -> bool:
         """
         Returns True if the message should be spoken, False if it was

@@ -156,6 +156,11 @@ def handle_media(orch, c):
     if any(_wm(x, c) for x in ["stop", "pause", "halt"]):
         orch.music.stop()
         orch.speak("Playback stopped.")
-    elif _wm("next", c):
+    elif _wm("next", c) or _wm("skip", c):
         orch.music.next()
+    elif _wm("previous", c) or any(_wm(x, c) for x in ["play", "resume", "continue"]):
+        # Nothing of Flexie's own is playing: use the Windows media key, which any player (Spotify, a browser tab) obeys.
+        from engines.system import SystemCtrl
+        SystemCtrl.media("previous" if _wm("previous", c) else "play")
+        orch.speak("Sent the previous-track key to your media player." if _wm("previous", c) else "Sent play and pause to your media player.")
     return True

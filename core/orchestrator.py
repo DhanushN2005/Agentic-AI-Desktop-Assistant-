@@ -1,6 +1,7 @@
 import atexit
 import json
 import logging
+import os
 import queue
 import re
 import socket
@@ -278,6 +279,9 @@ class FlexieOrchestrator:
         self.clipboard_mgr = ClipboardManagerEngine()
         self.summarizer = TextSummarizerEngine()
         self.awareness = SelfAwareness()
+        from core.preferences import PreferenceStore
+        self.preferences = PreferenceStore()
+        self.preferences.on_change = self._push_prefs
         from core.self_model import CommandLog, SelfModel
         self.command_log = CommandLog()
         self.self_model = SelfModel(self)
@@ -315,6 +319,7 @@ class FlexieOrchestrator:
 
         self.active = False
         self.undo_stack: list[tuple] = []
+        self.ctx.refs.on_change = self._push_context
         self._setup_networking()
 
         # Register cleanup for Playwright and other engines
@@ -458,6 +463,48 @@ class FlexieOrchestrator:
         except Exception as _e:
             logging.debug("[core/orchestrator.py:async_memory] Swallowed: %s: %s", type(_e).__name__, _e)
 
+    def push_undo(self, label: str, fn):
+        """Register something "undo that" can reverse. ``fn`` takes no arguments and returns a short sentence to say."""
+        self.undo_stack.append(("fn", (label, fn, time.time())))
+        del self.undo_stack[:-20]
+
+    def _try_preference_statement(self, c: str, silent: bool = False) -> bool:
+        """Learn a clean preference statement and confirm it in one short sentence. False = not one; route normally."""
+        prefs = getattr(self, "preferences", None)
+        if prefs is None or not getattr(Config, "LEARN_PREFERENCES", True):
+            return False
+        try:
+            from core.preferences import extract_rules, is_statement
+            if not is_statement(c):
+                return False
+            results = prefs.learn(c)
+            if results:
+                self.speak(prefs.acknowledgement(results))
+            elif extract_rules(c):
+                self.speak("I already have that noted.")
+            else:
+                return False
+            return True
+        except Exception as e:                              # noqa: BLE001 - never let memory break a command
+            self.logger.warning("preference learning failed: %s: %s", type(e).__name__, e)
+            return False
+
+    def _push_prefs(self):
+        """Keep the dashboard's Settings > Memory list current (text only)."""
+        now = time.monotonic()
+        if now - getattr(self, "_prefs_sent_at", 0.0) < 0.3:
+            return
+        self._prefs_sent_at = now
+        self.send_to_ui("PREFS", json.dumps([{"id": p["id"], "text": p["text"], "updated": p["updated"]} for p in self.preferences.all()]))
+
+    def _push_context(self):
+        """Tell the dashboard what Flexie is holding in mind (names and ages only, never full paths)."""
+        now = time.monotonic()
+        if now - getattr(self, "_ctx_sent_at", 0.0) < 0.4:
+            return
+        self._ctx_sent_at = now
+        self.send_to_ui("CONTEXT", json.dumps(self.ctx.refs.snapshot()))
+
     def speak(self, text: str, silent: bool = False, record_chat: bool = True):
         if not text:
             return
@@ -487,6 +534,8 @@ class FlexieOrchestrator:
         self.send_to_ui("STATE", "SPEAKING")
         self.send_to_ui("SAY", full_text)
         self.logger.info(f"Speaking: {text}")
+        if len(full_text.split()) >= 3:
+            self.ctx.last_spoken = full_text            # what "say that again" and "shorter" act on
         try:
             self._cmd_replies.append(full_text)
             del self._cmd_replies[:-5]
@@ -741,7 +790,15 @@ class FlexieOrchestrator:
             self._shared_subcommand_context = None
             return
 
+        try:
+            self.ctx.sync_job(getattr(self, "job_manager", None))      # newest build project joins "what it refers to"
+        except Exception as _e:
+            self.logger.debug("sync_job failed: %s", _e)
         cmd = self.ctx.resolve(cmd)
+        _note = getattr(self.ctx, "resolution_note", None)
+        if _note:                                                     # we had to pick between several things: say which
+            self.ctx.resolution_note = None
+            self.speak(_note)
 
         # Intercept specialized context workflow commands from memory
         if handle_context_command(self, cmd, silent):
@@ -755,6 +812,10 @@ class FlexieOrchestrator:
         _SHORT_REAL = {"hi", "hey", "yes", "no", "ok", "bye", "run", "go"}
         if len(c.split()) == 1 and len(c) <= 3 and c not in _SHORT_REAL:
             self.logger.debug("[orchestrator] Discarding garbage input: %r", c)
+            return
+
+        # "I prefer short answers", "call me Sam", "from now on ...": a lasting preference, not a command
+        if self._try_preference_statement(c, silent):
             return
 
         # Intercept Register Storage Command
@@ -1282,6 +1343,20 @@ class FlexieOrchestrator:
                     "ram": ram_val,
                     "batt": batt
                 }
+                try:                                   # disk + network for the dashboard (best effort)
+                    import psutil
+                    du = psutil.disk_usage(os.path.abspath(os.sep))
+                    metrics["disk"] = du.percent
+                    metrics["disk_used_gb"] = round(du.used / 1e9, 1)
+                    metrics["disk_total_gb"] = round(du.total / 1e9, 1)
+                    io = psutil.net_io_counters()
+                    moved, now_t = io.bytes_sent + io.bytes_recv, time.monotonic()
+                    prev = getattr(self, "_net_prev", None)
+                    if prev and now_t > prev[1]:
+                        metrics["net"] = round(max(0.0, (moved - prev[0]) / (now_t - prev[1])) / 1_048_576, 2)   # MB/s
+                    self._net_prev = (moved, now_t)
+                except Exception as _e:
+                    logging.debug("metrics disk/net skipped: %s: %s", type(_e).__name__, _e)
                 # Run Automation Rules
                 self.rules.monitor_and_trigger()
 
@@ -1463,6 +1538,23 @@ class FlexieOrchestrator:
                                 self.permission_system.reject_request(req_id)
                             self.speak("Action rejected.")
                         self.send_to_ui("APPROVAL_RESOLVED", "rejected")
+                    elif msg == "GET_PREFS":
+                        self._prefs_sent_at = 0.0
+                        self._push_prefs()
+                    elif msg.startswith("DELETE_PREF:"):
+                        try:
+                            self.preferences.delete(int(msg.split(":", 1)[1]))
+                        except (ValueError, TypeError):
+                            pass
+                        self._prefs_sent_at = 0.0
+                        self._push_prefs()
+                    elif msg == "CLEAR_PREFS":
+                        self.preferences.clear()
+                        self._prefs_sent_at = 0.0
+                        self._push_prefs()
+                    elif msg == "GET_CONTEXT":
+                        self._ctx_sent_at = 0.0
+                        self._push_context()
                     elif msg == "GET_SETTINGS":
                         # Web dashboard settings dialog: masked key hints, models, active provider
                         try:
@@ -1474,9 +1566,13 @@ class FlexieOrchestrator:
                         # Never log this message or its parts: it carries API keys.
                         try:
                             from core.settings_service import apply as _apply_settings
-                            changed, problems = _apply_settings(json.loads(msg.split(":", 1)[1]))
+                            _payload = json.loads(msg.split(":", 1)[1])
+                            changed, problems = _apply_settings(_payload)
                             if changed:
-                                self.brain.reload_providers()
+                                self.brain.reload_providers()           # keys, models, routing: live, no restart
+                                from core.settings_service import ORB_STYLES, orb_style
+                                if isinstance(_payload, dict) and _payload.get("orb_style") in ORB_STYLES:
+                                    self.send_to_ui("ORB_STYLE", orb_style())   # the floating orb swaps style in place
                             self.send_to_ui("SETTINGS_SAVED", json.dumps({"changed": changed, "problems": problems}))
                         except Exception as e:
                             self.logger.error("SAVE_SETTINGS failed: %s", type(e).__name__)

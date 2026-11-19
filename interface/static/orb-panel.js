@@ -29,6 +29,17 @@
     });
   }
 
+  // Which orb to load: classic (default) or the black hole. ?orb=blackhole switches and is remembered; ?orb=classic goes back.
+  function orbScript() {
+    var style = '';
+    try {
+      var q = new URLSearchParams(location.search).get('orb');
+      if (q === 'blackhole' || q === 'classic') localStorage.setItem('flexieOrbStyle', q);
+      style = localStorage.getItem('flexieOrbStyle') || '';
+    } catch (e) { /* storage blocked: stay on classic */ }
+    return style === 'blackhole' ? '/static/orb-blackhole.js' : '/static/orb.js';
+  }
+
   function ensureStage() {
     if (stage) return stage;
     stage = document.createElement('div');
@@ -43,7 +54,7 @@
   function ensureOrb() {
     if (mounted) return Promise.resolve();
     if (loading) return loading;
-    loading = (window.FlexieOrb ? Promise.resolve() : loadScript('/static/orb.js')).then(function () {
+    loading = (window.FlexieOrb ? Promise.resolve() : loadScript(orbScript())).then(function () {
       window.FlexieOrb.mount(ensureStage(), {
         onCommand: function (text) { if (typeof window.send === 'function') window.send(text); },
         onClose: close

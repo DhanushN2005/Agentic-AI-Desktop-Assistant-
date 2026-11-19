@@ -54,6 +54,7 @@ ORCHESTRATOR_UDP_OUT = 9888   # orchestrator fans STATE updates out here
 WS_PORT              = 8765   # WebSocket port the browser connects to
 HTTP_PORT            = 8766   # localhost HTTP port serving the auth'd UI page
 HTML_FILE = os.path.join(os.path.dirname(__file__), "web_ui.html")
+HTML_FILE_V2 = os.path.join(os.path.dirname(__file__), "web_ui_v2.html")   # the dashboard: Home + Settings (default at /)
 TOKEN_PLACEHOLDER = "{{AUTH_TOKEN}}"
 
 # ── Shared state ────────────────────────────────────────────────────────────
@@ -88,14 +89,15 @@ def _origin_allowed(origin: str | None, token_header: str | None = None) -> bool
 
 
 # ── HTTP server: serves the UI page with the token injected ────────────────
-def _render_html() -> bytes:
-    """Read web_ui.html and inject the per-run auth token."""
+def _render_html(path: str | None = None) -> bytes:
+    """Read a dashboard page (classic web_ui.html by default) and inject the per-run auth token."""
+    path = path or HTML_FILE
     try:
-        with open(HTML_FILE, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             html = f.read()
     except OSError as e:
         logging.debug("[interface/web_ui_bridge.py:55] Swallowed exception: %s: %s", type(e).__name__, e)
-        html = f"<h1>Bridge error</h1><pre>Cannot read {HTML_FILE}: {e}</pre>"
+        html = f"<h1>Bridge error</h1><pre>Cannot read {path}: {e}</pre>"
     return html.replace(TOKEN_PLACEHOLDER, AUTH_TOKEN).encode("utf-8")
 
 
@@ -111,10 +113,14 @@ class _AuthedUIHandler(BaseHTTPRequestHandler):
         if path.startswith("/static/"):
             self._serve_static(path[len("/static/"):])
             return
-        if path not in ("/", "/index.html"):
+        # "/" is the new dashboard (Home + Settings). FLEXIE_WEB_UI=classic brings the old one back there;
+        # /classic and /v2 always pick one explicitly, whatever the setting.
+        default = HTML_FILE if os.environ.get("FLEXIE_WEB_UI", "").lower() == "classic" else HTML_FILE_V2
+        pages = {"/": default, "/index.html": default, "/classic": HTML_FILE, "/v2": HTML_FILE_V2}
+        if path not in pages:
             self.send_error(404)
             return
-        body = _render_html()
+        body = _render_html(pages[path])
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

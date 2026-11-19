@@ -1,5 +1,7 @@
+import json
 import logging
 import re
+import threading
 
 from core.handlers.age import handle_age
 from core.handlers.agents import handle_capability_delegation
@@ -154,6 +156,19 @@ def handle_conversational(orch, c):
         "focus": 64,
     }
     sys_p = MODE_PROMPTS.get(orch.current_mode, Config.SYSTEM_PROMPT_STANDARD)
+    prefs = getattr(orch, "preferences", None)
+    if prefs is not None and getattr(Config, "LEARN_PREFERENCES", True):
+        try:
+            sys_p += prefs.prompt_block(c)                       # what Flexie has learned about this user, only the relevant lines
+            from core.preferences import extract_rules, is_candidate
+            if is_candidate(c) and not extract_rules(c):         # unusual phrasing: let the model try, quietly, after we answer
+                def _learn_bg(text=c):
+                    got = prefs.learn(text, brain=orch.brain, allow_llm=True)
+                    if got and hasattr(orch, "send_to_ui"):
+                        orch.send_to_ui("NOTIFY", json.dumps({"title": "Remembered", "msg": got[0].text, "type": "info", "duration": 4000}))
+                threading.Thread(target=_learn_bg, daemon=True, name="pref-learn").start()
+        except Exception as _e:                                  # noqa: BLE001
+            logging.debug("preferences skipped: %s: %s", type(_e).__name__, _e)
     try:
         from core.jobs.manager import JobManager
         from core.jobs.models import JobStatus
@@ -322,7 +337,7 @@ def dispatch_intent(orch, intent, c, silent):
             return True
         if "volume" in c or any(x in c for x in ["mute", "unmute"]) or (intent == "media" and any(x in c for x in ["louder", "quieter", "sound"])):
             return handle_volume(orch, c, silent)
-        if "brightness" in c or (intent == "media" and any(x in c for x in ["dim", "brighten"])):
+        if "brightness" in c or (intent == "media" and any(x in c for x in ["dim", "bright", "darker"])):
             return handle_brightness(orch, c, silent)
         if intent == "play_youtube":
             return handle_play_youtube(orch, c)

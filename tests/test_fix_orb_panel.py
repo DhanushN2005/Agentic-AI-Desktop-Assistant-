@@ -167,3 +167,93 @@ def test_no_npm_or_dev_server_code_remains_in_vision_mode():
         src = open(os.path.join(ROOT, rel), encoding="utf-8").read()
         for word in ("npm", "subprocess", "atexit", "Popen"):
             assert word not in src.replace("npm install && npm run build", ""), (rel, word)
+
+
+def test_hud_orb_is_an_opt_in_subclass_that_paints_every_state():
+    import os
+    import pathlib
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    src = pathlib.Path(__file__).resolve().parents[1] / "interface"
+    ui = (src / "ui.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("FLEXIE_ORB_STYLE"' in ui and "class EnhancedFlexieOrb" in ui   # classic kept and default
+    assert not (src / "orb_v3.py").exists()
+    from PyQt6.QtGui import QPixmap
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from interface.orb_v2 import HudFlexieOrb
+    orb = HudFlexieOrb()
+    orb.timer.stop()
+    pm = QPixmap(300, 300)
+    for mode in ("professional", "hacker", "minimal"):
+        orb.mode = mode
+        for state in ("IDLE", "LISTENING", "PROCESSING", "SPEAKING", "SLEEP", "ERROR"):
+            orb.set_state(state)
+            orb._view_scale = 1.0
+            orb.render(pm)          # an exception inside paintEvent would abort the process
+    assert app is not None
+
+
+def test_black_hole_orb_is_opt_in_and_keeps_the_orb_api():
+    import pathlib
+    static = pathlib.Path(__file__).resolve().parents[1] / "interface" / "static"
+    bh = (static / "orb-blackhole.js").read_text(encoding="utf-8")
+    for api in ("mount:", "destroy:", "setState:", "setSpeech:", "setConnected:", "setGestures:"):
+        assert api in bh, api                                   # same surface as the classic orb.js
+    assert "offsetParent" not in bh.replace("offsetParent is null", "")   # fixed overlays have a null offsetParent
+    panel = (static / "orb-panel.js").read_text(encoding="utf-8")
+    assert "orb-blackhole.js" in panel and "'/static/orb.js'" in panel and "?orb=blackhole" in panel
+    assert (static / "orb.js").exists()                          # the classic orb is still there and still the default
+    assert all(ord(c) < 128 for c in bh), "non-ASCII in a script served without a charset shows up as mojibake"
+
+
+def test_every_floating_orb_variant_paints_in_every_state():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtGui import QPixmap
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from interface.orb_variants import STYLES, VariantOrb
+    assert len(STYLES) >= 8
+    pm = QPixmap(300, 300)
+    for style in STYLES:
+        orb = VariantOrb(style)
+        orb.timer.stop()
+        for state in ("IDLE", "LISTENING", "PROCESSING", "SPEAKING", "SLEEP", "ERROR"):
+            orb.set_state(state)
+            orb._view_scale = 1.0
+            orb.render(pm)          # an exception inside paintEvent aborts the process
+    assert app is not None
+
+
+def test_floating_orb_style_can_be_switched_while_running():
+    import os
+    import types
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication, QHBoxLayout, QWidget
+    app = QApplication.instance() or QApplication([])
+    from interface.ui import EnhancedFlexieOrb, FlexieUI
+    host = QWidget()
+    layout = QHBoxLayout(host)
+    first = FlexieUI._make_orb("")
+    first.timer.stop()
+    layout.addWidget(first)
+    fake = types.SimpleNamespace(layout=layout, orb=first, _make_orb=FlexieUI._make_orb, applied=[])
+    fake._apply_mode_visuals = lambda m: fake.applied.append(m)
+    first.mode = "hacker"
+    first.set_state("LISTENING")
+    assert type(first) is EnhancedFlexieOrb
+    for style in ("hud", "eye", "classic", "nonsense"):
+        FlexieUI._swap_orb(fake, style)
+        fake.orb.timer.stop()
+        assert fake.orb.mode == "hacker" and fake.orb.state == "LISTENING", style      # mode and state carry over
+        assert layout.indexOf(fake.orb) >= 0 and layout.count() == 1, style            # exactly one orb in the layout
+    assert type(fake.orb) is EnhancedFlexieOrb                                          # unknown style fell back safely
+    assert app is not None
+
+
+def test_settings_orb_styles_match_the_orbs_that_exist():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from core.settings_service import ORB_STYLES
+    from interface.orb_variants import STYLES
+    assert set(ORB_STYLES) == {"classic", "hud", *STYLES}

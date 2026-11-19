@@ -4,7 +4,12 @@ import os
 import re
 import time
 
+from core.referents import ReferentStack
 from engines.system import SystemCtrl
+
+_REPEAT = re.compile(r"^(?:please\s+)?(?:(?:say|read|tell\s+me)\s+(?:that|it)\s+again|repeat\s+(?:that|it|what\s+you\s+(?:just\s+)?said)|what\s+did\s+you\s+(?:just\s+)?say|come\s+again|say\s+that\s+one\s+more\s+time)$")
+_SHORTER = re.compile(r"^(?:please\s+)?(?:(?:shorten|condense|summari[sz]e|simplify)(?:\s+(?:that|it))?|make\s+(?:that|it)\s+(?:shorter|briefer|simpler|easier(?:\s+to\s+understand)?)|(?:in\s+)?(?:one|1)\s+(?:line|sentence)|tl;?dr|explain\s+(?:that|it)\s+(?:simply|like\s+i'?m\s+five))$")
+_TRANSLATE_THAT = re.compile(r"^(?:please\s+)?translate\s+(?:that|it)\s+(?:to|into)\s+(?P<lang>[a-z]+)$")
 
 
 class ContextMemory:
@@ -31,6 +36,9 @@ class ContextMemory:
         setattr(self, "_" + name, value)
         if value:
             self._ref_path, self._ref_time = value, time.time()
+            refs = getattr(self, "refs", None)
+            if refs is not None:
+                self.note_path(value)
 
     last_path = property(lambda self: self._last_path, lambda self, v: self._set_ref("last_path", v))
     active_document = property(lambda self: self._active_document,
@@ -50,6 +58,9 @@ class ContextMemory:
 
     def __init__(self, memory_engine=None):
         self.mem = memory_engine
+        self.refs = ReferentStack()          # what Flexie just produced or showed, newest first
+        self.resolution_note = None          # one short sentence to say when a reference needed a guess
+        self.last_spoken = None              # the last thing Flexie said aloud, so "say that again" / "shorter" have something to act on
         self.last_app = self._load("last_app")
         self.last_query = self._load("last_query")
         self.last_cmd = self._load("last_cmd")
@@ -68,6 +79,7 @@ class ContextMemory:
 
         # Browser situational context
         self.browser_open = False
+        self._seed_refs()
         self.active_browser = self._load("active_browser", "")
 
         # New Context Tracker registers
@@ -130,6 +142,7 @@ class ContextMemory:
                 setattr(self, name, None)
         self.last_generated_content = None
         self._ref_path, self._ref_time = None, 0.0
+        self.refs.clear()
         self.clear_pending_action()
         self.session_time = time.time()
         if self.mem:
@@ -144,7 +157,8 @@ class ContextMemory:
         needle = (text or "").lower().strip()
         if not needle:
             return 0
-        n = 0
+        n = self.refs.forget(needle)
+
         for name in (*self._VOLATILE_FIELDS, "last_generated_content"):
             val = getattr(self, name, None)
             if val is not None and needle in str(val).lower():
@@ -194,6 +208,33 @@ class ContextMemory:
             return None
         return artifact
 
+    def _seed_refs(self):
+        """Remember across restarts, ranked by when the file really changed (never by 'saved last')."""
+        for kind, path in (("screenshot", self.last_screenshot), ("file", self._active_document), ("folder", self._last_path)):
+            try:
+                if path and os.path.exists(path):
+                    self.refs.push("folder" if os.path.isdir(path) else kind, path, t=os.path.getmtime(path), seeded=True)
+            except Exception as _e:
+                logging.debug("seed ref skipped: %s", _e)
+
+    def note_path(self, path, kind=None):
+        """Record a file or folder Flexie just made, opened or showed."""
+        try:
+            if path and os.path.exists(path):
+                self.refs.push(kind or ("folder" if os.path.isdir(path) else "file"), path)
+        except Exception as _e:
+            logging.debug("note_path skipped: %s", _e)
+
+    def sync_job(self, job_manager):
+        """Make the newest build project a referent, ranked by when it finished (an old project never outranks a new screenshot)."""
+        try:
+            job = job_manager.get_latest_job() if job_manager else None
+            path = getattr(job, "workspace_path", "") if job else ""
+            if path and os.path.exists(path):
+                self.refs.push("project", path, label=getattr(job, "title", "") or "", t=(job.completed_at or job.updated_at or job.created_at))
+        except Exception as _e:
+            logging.debug("sync_job skipped: %s", _e)
+
     def set_artifact(self, path=None, language=None, kind=None, query=None, request=None, related_paths=None, extra=None):
         previous = self.active_artifact or {}
         related = list(previous.get("related_paths") or [])
@@ -205,6 +246,7 @@ class ContextMemory:
             path = os.path.abspath(path)
             self.last_path = path
             self._save("last_path", path)
+            self.note_path(path, "file")
         now = time.time()
         artifact = {
             "path": path or previous.get("path"),
@@ -257,9 +299,11 @@ class ContextMemory:
         if screenshot:
             self.last_screenshot = screenshot
             self._save("last_screenshot", screenshot)
+            self.note_path(screenshot, "screenshot")
         if url:
             self.last_url = url
             self._save("last_url", url)
+            self.refs.push("url", url)
         if selector:
             self.last_selector = selector
             self._save("last_selector", selector)
@@ -272,6 +316,7 @@ class ContextMemory:
         if last_path:
             self.last_path = last_path
             self._save("last_path", last_path)
+            self.note_path(last_path)
         if last_response:
             self.last_response = last_response
             self.last_generated_content = last_response
@@ -279,6 +324,7 @@ class ContextMemory:
         if active_document:
             self.active_document = active_document
             self._save("active_document", active_document)
+            self.note_path(active_document)
         if last_search:
             self.last_search = last_search
             self._save("last_search", last_search)
@@ -346,10 +392,45 @@ class ContextMemory:
         reference = re.sub(r"^(please|can you|could you|would you|will you|do you)\s+", "", c).strip()
         reference = re.sub(r"\s+for\s+me$", "", reference).strip()
 
+        # We just asked "Do you mean the screenshot or the project?": a short answer picks one
+        if self.pending_action == "choose_referent":
+            picked = self.refs.choose(reference, self.pending_action_data.get("choices", []))
+            self.clear_pending_action()
+            if picked == "cancel":
+                return "context_cancel"
+            if picked is not None:
+                return self.refs._action(picked)
+            # not an answer: treat it as a fresh command
+
         # Check for pending actions first (multi-turn conversations)
         if self.pending_action:
             # Return the command as-is so the handler can process the follow-up
             return cmd
+
+        # "open it", "open that screenshot", "open the file you just created": ask the recency-ranked memory first
+        found = self.refs.resolve(cmd)
+        if found:
+            if found.action:
+                art = self.get_artifact()
+                if art and found.referent and art.get("path") and os.path.abspath(str(art["path"])) == found.referent.value:
+                    return f"artifact_open:{cmd}"        # the newest thing IS the generated code: keep the editor/preview flow
+                self.resolution_note = found.note
+                return found.action
+            if found.ask:
+                self.pending_action = "choose_referent"
+                self.pending_action_data = {"choices": found.choices}
+                return f"context_ask:{found.ask}"
+            if found.missing:
+                return f"context_unresolved:{found.missing}"
+
+        # "say that again", "make it shorter", "translate that to French": act on what Flexie last said
+        if _REPEAT.match(reference):
+            return "repeat_last_reply"
+        if _SHORTER.match(reference):
+            return "rewrite_last_reply:" + ("simpler" if re.search(r"simpl|easier|five", reference) else "shorter")
+        tm = _TRANSLATE_THAT.match(reference)
+        if tm and self.last_spoken:
+            return f"translate {self.last_spoken} to {tm.group('lang')}"
 
         artifact_command = self._artifact_command(cmd, reference)
         if artifact_command:
@@ -391,7 +472,8 @@ class ContextMemory:
         if any(x == c for x in ["delete it", "delete that", "delete this file", "remove it", "remove that", "delete the file", "delete that file", "delete the folder", "delete that folder", "erase it", "erase that"]):
             # Only an explicit, recent (<= 60 s) reference the user was just shown; otherwise
             # leave the command unresolved so the assistant asks which file is meant.
-            target = self._ref_path if time.time() - self._ref_time <= self.REFERENCE_TTL else None
+            newest = self.refs.latest({"file", "folder", "screenshot"}, ttl=self.REFERENCE_TTL, allow_seeded=False)
+            target = newest.value if newest else (self._ref_path if time.time() - self._ref_time <= self.REFERENCE_TTL else None)
             if target and os.path.exists(target):
                 if os.path.isdir(target):
                     return f"delete folder {target}"
@@ -424,10 +506,6 @@ class ContextMemory:
                 return f"navigate to {self.last_url}"
         if any(x == c for x in ["show it again", "show that again"]) and self.last_screenshot:
             return "show screenshot"
-        if any(x == reference for x in ["open it", "open that", "open this", "open the file", "open this file", "open that file", "open the folder", "open that folder", "open this folder", "open the directory", "open it again"]):
-            target_file = self.active_document or self.last_path or self.last_screenshot
-            if target_file:
-                return f"open {target_file}"
         if any(x == c for x in ["close it", "close that", "close this", "close the app", "close the window", "close that window", "close this window", "close this app"]):
             # Use focused window if available, fallback to cached last app
             app_to_close = None

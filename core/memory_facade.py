@@ -181,6 +181,10 @@ class MemoryFacade:
         else:
             _missing("memory")
 
+        pr = self._store("preferences")
+        if pr and hasattr(pr, "forget_matching"):
+            _run("preferences", lambda: pr.forget_matching(target))
+
         ctx = self._store("ctx") or self._store("context_memory")
         if ctx and hasattr(ctx, "forget_matching"):
             _run("context", lambda: ctx.forget_matching(target))

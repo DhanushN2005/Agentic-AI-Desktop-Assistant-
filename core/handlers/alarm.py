@@ -55,6 +55,13 @@ def handle_alarm(orch, c):
             orch.speak("I didn't catch that. Try '30 seconds' or '10 minutes'.")
             return True
 
+    if re.search(r"\bdate\b|\bwhat\s+day\b|\bwhich\s+day\b", cmd) and not _word(cmd, "alarm", "timer"):
+        now = datetime.now()
+        response = f"Today is {now.strftime('%A')}, {now.day} {now.strftime('%B %Y')}."
+        orch.ctx.update(last_response=response, query=c)
+        orch.speak(response)
+        return True
+
     if (
         any(x in cmd for x in ["what time", "tell me the time", "tell me current time",
                                "whats the time", "what's the time", "current time",

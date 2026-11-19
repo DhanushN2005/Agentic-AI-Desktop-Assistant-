@@ -1,0 +1,141 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Flexie web orb gallery</title>
+<style>
+  body{margin:0;background:#04060a;color:#e6ecf5;font:600 14px 'Segoe UI',system-ui,sans-serif}
+  #g{display:grid;grid-template-columns:repeat(4,420px);gap:0}
+  .c{position:relative;width:420px;height:446px}
+  .c b{display:block;height:26px;line-height:26px;padding-left:12px;letter-spacing:.5px}
+  canvas{width:420px;height:420px;display:block}
+</style>
+<div id="g"></div>
+<script>
+/* Eight web-dashboard orb designs as fragment shaders (reference gallery, not wired into the product).
+   Render:  python tools/preview_web_orbs.py  ->  orb_gallery_web.png                                    */
+var HEAD = [
+ 'precision highp float;',
+ 'uniform vec2 uRes; uniform float uT, uE; uniform vec3 uC1, uC2;',
+ 'float h(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }',
+ 'float n(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);',
+ '  return mix(mix(h(i),h(i+vec2(1.0,0.0)),f.x), mix(h(i+vec2(0.0,1.0)),h(i+vec2(1.0,1.0)),f.x), f.y); }',
+ 'float fbm(vec2 p){ float a=0.5, s=0.0; for(int i=0;i<4;i++){ s+=a*n(p); p=p*2.03+vec2(1.7,9.2); a*=0.5; } return s; }',
+ 'vec2 UV(){ return (gl_FragCoord.xy - 0.5*uRes)/uRes.y; }'
+].join('\n');
+function fin(body){ return HEAD + '\nvoid main(){ vec2 uv=UV(); float r=length(uv); vec3 col=vec3(0.0);\n' + body + '\n gl_FragColor=vec4(pow(1.0-exp(-col*1.3),vec3(0.95)),1.0); }'; }
+
+var V = [
+ { name:'1  glass plasma sphere', c1:[1,.25,.7], c2:[.6,.05,.45], src: fin([
+  'float R=.27*(1.0+.03*uE*sin(uT*8.0));',
+  'col+=uC2*exp(-max(r-R,0.0)*7.0)*.55*(.6+uE);',
+  'if(r<R){ vec3 nn=vec3(uv/R, sqrt(max(0.0,1.0-r*r/(R*R)))); vec3 L=normalize(vec3(-.5,.6,.65));',
+  '  float d=max(dot(nn,L),0.0);',
+  '  float sw=fbm(nn.xy*3.2+vec2(uT*.25,-uT*.18)+fbm(nn.xy*2.0+uT*.1)*1.5);',
+  '  vec3 base=mix(uC2*.55,uC1,sw);',
+  '  col=base*(.25+.95*d)+vec3(pow(max(dot(reflect(-L,nn),vec3(0.,0.,1.)),0.0),28.0));',
+  '  col+=uC1*pow(1.0-nn.z,2.5)*.9;',
+  '  col+=vec3(1.0)*exp(-length(uv-vec2(-.09,.1))*18.0)*.75; }',
+  'col+=uC1*exp(-pow((r-R)/.004,2.0))*.8;' ].join('\n')) },
+ { name:'2  voice ribbons (Siri)', c1:[.3,.8,1], c2:[.8,.2,1], src: fin([
+  'float a=atan(uv.y,uv.x);',
+  'for(int i=0;i<4;i++){ float fi=float(i); float rk=.22+fi*.012; float w=.0045; float amp=(.012+.03*uE)*(1.0+fi*.3);',
+  '  float rr=rk+amp*sin(a*(3.0+fi)+uT*(1.4+fi*.6)*(1.0+uE))+amp*.5*sin(a*(5.0+fi)-uT*1.9);',
+  '  float d=abs(r-rr); col+=mix(uC1,uC2,fi/3.0)*(exp(-d*d/(w*w))*1.3+exp(-d*d/(w*w*40.0))*.28); }',
+  'col+=mix(uC1,uC2,.5)*exp(-r*6.0)*.35*(.5+uE);' ].join('\n')) },
+ { name:'3  dot globe', c1:[.2,1,.8], c2:[.05,.5,.9], src: fin([
+  'float R=.3; col+=uC2*exp(-max(r-R,0.0)*6.0)*.4;',
+  'if(r<R){ vec3 nn=vec3(uv/R, sqrt(max(0.0,1.0-r*r/(R*R)))); float ay=uT*.4;',
+  '  vec3 q=vec3(nn.x*cos(ay)+nn.z*sin(ay), nn.y, -nn.x*sin(ay)+nn.z*cos(ay));',
+  '  float lat=asin(clamp(q.y,-1.0,1.0)); float lon=atan(q.x,q.z);',
+  '  float rows=24.0; float st=3.14159/rows; float li=floor(lat/st+.5); float latc=li*st;',
+  '  float cols=floor(max(5.0,rows*2.0*cos(latc))); float sl=6.28318/cols; float oi=floor(lon/sl+.5); float lonc=oi*sl;',
+  '  vec2 dd=vec2((lon-lonc)*cos(latc),lat-latc); float dist=length(dd)/st; float dotm=smoothstep(.36,.2,dist);',
+  '  float wave=.5+.5*sin(latc*6.0-uT*3.0);',
+  '  col+=mix(uC2,uC1,wave)*dotm*(.3+1.1*uE*wave+.55*nn.z)*1.4;',
+  '  col+=uC2*.05; }',
+  'col+=uC1*exp(-abs(r-R)*45.0)*.4;' ].join('\n')) },
+ { name:'4  plasma ball (lightning)', c1:[.75,.55,1], c2:[.35,.1,.9], src: fin([
+  'float R=.34; float a=atan(uv.y,uv.x);',
+  'col+=uC2*exp(-r*7.0)*1.3+vec3(1.0)*exp(-r*30.0)*.9;',
+  'for(int i=0;i<7;i++){ float fi=float(i); float a0=fi*.8976+uT*.12;',
+  '  float wob=(fbm(vec2(r*7.0,uT*1.6+fi*3.1))-.5)*(1.8*r+.2)*(.6+uE);',
+  '  float da=a-(a0+wob); da=mod(da+3.14159,6.28318)-3.14159; float d=abs(da)*r;',
+  '  float m=smoothstep(R,R-.05,r)*smoothstep(.0,.03,r);',
+  '  col+=(mix(uC1,vec3(1.0),.55)*exp(-d*d/(.0028*.0028))*1.3+uC2*exp(-d*d/(.018*.018))*.25)*m; }',
+  'col+=uC1*exp(-pow((r-R)/.006,2.0))*.7+uC2*exp(-max(r-R,0.0)*8.0)*.25;' ].join('\n')) },
+ { name:'5  spiral galaxy', c1:[1,.8,.5], c2:[.3,.35,1], src: fin([
+  'float a=atan(uv.y,uv.x);',
+  'float ang=a*2.0-r*13.0+uT*.6; float arm=pow(.5+.5*cos(ang),2.4);',
+  'float dens=arm*exp(-r*4.2)*(.45+fbm(vec2(cos(a),sin(a))*2.5+vec2(uT*.1,r*10.0)))*smoothstep(.46,.2,r);',
+  'col+=mix(uC2,uC1,exp(-r*7.0))*dens*2.6;',
+  'col+=vec3(1.0,.92,.8)*exp(-r*22.0)*(1.4+uE*.5);',
+  'vec2 g=floor(uv*90.0); col+=vec3(step(.993,h(g))*(.4+.6*h(g+3.0)))*smoothstep(.5,.1,r);' ].join('\n')) },
+ { name:'6  liquid metal blob', c1:[.6,.9,1], c2:[.2,.3,.9], src: [
+  HEAD,
+  'float field(vec2 p){ float f=0.0; for(int i=0;i<5;i++){ float fi=float(i);',
+  '  vec2 c=vec2(sin(uT*(.5+fi*.17)+fi*1.7),cos(uT*(.43+fi*.13)+fi*2.3))*(.09+.03*uE)*(1.0+.3*fi);',
+  '  f+=(.012)/(dot(p-c,p-c)+.0012);} return f; }',
+  'void main(){ vec2 uv=UV(); vec3 col=vec3(0.0); float f=field(uv); float e=.003;',
+  ' vec2 g=vec2(field(uv+vec2(e,0.))-field(uv-vec2(e,0.)),field(uv+vec2(0.,e))-field(uv-vec2(0.,e)))/(2.0*e);',
+  ' float m=smoothstep(.95,1.08,f);',
+  ' vec2 gs=g*.018; gs/=(1.0+length(gs)*.6); vec3 nn=normalize(vec3(-gs,1.0)); float env=nn.y*.5+.5; float env2=nn.x*.5+.5;',
+  ' vec3 metal=mix(uC2*.35,uC1,env)*(.5+.7*env2)+vec3(pow(max(dot(nn,normalize(vec3(-.4,.6,.7))),0.0),40.0))*1.2;',
+  ' col=metal*m; col+=uC1*clamp((f-.25)*.35,0.0,.45)*(1.0-m)*(.7+uE*.3);',
+  ' col+=uC1*exp(-pow((f-1.0)*5.0,2.0))*.35;',
+  ' gl_FragColor=vec4(pow(1.0-exp(-col*1.3),vec3(0.95)),1.0); }' ].join('\n') },
+ { name:'7  hex neural sphere', c1:[.3,1,.6], c2:[.05,.6,.4], src: [
+  HEAD,
+  'vec4 hexc(vec2 p){ vec2 r=vec2(1.0,1.7320508); vec2 hh=r*.5; vec2 a=mod(p,r)-hh; vec2 b=mod(p-hh,r)-hh;',
+  '  vec2 gv=dot(a,a)<dot(b,b)?a:b; return vec4(gv,p-gv); }',
+  'float hexd(vec2 p){ p=abs(p); return max(dot(p,vec2(.5,.8660254)),p.x); }',
+  'void main(){ vec2 uv=UV(); float r=length(uv); vec3 col=vec3(0.0); float R=.3;',
+  ' col+=uC2*exp(-max(r-R,0.0)*6.0)*.35;',
+  ' if(r<R){ vec3 nn=vec3(uv/R,sqrt(max(0.0,1.0-r*r/(R*R)))); vec2 p=nn.xy/(1.0+nn.z)*3.2;',
+  '  float ca=cos(uT*.2), sa=sin(uT*.2); p=mat2(ca,-sa,sa,ca)*p;',
+  '  vec4 hc=hexc(p); float hd=hexd(hc.xy); float line=smoothstep(.42,.5,hd);',
+  '  float ph=h(hc.zw)*6.28+uT*(1.5+uE*2.0); float node=exp(-dot(hc.xy,hc.xy)*40.0)*(.5+.5*sin(ph));',
+  '  float travel=smoothstep(.85,1.0,sin(hc.z*1.3+hc.w*.9-uT*3.0*(.5+uE)))*line;',
+  '  col+=uC1*line*(.35+.5*nn.z)+uC1*node*1.1*(.6+uE)+vec3(1.0)*travel*.8;',
+  '  col+=uC2*.08*(1.0-nn.z); col+=uC1*pow(1.0-nn.z,3.0)*.6; }',
+  ' col+=uC1*exp(-abs(r-R)*50.0)*.35;',
+  ' gl_FragColor=vec4(pow(1.0-exp(-col*1.3),vec3(0.95)),1.0); }' ].join('\n') },
+ { name:'8  radar scope', c1:[.3,1,.45], c2:[.05,.5,.2], src: fin([
+  'float R=.34; float a=atan(uv.y,uv.x);',
+  'float inside=smoothstep(R+.004,R,r); col+=uC2*.05*inside;',
+  'for(int k=1;k<5;k++){ float rk=R*float(k)/4.0; col+=uC1*exp(-pow((r-rk)/.0025,2.0))*(k==4?1.0:.35); }',
+  'col+=uC1*(exp(-pow(uv.x/.0018,2.0))+exp(-pow(uv.y/.0018,2.0)))*.25*inside;',
+  'float tick=smoothstep(.9,1.0,abs(sin(a*36.0)))*smoothstep(R+.02,R+.008,r)*smoothstep(R-.006,R+.002,r); col+=uC1*tick*.8;',
+  'float sw=-uT*1.6; float da=mod(sw-a,6.28318); float wedge=exp(-da*2.6)*inside; col+=uC1*wedge*1.1;',
+  'col+=uC1*exp(-pow((da)/.012,2.0))*inside*.8;',
+  'for(int i=0;i<6;i++){ float fi=float(i); float ba=h(vec2(fi,1.0))*6.28318; float br=R*(.25+.7*h(vec2(fi,2.0)));',
+  '  vec2 bp=vec2(cos(ba),sin(ba))*br; float since=mod(sw-ba,6.28318); float fl=max(0.0,1.0-since/3.5);',
+  '  col+=vec3(1.0)*exp(-dot(uv-bp,uv-bp)/(.006*.006))*fl*1.4; }',
+  'col+=vec3(1.0)*exp(-r*70.0)*.8+uC1*exp(-r*18.0)*.25*(.6+uE);' ].join('\n')) }
+];
+
+var host = document.getElementById('g');
+var logs = [];
+V.forEach(function (v, idx) {
+  var card = document.createElement('div'); card.className = 'c';
+  var b = document.createElement('b'); b.textContent = v.name; card.appendChild(b);
+  var cv = document.createElement('canvas'); cv.width = 420; cv.height = 420; card.appendChild(cv);
+  host.appendChild(card);
+  var gl = cv.getContext('webgl', { antialias: false, preserveDrawingBuffer: true });
+  function sh(type, src) { var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { logs.push(v.name + ': ' + gl.getShaderInfoLog(s)); return null; } return s; }
+  var vs = sh(gl.VERTEX_SHADER, 'attribute vec2 p; void main(){ gl_Position=vec4(p,0.,1.); }');
+  var fs = sh(gl.FRAGMENT_SHADER, v.src);
+  if (!vs || !fs) return;
+  var pr = gl.createProgram(); gl.attachShader(pr, vs); gl.attachShader(pr, fs); gl.linkProgram(pr); gl.useProgram(pr);
+  var buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,3,-1,-1,3]), gl.STATIC_DRAW);
+  var pl = gl.getAttribLocation(pr, 'p'); gl.enableVertexAttribArray(pl); gl.vertexAttribPointer(pl, 2, gl.FLOAT, false, 0, 0);
+  var T = (window.__T || 6.5) + idx * 0.37;
+  gl.uniform2f(gl.getUniformLocation(pr, 'uRes'), 420, 420);
+  gl.uniform1f(gl.getUniformLocation(pr, 'uT'), T);
+  gl.uniform1f(gl.getUniformLocation(pr, 'uE'), 0.8);
+  gl.uniform3f(gl.getUniformLocation(pr, 'uC1'), v.c1[0], v.c1[1], v.c1[2]);
+  gl.uniform3f(gl.getUniformLocation(pr, 'uC2'), v.c2[0], v.c2[1], v.c2[2]);
+  gl.viewport(0, 0, 420, 420); gl.drawArrays(gl.TRIANGLES, 0, 3);
+});
+window.__logs = logs;
+</script>

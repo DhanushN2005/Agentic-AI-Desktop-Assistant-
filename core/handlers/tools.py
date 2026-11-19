@@ -72,7 +72,21 @@ def handle_calc(orch, c):
 
 
 def handle_status(orch, c):
+    low = (c or "").lower()
     try:
+        if re.search(r"wi-?fi|internet|network|online|connected", low):
+            orch.speak(SystemCtrl.wifi_status())                      # the question was about the connection, not the CPU
+            return True
+        if "battery" in low and not re.search(r"cpu|ram|memory|system", low):
+            batt = SystemCtrl.battery_status()
+            try:
+                import psutil
+                info = psutil.sensors_battery()
+                state = "" if info is None else (", and it is charging." if info.power_plugged else ", running on battery.")
+            except Exception:
+                state = "."
+            orch.speak(f"Battery is at {batt}{state or '.'}")
+            return True
         cpu, ram = SystemCtrl.cpu_ram()
         batt = SystemCtrl.battery_status()
         orch.speak(f"CPU is at {cpu} percent, RAM at {ram} percent, battery at {batt}.")

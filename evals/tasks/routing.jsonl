@@ -164,3 +164,24 @@
 {"task_id": "route-164", "query": "go to github.com in this tab", "expected": "browser_tab"}
 {"task_id": "route-165", "query": "click on login", "expected": "browser_control"}
 {"task_id": "route-166", "query": "summarize page", "expected": "browser_extract"}
+{"task_id": "ctx-1", "query": "open the project", "expected": "job_open"}
+{"task_id": "ctx-2", "query": "run the app i built", "expected": "job_open"}
+{"task_id": "ctx-3", "query": "what are we working on", "expected": "awareness"}
+{"task_id": "ctx-4", "query": "where did you save it", "expected": "awareness"}
+{"task_id": "basic-1", "query": "what's the date", "expected": "alarm"}
+{"task_id": "basic-2", "query": "what day is it", "expected": "alarm"}
+{"task_id": "basic-3", "query": "pause", "expected": "media"}
+{"task_id": "basic-4", "query": "wifi status", "expected": "status"}
+{"task_id": "basic-5", "query": "increase volume", "expected": "media"}
+{"task_id": "basic-6", "query": "volume down", "expected": "media"}
+{"task_id": "basic-7", "query": "what is the date of the next holiday", "expected": "search"}
+{"task_id": "ctx-5", "query": "show me the screenshot", "expected": "vision_show"}
+{"task_id": "ctx-6", "query": "take that back", "expected": "undo"}
+{"task_id": "ctx-7", "query": "undo the last change", "expected": "undo"}
+{"task_id": "basic-8", "query": "brighter", "expected": "media"}
+{"task_id": "basic-9", "query": "make it dimmer", "expected": "media"}
+{"task_id": "basic-10", "query": "increase brightness", "expected": "media"}
+{"task_id": "basic-11", "query": "what is brighter than the sun", "expected": "search"}
+{"task_id": "pref-1", "query": "what are my preferences", "expected": "awareness"}
+{"task_id": "pref-2", "query": "what have you learned about me", "expected": "awareness"}
+{"task_id": "pref-3", "query": "forget that I prefer short answers", "expected": "memory"}

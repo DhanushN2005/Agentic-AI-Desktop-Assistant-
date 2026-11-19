@@ -7,6 +7,7 @@ and ``os.environ``). Key values are never logged and never echoed back.
 """
 from __future__ import annotations
 
+import os
 import re
 from urllib.parse import urlparse
 
@@ -16,6 +17,42 @@ _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$")
 _KEY_RE = re.compile(r"^[^\s\x00-\x1f\x7f\"'`$\\]{8,512}$")  # one token: no spaces, quotes or control chars
 ACTIVE_CHOICES = ("auto",) + tuple(SUPPORTED_PROVIDERS) + ("ollama",)
 MAX_URL = 300
+
+# Floating-orb styles the Qt HUD can wear (names match interface/orb_variants.py + orb_v2.py; a test keeps them in sync).
+ORB_STYLES = ("classic", "hud", "plasma", "ring", "eye", "crystal", "sonar", "globe", "equalizer", "atom")
+
+# Behaviour settings the dashboard may change. "live" ones are copied onto Config straight away, so they apply to the
+# very next request - no restart. Others are saved and take effect on the next start (the dashboard says which).
+BEHAVIOR = (
+    {"env": "FLEXIE_CONVERSATION_HISTORY_TURNS", "attr": "CONVERSATION_HISTORY_TURNS", "type": "int", "min": 0, "max": 40,
+     "group": "Conversation", "label": "Conversation memory", "unit": "turns", "live": True,
+     "help": "How many earlier exchanges Flexie remembers when answering."},
+    {"env": "FLEXIE_LLM_REQUEST_TIMEOUT", "attr": "LLM_REQUEST_TIMEOUT", "type": "float", "min": 3, "max": 60,
+     "group": "Responses", "label": "AI request timeout", "unit": "seconds", "live": True,
+     "help": "How long to wait for one AI provider before falling back to the next."},
+    {"env": "FLEXIE_CODE_MAX_TOKENS", "attr": "CODE_MAX_TOKENS", "type": "int", "min": 256, "max": 16000,
+     "group": "Responses", "label": "Code reply length", "unit": "tokens", "live": True,
+     "help": "Upper limit for generated code in one reply."},
+    {"env": "FLEXIE_VOICE_LISTEN_TIMEOUT", "attr": "VOICE_LISTEN_TIMEOUT", "type": "float", "min": 2, "max": 30,
+     "group": "Voice", "label": "Listening window", "unit": "seconds", "live": True,
+     "help": "How long Flexie waits for you to start speaking."},
+    {"env": "FLEXIE_CHEAP_FIRST_ENABLED", "attr": "CHEAP_FIRST_ENABLED", "type": "bool",
+     "group": "Routing", "label": "Cheap model first", "live": True,
+     "help": "Try the cheapest capable model first and escalate only if needed."},
+    {"env": "FLEXIE_LOCAL_FIRST", "attr": "LOCAL_FIRST", "type": "bool",
+     "group": "Routing", "label": "Prefer local model", "live": True,
+     "help": "Use the local (Ollama) model first when it is available."},
+    {"env": "FLEXIE_LEARN_PREFERENCES", "attr": "LEARN_PREFERENCES", "type": "bool",
+     "group": "Memory", "label": "Learn my preferences", "live": True,
+     "help": "Remember lasting preferences you state (\"I prefer short answers\", \"call me Sam\"). See and delete them under Settings > Memory."},
+    {"env": "FLEXIE_JOB_TOKEN_BUDGET", "attr": "JOB_TOKEN_BUDGET", "type": "int", "min": 5000, "max": 1000000,
+     "group": "Builds", "label": "Build token budget", "unit": "tokens", "live": True,
+     "help": "Most tokens one project build may use before it stops."},
+    {"env": "FLEXIE_TTS_MODE", "attr": None, "type": "choice", "choices": ("neural", "sapi"),
+     "group": "Voice", "label": "Voice engine", "live": False,
+     "help": "neural = natural online voice, sapi = offline Windows voice. Applies after a restart."},
+)
+_BEHAVIOR_BY_ENV = {b["env"]: b for b in BEHAVIOR}
 
 
 def snapshot() -> dict:
@@ -38,7 +75,50 @@ def snapshot() -> dict:
         "active_choices": list(ACTIVE_CHOICES),
         "providers": providers,
         "ollama": {"url": Config.OLLAMA_URL, "model": Config.OLLAMA_MODEL},
+        "behavior": [{k: v for k, v in b.items() if k != "attr"} | {"value": _current(b)} for b in BEHAVIOR],
+        "orb": {"style": orb_style(), "choices": list(ORB_STYLES)},
+        "modes": list(Config.MODES),
     }
+
+
+def orb_style() -> str:
+    """The saved floating-orb style (``classic`` when unset or unknown)."""
+    value = (os.environ.get("FLEXIE_ORB_STYLE", "") or "classic").strip().lower()
+    return value if value in ORB_STYLES else "classic"
+
+
+def _current(spec: dict):
+    attr = spec.get("attr")
+    if attr and hasattr(Config, attr):
+        value = getattr(Config, attr)
+    else:
+        value = os.environ.get(spec["env"], "")
+        if spec["type"] == "choice" and not value:
+            value = spec["choices"][0]
+    if spec["type"] == "bool":
+        return bool(value)
+    return value
+
+
+def _clean_behavior(spec: dict, raw):
+    """Validate one behaviour value against its spec. Returns (python value, env text) or raises ValueError."""
+    kind = spec["type"]
+    if kind == "bool":
+        if isinstance(raw, str):
+            raw = raw.strip().lower() in ("1", "true", "yes", "on")
+        value = bool(raw)
+        return value, "1" if value else "0"
+    if kind == "choice":
+        text = str(raw).strip().lower()
+        if text not in spec["choices"]:
+            raise ValueError("not one of " + ", ".join(spec["choices"]))
+        return text, text
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise ValueError("must be a number")
+    value = int(float(raw)) if kind == "int" else float(raw)
+    if not (spec["min"] <= value <= spec["max"]):
+        raise ValueError(f"must be between {spec['min']} and {spec['max']}")
+    return value, str(value)
 
 
 def apply(payload: dict) -> tuple[int, list[str]]:
@@ -102,8 +182,36 @@ def apply(payload: dict) -> tuple[int, list[str]]:
         elif om.strip() != Config.OLLAMA_MODEL:
             updates["OLLAMA_MODEL"] = om.strip()
 
+    live: dict[str, object] = {}
+    behavior = payload.get("behavior") or {}
+    if isinstance(behavior, dict):
+        for env, raw in behavior.items():
+            spec = _BEHAVIOR_BY_ENV.get(str(env))
+            if spec is None:
+                problems.append(f"unknown setting: {str(env)[:40]}")
+                continue
+            try:
+                value, text = _clean_behavior(spec, raw)
+            except (ValueError, OverflowError) as e:
+                problems.append(f"{spec['label']}: {e}")
+                continue
+            if value != _current(spec):
+                updates[spec["env"]] = text
+                if spec.get("live") and spec.get("attr"):
+                    live[spec["attr"]] = value
+
+    style = payload.get("orb_style")
+    if isinstance(style, str) and style.strip():
+        style = style.strip().lower()
+        if style not in ORB_STYLES:
+            problems.append("orb style is not one of the known styles")
+        elif style != orb_style():
+            updates["FLEXIE_ORB_STYLE"] = style
+
     if not updates:
         return 0, problems
     if not Config.set_many_keys(updates):
         return 0, problems + ["could not write the .env file (check permissions)"]
+    for attr, value in live.items():          # live apply: the next request already sees the new value
+        setattr(Config, attr, value)
     return len(updates), problems

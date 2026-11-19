@@ -94,7 +94,7 @@ _KNOWN_ENV_KEYS = {
     "FLEXIE_VOICE_LISTEN_TIMEOUT", "FLEXIE_CODE_OUTPUT_DIR",
     "FLEXIE_ARTIFACT_BACKUP_DIR", "FLEXIE_JOB_TOKEN_BUDGET",
     "FLEXIE_OPENAI_BRIDGE_ENABLED", "FLEXIE_OPENAI_BRIDGE_PORT",
-    "FLEXIE_CHEAP_FIRST_ENABLED", "FLEXIE_LOCAL_FIRST", "FLEXIE_ENGINE",
+    "FLEXIE_CHEAP_FIRST_ENABLED", "FLEXIE_LOCAL_FIRST", "FLEXIE_ENGINE", "FLEXIE_ORB_STYLE", "FLEXIE_LEARN_PREFERENCES",
     # Job/build pipeline tunables
     "FLEXIE_JOB_MAX_FILES", "FLEXIE_JOB_MAX_FILE_SIZE_KB",
     "FLEXIE_JOB_VENV_TIMEOUT", "FLEXIE_JOB_INSTALL_TIMEOUT",
@@ -279,6 +279,7 @@ class Config:
     OPENAI_BRIDGE_PORT = _env_number("FLEXIE_OPENAI_BRIDGE_PORT", 9899, int)
     CHEAP_FIRST_ENABLED = _env_bool("FLEXIE_CHEAP_FIRST_ENABLED", True)
     LOCAL_FIRST = _env_bool("FLEXIE_LOCAL_FIRST", True)
+    LEARN_PREFERENCES = _env_bool("FLEXIE_LEARN_PREFERENCES", True)   # learn long-term preferences from what you say (core/preferences.py)
     ENGINE = os.getenv("FLEXIE_ENGINE", "auto")
     ARTIFACT_BACKUP_DIR = os.getenv("FLEXIE_ARTIFACT_BACKUP_DIR", data_file(os.path.join("context", "artifact_backups")))
     # Build / Job pipeline tunables (all overridable via .env)

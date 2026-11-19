@@ -60,7 +60,7 @@ def test_resolve_open_file(tmp_path, ctx):
     target.write_text("report")
     ctx.last_path = str(target)
     resolved = ctx.resolve("open it")
-    assert resolved == f"open {target}"
+    assert resolved == f"open_path:{target}"      # opened directly by path, no re-search by name
 
 
 def test_resolve_open_file_with_polite_prefix(tmp_path, ctx):
@@ -68,7 +68,7 @@ def test_resolve_open_file_with_polite_prefix(tmp_path, ctx):
     target.write_text("login")
     ctx.last_path = str(target)
     resolved = ctx.resolve("can you open that for me")
-    assert resolved == f"open {target}"
+    assert resolved == f"open_path:{target}"
 
 
 def test_resolve_generated_artifact_followups(tmp_path, ctx):

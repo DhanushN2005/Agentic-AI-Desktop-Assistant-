@@ -222,7 +222,96 @@ def handle_context_command(orch, cmd, silent=False):
         return handle_write_context_query(orch, cmd)
     if cmd.startswith("continue_context_query:"):
         return handle_continue_context_query(orch, cmd)
+    if cmd == "repeat_last_reply":
+        return handle_repeat_last_reply(orch)
+    if cmd.startswith("rewrite_last_reply:"):
+        return handle_rewrite_last_reply(orch, cmd.split(":", 1)[1])
+    if cmd.startswith("context_ask:"):
+        orch.speak(cmd[len("context_ask:"):])
+        return True
+    if cmd == "context_cancel":
+        orch.speak("Okay, I won't open anything.")
+        return True
+    if cmd.startswith("open_path:"):
+        return handle_open_path(orch, cmd[len("open_path:"):])
+    if cmd.startswith("context_unresolved:"):
+        return handle_context_unresolved(orch, cmd[len("context_unresolved:"):])
     if cmd.startswith(("artifact_open:", "artifact_run:", "artifact_edit:", "artifact_extend:")):
         from core.handlers.code_gen import handle_artifact_command
         return handle_artifact_command(orch, cmd)
     return False
+
+
+def handle_open_path(orch, path):
+    """Open a file or folder the user referred to ("open that file"), after checking it still exists."""
+    import os
+    path = (path or "").strip()
+    if not path or not os.path.exists(path):
+        orch.speak("I can't find that any more. It may have been moved or deleted.")
+        return True
+    try:
+        os.startfile(path)
+    except Exception as e:                      # noqa: BLE001 - report, never crash a voice command
+        orch.speak(f"I couldn't open {os.path.basename(path)}. {type(e).__name__}.")
+        return True
+    orch.ctx.refs.push("folder" if os.path.isdir(path) else "file", path)
+    orch.speak(f"Opened {os.path.basename(path.rstrip(chr(92) + '/')) or path}.")
+    return True
+
+
+_NOTHING_HELP = {
+    "screenshot": "I don't have a screenshot to open. Say 'take a screenshot' first.",
+    "screenshots": "I don't have a screenshot to open. Say 'take a screenshot' first.",
+    "screen shot": "I don't have a screenshot to open. Say 'take a screenshot' first.",
+    "project": "I haven't built a project yet. Ask me to build one.",
+    "app": "I haven't built an app yet. Ask me to build one.",
+    "link": "I haven't opened a page recently.", "page": "I haven't opened a page recently.", "tab": "I haven't opened a page recently.",
+}
+
+
+def handle_context_unresolved(orch, noun):
+    noun = (noun or "").strip()
+    orch.speak(_NOTHING_HELP.get(noun) or (
+        "I'm not sure what you mean. I haven't made, opened or shown anything recently. "
+        "Tell me the name, or ask me to take a screenshot or build something first."))
+    return True
+
+
+def handle_repeat_last_reply(orch):
+    """Say the last thing again, word for word (no language model involved)."""
+    text = getattr(orch.ctx, "last_spoken", None)
+    if not text:
+        orch.speak("I haven't said anything yet.")
+        return True
+    guard = getattr(orch, "tts_guard", None)
+    if guard is not None and hasattr(guard, "forget"):
+        guard.forget(text)               # a deliberate repeat must not be dropped as a duplicate
+    orch.speak(text)
+    return True
+
+
+_REWRITE_PROMPT = {
+    "shorter": "Rewrite the text below in at most two short sentences. Keep every fact and number. Reply with the rewritten text only.",
+    "simpler": "Rewrite the text below in plain, simple words a ten-year-old would follow, in at most three short sentences. Reply with the rewritten text only.",
+}
+
+
+def handle_rewrite_last_reply(orch, how):
+    text = getattr(orch.ctx, "last_spoken", None)
+    if not text:
+        orch.speak("I haven't said anything yet that I could shorten.")
+        return True
+    if len(text.split()) <= 8 and how == "shorter":
+        orch.speak(text)                 # already short
+        return True
+    from core.llm_failure import is_failure_text
+    prompt = _REWRITE_PROMPT.get(how, _REWRITE_PROMPT["shorter"]) + "\n\n<text>\n" + text[:2000] + "\n</text>"
+    try:
+        out = orch.brain.ask(prompt, max_tokens=160)
+    except Exception:                    # noqa: BLE001 - a provider failure must not crash the command
+        out = ""
+    if not out or is_failure_text(out):
+        orch.speak("I couldn't rewrite that right now. Here is what I said: " + text[:200])
+        return True
+    orch.speak(out.strip())
+    return True

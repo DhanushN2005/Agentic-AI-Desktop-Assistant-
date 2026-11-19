@@ -17,6 +17,16 @@ def handle_undo(orch, c):
         orch.speak("Nothing to undo.")
         return True
     action, data = orch.undo_stack.pop()
+    if action == "fn":
+        label, fn, made = data
+        if time.time() - made > 900:
+            orch.speak(f"That was a while ago, so I've left {label} as it is.")
+            return True
+        try:
+            orch.speak(fn() or f"Undid {label}.")
+        except Exception as e:                    # noqa: BLE001 - say what failed instead of staying silent
+            orch.speak(f"I couldn't undo {label}. {type(e).__name__}.")
+        return True
     if action == "mode":
         orch.send_to_ui("MODE", data)
         orch.speak(f"Reverted mode to {data}.")
@@ -43,6 +53,13 @@ def handle_mode(orch, c, silent):
         orch.speak(f"There are {len(Config.MODES)} modes: {_mode_speech()}. Which one would you like?")
         return True
     if mode in Config.MODES:
+        previous = getattr(orch, "current_mode", None)
+        if previous and previous != mode and hasattr(orch, "push_undo"):
+            def _back(prev=previous):
+                orch.current_mode = prev
+                orch.send_to_ui("MODE", prev)
+                return f"Back to {prev} mode."
+            orch.push_undo("the mode change", _back)
         orch.current_mode = mode  # UPDATE INTERNAL MODE
         orch.send_to_ui("MODE", mode)
         orch.speak(f"System optimized for {mode} mode, {MODE_MAP[mode]}")
@@ -113,46 +130,112 @@ def handle_snap(orch, c):
     return True
 
 
+VOLUME_STEP = 10      # one "volume up/down" moves this many points (5 was too small to notice)
+
+
 def handle_volume(orch, c, silent):
+    """Volume up / down / set / mute / unmute. Reads the real value first and the real value back after,
+    so what Flexie says is what Windows now has."""
+    c = (c or "").lower()
     nums = get_numbers(c)
     curr = SystemCtrl.get_volume()
-    is_down = any(x in c for x in ["down", "lower", "decrease", "quieter", "reduce", "drop"])
-    is_up = any(x in c for x in ["up", "raise", "increase", "louder", "higher", "boost"])
+    if curr is None:
+        orch.speak("I can't reach the Windows volume control right now, so I haven't changed anything.")
+        return True
+    muted = bool(SystemCtrl.get_mute())
+    words = set(re.findall(r"[a-z']+", c))
+    is_down = bool(words & {"down", "lower", "decrease", "quieter", "reduce", "drop", "softer"})
+    is_up = bool(words & {"up", "raise", "increase", "louder", "higher", "boost"})
+    big = bool(words & {"lot", "much", "way"})
+    small = bool(words & {"little", "bit", "slightly", "touch"})
+    step = 25 if big else 5 if small else VOLUME_STEP
 
-    if "mute" in c and "unmute" not in c:
-        v = 0
-    elif "unmute" in c:
-        v = 30 if curr == 0 else curr
-    elif nums:
-        amt = nums[0]
-        # Relative adjustment: e.g. "down volume by 20", "volume down 20", "turn volume up by 15"
-        if "by" in c or (is_down and "to" not in c) or (is_up and "to" not in c):
-            if is_down:
-                v = max(0, curr - amt)
-            elif is_up:
-                v = min(100, curr + amt)
-            else:
-                v = max(0, min(100, amt))
-        else:
-            # Absolute target: e.g. "set volume 40", "volume to 70", "volume 50"
-            v = max(0, min(100, amt))
-    elif is_up or "max" in c:
-        v = 100 if "max" in c else min(100, curr + 5)
-    elif is_down or "min" in c:
-        v = 0 if "min" in c else max(0, curr - 5)
+    if "unmute" in words or "un-mute" in c:
+        ok = SystemCtrl.set_mute(False)
+        target = curr if curr > 0 else 30
+        ok = ok and (target == curr or SystemCtrl.set_volume(target))
+    elif "mute" in words:
+        ok = SystemCtrl.set_mute(True)
+        target = curr
     else:
-        v = 50
-    SystemCtrl.set_volume(v)
+        if nums:
+            amt = nums[0]
+            if "by" in words or ((is_down or is_up) and "to" not in words):
+                target = curr - amt if is_down else curr + amt if is_up else amt
+            else:
+                target = amt
+        elif "max" in words or "maximum" in words or "full" in words:
+            target = 100
+        elif "min" in words or "minimum" in words:
+            target = 0
+        elif is_up:
+            target = curr + step
+        elif is_down:
+            target = curr - step
+        else:
+            target = 50
+        target = max(0, min(100, int(target)))
+        ok = SystemCtrl.set_volume(target)
+        if ok and muted and target > 0:
+            SystemCtrl.set_mute(False)               # moving the volume up should be heard
+    if not ok:
+        orch.speak("Windows didn't accept the volume change.")
+        return True
+    if hasattr(orch, "push_undo"):
+        def _back(before=curr, was_muted=muted):
+            SystemCtrl.set_volume(before)
+            SystemCtrl.set_mute(was_muted)
+            return f"Volume is back to {before} percent." if not was_muted else "Muted again."
+        orch.push_undo("the volume change", _back)
+    now = SystemCtrl.get_volume()
+    is_muted = SystemCtrl.get_mute()
     if not silent:
-        orch.speak(f"Volume set to {v} percent.")
+        if is_muted:
+            orch.speak("Muted.")
+        elif "unmute" in words:
+            orch.speak(f"Unmuted. Volume is {now if now is not None else target} percent.")
+        else:
+            orch.speak(f"Volume is {now if now is not None else target} percent.")
     return True
 
 
+BRIGHTNESS_STEP = 15
+
+
 def handle_brightness(orch, c, silent):
-    v = get_numbers(c)[0] if get_numbers(c) else 70
-    SystemCtrl.set_brightness(v)
+    """Brightness up / down / set. "increase brightness" used to set it to 70 whatever it was."""
+    c = (c or "").lower()
+    words = set(re.findall(r"[a-z']+", c))
+    nums = get_numbers(c)
+    curr = SystemCtrl.get_brightness()
+    is_up = bool(words & {"up", "increase", "raise", "brighter", "brighten", "higher", "boost"})
+    is_down = bool(words & {"down", "decrease", "lower", "dim", "dimmer", "darker", "reduce", "drop"})
+    if curr is None and (is_up or is_down) and not nums:
+        orch.speak("I can't read this screen's brightness, so I can't make it brighter or dimmer by a step. Say 'brightness 60' to set it.")
+        return True
+    step = 25 if words & {"lot", "much"} else 8 if words & {"little", "bit", "slightly"} else BRIGHTNESS_STEP
+    if nums:
+        amt = nums[0]
+        target = (curr - amt if is_down else curr + amt) if (curr is not None and "by" in words) else amt
+    elif is_up:
+        target = curr + step
+    elif is_down:
+        target = curr - step
+    elif words & {"max", "maximum", "full"}:
+        target = 100
+    elif words & {"min", "minimum"}:
+        target = 5
+    else:
+        target = 70
+    target = max(0, min(100, int(target)))
+    SystemCtrl.set_brightness(target)
+    if curr is not None and hasattr(orch, "push_undo"):
+        def _back(before=curr):
+            SystemCtrl.set_brightness(before)
+            return f"Brightness is back to {before} percent."
+        orch.push_undo("the brightness change", _back)
     if not silent:
-        orch.speak(f"Brightness set to {v} percent.")
+        orch.speak(f"Brightness is {target} percent.")
     return True
 
 

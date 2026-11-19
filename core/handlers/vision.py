@@ -25,6 +25,8 @@ def handle_vision(orch, intent, c):
             orch.speak("I couldn't take the screenshot. " + str(res).replace("ERROR:", "").strip())
         else:
             orch.ctx.update(screenshot=res)
+            if hasattr(orch, "push_undo"):
+                orch.push_undo("the screenshot", lambda: orch.vision.delete_last_screenshot())
             orch.speak(f"I took a screenshot and saved it as {os.path.basename(res)} in "
                        f"{os.path.dirname(res) or 'your captures folder'}. "
                        "Say 'show screenshot' to open it, or 'analyze my screen' and I'll tell you what's on it.")

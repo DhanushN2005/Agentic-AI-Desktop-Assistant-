@@ -1913,7 +1913,7 @@ class FlexieUI(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(10)
 
-        self.orb = EnhancedFlexieOrb()
+        self.orb = self._make_orb(os.environ.get("FLEXIE_ORB_STYLE", ""))   # classic unless the user picked a style
         self.layout.addWidget(self.orb)
         self.setFixedSize(300, 300)
 
@@ -2226,6 +2226,38 @@ class FlexieUI(QWidget):
         except Exception as _e:
             logging.debug("[interface/ui.py:1845] Swallowed exception: %s: %s", type(_e).__name__, _e)
 
+    @staticmethod
+    def _make_orb(style):
+        """Build the orb for a style name. Unknown names and import errors fall back to the classic orb."""
+        style = (style or "").strip().lower()
+        if style and style != "classic":
+            try:
+                if style in ("v2", "hud"):
+                    from interface.orb_v2 import HudFlexieOrb
+                    return HudFlexieOrb()
+                from interface.orb_variants import STYLES, VariantOrb
+                if style in STYLES:
+                    return VariantOrb(style)
+            except Exception as _e:
+                logging.warning("orb style %r unavailable, using the classic orb: %s", style, _e)
+        return EnhancedFlexieOrb()
+
+    def _swap_orb(self, style):
+        """Change the floating orb's style while Flexie is running (no restart)."""
+        new = self._make_orb(style)
+        old = self.orb
+        new.mode = old.mode
+        self.layout.replaceWidget(old, new)
+        old.timer.stop()
+        old.hide()
+        old.deleteLater()
+        self.orb = new
+        new.show()
+        self._apply_mode_visuals(new.mode)
+        new._view_scale = old._view_scale
+        new._eye_openness = old._eye_openness
+        new.set_state(old.state)
+
     def _change_mode(self, mode, send_udp=True):
         self._apply_mode_visuals(mode)
         self.panel.status_label.setText(f"MODE → {mode.upper()}  •  {FlexieConfig.MODES.get(mode.lower().strip(), FlexieConfig.MODES['professional'])['accent']}")
@@ -2315,6 +2347,11 @@ class FlexieUI(QWidget):
                     except Exception as _e:
                         logging.debug("[interface/ui.py:1874] Swallowed exception: %s: %s", type(_e).__name__, _e)
                     self.panel.status_label.setText(f"MODE → {val.upper()}")
+                elif tag == "ORB_STYLE":
+                    try:
+                        self._swap_orb(val.strip())
+                    except Exception as _e:
+                        logging.warning("could not switch orb style: %s: %s", type(_e).__name__, _e)
                 elif tag == "QUIT":
                     QApplication.quit()
                 elif tag == "APPROVAL_REQUEST":
