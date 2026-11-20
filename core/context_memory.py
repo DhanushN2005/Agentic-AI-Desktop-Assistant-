@@ -142,8 +142,7 @@ class ContextMemory:
                 setattr(self, name, None)
         self.last_generated_content = None
         self._ref_path, self._ref_time = None, 0.0
-        self.refs.clear()
-        self.clear_pending_action()
+        self.clear_pending_action()      # the referent list is not wiped here: each entry keeps its own time limit (core/referents.py)
         self.session_time = time.time()
         if self.mem:
             for k in (*self._VOLATILE_FIELDS, "session_time"):
@@ -385,8 +384,9 @@ class ContextMemory:
         self.sync_system_state()
 
         if time.time() - self.session_time > self.session_duration:
+            # The old short-term registers expire after 5 idle minutes. Do NOT stop resolving: the referent list
+            # ("what it/that/the screenshot means") has its own, longer limits and must keep working.
             self.clear_session()
-            return cmd
 
         c = cmd.lower().strip()
         reference = re.sub(r"^(please|can you|could you|would you|will you|do you)\s+", "", c).strip()
