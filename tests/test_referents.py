@@ -178,3 +178,21 @@ def test_a_path_remembered_from_a_previous_run_can_be_opened_but_never_deleted(f
     ctx = ContextMemory(Mem())
     assert ctx.resolve("open that screenshot") == "show screenshot"        # fine to open after a restart
     assert ctx.resolve("delete that") == "delete that"                      # never offered for deletion
+
+
+def test_referents_survive_the_five_minute_session_expiry_but_keep_their_own_limits(files):
+    ctx = ContextMemory(None)
+    ctx.update(screenshot=files.shot)
+    ctx.session_time -= 400                                       # 6+ idle minutes: the old short-term registers expire...
+    assert ctx.resolve("open that screenshot") == "show screenshot"
+    assert ctx.resolve("open it") == "show screenshot"            # ...but "it" still means the screenshot (20-minute limit)
+    ctx.session_time -= 400
+    ctx.refs.items[-1].t -= 25 * 60                               # past the 20 minutes: a bare "it" is no longer guessed
+    assert ctx.resolve("open it") == "context_unresolved:that"
+    assert ctx.resolve("open that screenshot") == "show screenshot"   # but naming it still finds it
+    ctx.update(last_path=files.doc)
+    assert ctx.resolve("delete that").startswith("delete file ")  # shown a moment ago: fine
+    ctx.session_time -= 400
+    ctx.refs.items[-1].t -= 120                                   # shown two minutes ago (limit is 60 s)
+    ctx._ref_time -= 120
+    assert ctx.resolve("delete that") == "delete that"            # never deletes from stale context
