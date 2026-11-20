@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Flexie OS: a voice and text assistant for your Windows PC</title>
+<meta name="description" content="Flexie OS runs your Windows PC by voice or text: apps, volume, screenshots, your browser, small app builds, mail and reminders. It learns how you like things done, and asks before anything risky. Try the live demo.">
+<meta property="og:title" content="Flexie OS">
+<meta property="og:description" content="A voice and text assistant that runs your Windows PC, understands what you mean by 'that', and remembers your preferences.">
+<meta property="og:image" content="static/preview-home.jpg">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#050b1a">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23168bff'/%3E%3Cpath d='M12 4L5 20h3.6L12 12.6 15.4 20H19z' fill='white'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#050b1a;--surface:#0b1530;--surface2:#101c3a;--line:rgba(91,128,210,.22);--line2:rgba(120,155,235,.38);
+  --tx:#f4f7ff;--muted:#a3b1d0;--dim:#7184ad;--blue:#168bff;--violet:#873bff;--cyan:#08d9f5;--green:#00e59b;--orange:#ff9d2e;
+  --font:'Segoe UI Variable Display','Segoe UI Variable','Segoe UI',system-ui,-apple-system,Roboto,sans-serif;
+  --mono:'Cascadia Mono','SF Mono',Consolas,'Liberation Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scroll-padding-top:84px}
+body{background:radial-gradient(900px 560px at 78% 6%,rgba(22,139,255,.20),transparent 70%),radial-gradient(700px 520px at 0 40%,rgba(135,59,255,.14),transparent 65%),var(--bg);color:var(--tx);font:17px/1.6 var(--font);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:3px;border-radius:6px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--cyan);color:#04111c;padding:8px 14px;border-radius:8px;z-index:100}
+.skip:focus{left:8px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 28px}
+
+/* nav */
+nav.top{position:sticky;top:0;z-index:50;background:rgba(5,11,26,.82);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav.top .wrap{display:flex;align-items:center;gap:26px;height:68px}
+.brand{display:flex;align-items:center;gap:11px;text-decoration:none;font-weight:700;font-size:19px;letter-spacing:-.2px}
+.logo{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:linear-gradient(140deg,var(--blue),var(--violet));box-shadow:0 0 22px rgba(22,139,255,.5)}
+.logo svg{width:19px;height:19px;fill:#fff}
+nav.top ul{display:flex;gap:24px;list-style:none;margin-left:12px;font-size:15px}
+nav.top ul a{color:var(--muted);text-decoration:none}
+nav.top ul a:hover{color:var(--tx)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 22px;border-radius:22px;border:1px solid var(--line2);background:rgba(255,255,255,.05);color:var(--tx);text-decoration:none;font-weight:600;font-size:15px;transition:background .2s,border-color .2s,transform .15s}
+.btn:hover{background:rgba(255,255,255,.1);border-color:var(--cyan)}
+.btn.pri{border:0;background:linear-gradient(135deg,var(--blue),var(--violet));box-shadow:0 10px 30px rgba(22,139,255,.35)}
+.btn.pri:hover{transform:translateY(-1px);filter:brightness(1.1)}
+nav.top .btn{margin-left:auto;height:40px;padding:0 18px}
+
+/* hero */
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center;padding:84px 0 70px}
+h1{font-size:clamp(2.5rem,5.4vw,4.2rem);line-height:1.04;letter-spacing:-.035em;font-weight:680}
+.lead{margin-top:22px;max-width:34em;font-size:1.2rem;color:var(--muted)}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}
+.fine{margin-top:18px;font-size:14px;color:var(--dim)}
+.orbwrap{position:relative;width:min(100%,400px);aspect-ratio:1;justify-self:center}
+.orbwrap i{position:absolute;border-radius:50%;border:1.5px solid rgba(8,217,245,.35)}
+.orbwrap i:nth-child(1){inset:0;border-color:rgba(22,139,255,.7);transform:rotate(-24deg) scaleY(.5)}
+.orbwrap i:nth-child(2){inset:3%;border-color:rgba(135,59,255,.7);transform:rotate(38deg) scaleY(.62)}
+.orbwrap i:nth-child(3){inset:9%;animation:spin 30s linear infinite}
+.orbwrap b{position:absolute;width:11px;height:11px;border-radius:50%;background:var(--cyan);box-shadow:0 0 16px var(--cyan),0 0 4px #fff}
+.orbwrap .o1{top:7%;left:48%}.orbwrap .o2{top:45%;right:2%;background:var(--violet);box-shadow:0 0 16px var(--violet)}.orbwrap .o3{bottom:10%;left:16%;background:var(--green);box-shadow:0 0 16px var(--green)}
+.orbwrap .core{position:absolute;inset:17%;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;
+  background:radial-gradient(circle at 34% 28%,#bcd6ff 0,#2f86ff 20%,#0a1a4a 58%,#030818 100%);box-shadow:0 0 70px rgba(22,139,255,.6),inset 0 0 44px rgba(0,0,0,.55),inset 0 0 0 1.5px rgba(8,217,245,.55);animation:glow 5s ease-in-out infinite}
+.core svg{width:44px;height:44px;fill:#dbe8ff;filter:drop-shadow(0 0 12px rgba(130,180,255,.9))}
+.core strong{font-size:1.25rem;letter-spacing:.02em}
+.core span{font-size:.78rem;color:#d3e0ff;max-width:70%;line-height:1.3}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes glow{50%{box-shadow:0 0 96px rgba(22,139,255,.8),inset 0 0 44px rgba(0,0,0,.55),inset 0 0 0 1.5px rgba(8,217,245,.8)}}
+
+/* sections */
+section{padding:84px 0;border-top:1px solid var(--line)}
+h2{font-size:clamp(1.8rem,3.4vw,2.6rem);line-height:1.12;letter-spacing:-.028em;font-weight:660}
+.sub{margin-top:14px;max-width:38em;color:var(--muted)}
+
+/* what it can do */
+.can{display:grid;grid-template-columns:.8fr 1.2fr;gap:56px;align-items:start}
+.can .intro{position:sticky;top:110px}
+.can .intro p{margin-top:16px;color:var(--muted)}
+.can .intro .note{margin-top:22px;font-size:14px;color:var(--dim);border-left:2px solid var(--line2);padding-left:14px}
+.groups{display:flex;flex-direction:column}
+.group{padding:26px 0;border-bottom:1px solid var(--line)}
+.group:first-child{padding-top:4px}
+.group h3{font-size:1.22rem;font-weight:640;letter-spacing:-.01em}
+.group p{margin-top:8px;color:var(--muted);font-size:1rem;max-width:36em}
+.say{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;list-style:none}
+.say li{font:14px/1 var(--mono);color:#cfe3ff;background:rgba(22,139,255,.12);border:1px solid rgba(22,139,255,.32);border-radius:8px;padding:8px 11px}
+
+/* safety band */
+.safe{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:40px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(145deg,rgba(15,28,58,.9),rgba(5,13,31,.95));overflow:hidden}
+.safe div{padding:26px 24px;border-right:1px solid var(--line)}
+.safe div:last-child{border-right:0}
+.safe h3{font-size:1.02rem;font-weight:640}
+.safe p{margin-top:8px;font-size:.95rem;color:var(--muted);line-height:1.5}
+
+/* preview */
+.shot{margin-top:38px;border:1px solid var(--line2);border-radius:18px;overflow:hidden;background:var(--surface);box-shadow:0 30px 80px rgba(0,0,0,.5),0 0 60px rgba(22,139,255,.14)}
+.shot .bar{display:flex;gap:7px;align-items:center;height:36px;padding:0 16px;border-bottom:1px solid var(--line);background:#07101f;font-size:13px;color:var(--dim)}
+.shot .bar i{width:10px;height:10px;border-radius:50%;background:#2a3858}
+.shot img{display:block;width:100%;height:auto}
+.shotcta{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-top:26px}
+.shotcta span{color:var(--muted);font-size:.98rem}
+
+/* who built this */
+.who{display:grid;grid-template-columns:.9fr 1.1fr;gap:56px;align-items:start}
+.card{border:1px solid var(--line);border-radius:22px;padding:30px;background:linear-gradient(145deg,rgba(15,28,58,.96),rgba(5,13,31,.98));box-shadow:0 14px 40px rgba(0,0,0,.28)}
+.id{display:flex;align-items:center;gap:18px}
+.avatar{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;font-size:1.5rem;font-weight:700;color:var(--cyan);border:2px solid var(--cyan);background:rgba(8,217,245,.1);flex:none}
+.id h3{font-size:1.5rem;letter-spacing:-.02em;line-height:1.2}
+.id p{color:var(--muted);font-size:.98rem}
+.facts{list-style:none;margin-top:24px;display:flex;flex-direction:column;gap:14px}
+.facts li{display:grid;grid-template-columns:20px 1fr;gap:12px;font-size:1rem;color:#dbe6ff}
+.facts li::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--green);margin-top:9px;box-shadow:0 0 10px var(--green)}
+.links{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+.links .btn{height:40px;padding:0 16px;font-size:14px}
+.open{margin-top:20px;font-size:.95rem;color:var(--green)}
+.story p{color:var(--muted);margin-top:16px;max-width:36em}
+.story p:first-of-type{margin-top:18px;font-size:1.08rem;color:#dbe6ff}
+.stack{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px;list-style:none}
+.stack li{font-size:13.5px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:6px 13px}
+.more{margin-top:34px}
+.more h3{font-size:1.1rem;font-weight:640}
+.more ul{list-style:none;margin-top:12px;display:flex;flex-direction:column}
+.more li{padding:12px 0;border-bottom:1px solid var(--line);font-size:.98rem;color:var(--muted)}
+.more li:first-child{border-top:1px solid var(--line)}
+.more a{color:var(--tx);font-weight:600;text-decoration-color:var(--line2);text-underline-offset:3px}
+.more a:hover{text-decoration-color:var(--cyan)}
+
+footer{padding:40px 0 56px;border-top:1px solid var(--line);color:var(--dim);font-size:14px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:12px 28px;justify-content:space-between}
+footer a{color:var(--muted)}
+.flinks{display:flex;gap:22px;flex-wrap:wrap}
+
+@media(max-width:900px){
+  .hero{grid-template-columns:1fr;padding:56px 0 48px;gap:48px}
+  .orbwrap{width:min(100%,300px)}
+  .can,.who{grid-template-columns:1fr;gap:34px}
+  .can .intro{position:static}
+  .safe{grid-template-columns:1fr 1fr}
+  .safe div:nth-child(2){border-right:0}.safe div:nth-child(-n+2){border-bottom:1px solid var(--line)}
+  nav.top ul{display:none}
+  section{padding:60px 0}
+}
+@media(max-width:560px){
+  .wrap{padding:0 20px}
+  .safe{grid-template-columns:1fr}.safe div{border-right:0;border-bottom:1px solid var(--line)}.safe div:last-child{border-bottom:0}
+  .card{padding:22px}
+  .cta .btn{width:100%;justify-content:center}
+}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<nav class="top" aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2L2 21h5.2L12 11.6 16.8 21H22z"/></svg></span>Flexie OS</a>
+    <ul>
+      <li><a href="#can-do">What it can do</a></li>
+      <li><a href="#dashboard">Dashboard</a></li>
+      <li><a href="#who">Who built it</a></li>
+    </ul>
+    <a class="btn pri" href="demo.html">Try the live demo</a>
+  </div>
+</nav>
+
+<main id="main">
+<div class="wrap" id="top">
+  <header class="hero">
+    <div>
+      <h1>Say it, and your PC does it.</h1>
+      <p class="lead">Flexie OS is an assistant that runs on your Windows computer. Tell it by voice or text what you want: it opens apps, changes settings, reads your screen, works in your browser, builds small apps, and remembers how you like things done.</p>
+      <div class="cta">
+        <a class="btn pri" href="demo.html">Try the live demo</a>
+        <a class="btn" href="https://github.com/DhanushN2005/flexie-agentic-assistant">View the code on GitHub</a>
+      </div>
+      <p class="fine">The demo uses sample data and scripted replies. The real Flexie runs on your own PC.</p>
+    </div>
+    <div class="orbwrap" role="img" aria-label="The Flexie OS orb">
+      <i></i><i></i><i></i><b class="o1"></b><b class="o2"></b><b class="o3"></b>
+      <div class="core"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2L2 21h5.2L12 11.6 16.8 21H22z"/></svg><strong>FLEXIE OS</strong><span>Your intelligent control center</span></div>
+    </div>
+  </header>
+</div>
+
+<section id="can-do" aria-labelledby="can-h">
+  <div class="wrap can">
+    <div class="intro">
+      <h2 id="can-h">What Flexie can do</h2>
+      <p>You don't need special commands. Talk the way you would to a person, and Flexie works out what you mean, including what you mean by "that".</p>
+      <p class="note">The lines in blue are real things you can say. Flexie runs on Windows.</p>
+    </div>
+    <div class="groups">
+      <article class="group">
+        <h3>Run your PC</h3>
+        <p>Volume, brightness, apps, files and folders, timers, alarms and reminders, battery and Wi-Fi status. When more than one Chrome window is open, it asks which one you mean.</p>
+        <ul class="say"><li>increase volume</li><li>brightness 40</li><li>take a screenshot</li><li>remind me in 5 minutes to stretch</li></ul>
+      </article>
+      <article class="group">
+        <h3>See your screen</h3>
+        <p>Flexie can look at what is on your screen and explain it in plain words, like an error message or an unfamiliar page.</p>
+        <ul class="say"><li>summarize my screen</li><li>what's wrong on my screen</li><li>read my screen</li></ul>
+      </article>
+      <article class="group">
+        <h3>Work in your browser</h3>
+        <p>With its Chrome extension, Flexie can read, summarize and pull tables from the page you are on. Anything that changes the page, such as a click or typing, waits for your approval first.</p>
+        <ul class="say"><li>summarize this page</li><li>extract tables from this page</li><li>click sign in on this page</li></ul>
+      </article>
+      <article class="group">
+        <h3>Build small apps</h3>
+        <p>Describe an app and Flexie plans it, creates the files, runs the tests and checks, and launches it for you. You can watch each phase on the dashboard.</p>
+        <ul class="say"><li>build me a to-do app</li><li>open the project</li></ul>
+      </article>
+      <article class="group">
+        <h3>Understand what you mean</h3>
+        <p>Flexie keeps track of what it just made or showed, so "that" and "it" make sense. If two things are equally likely, it asks. You can ask it to repeat, shorten or undo.</p>
+        <ul class="say"><li>open that screenshot</li><li>say that again</li><li>make it shorter</li><li>undo that</li></ul>
+      </article>
+      <article class="group">
+        <h3>Remember you</h3>
+        <p>Tell Flexie how you like things and it keeps them, then uses them in its answers. You can see and delete everything it remembers in Settings. It never keeps passwords, keys or card numbers.</p>
+        <ul class="say"><li>I prefer short answers</li><li>call me Sam</li><li>what are my preferences</li></ul>
+      </article>
+      <article class="group">
+        <h3>Pick your AI</h3>
+        <p>Use Groq, Google Gemini, OpenAI, Anthropic, DeepSeek or Mistral, or a model that runs on your own computer with Ollama. Flexie falls back to the next one if a provider fails, and you can switch in Settings without restarting.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="safe-h">
+  <div class="wrap">
+    <h2 id="safe-h">Built to be careful</h2>
+    <p class="sub">An assistant that can control your computer has to earn trust. These are the rules Flexie follows.</p>
+    <div class="safe">
+      <div><h3>It asks first</h3><p>Sending mail, deleting files and changing a web page all wait for your approval.</p></div>
+      <div><h3>Your keys stay home</h3><p>API keys, memory and preferences are stored on your PC, not on a server.</p></div>
+      <div><h3>Local only</h3><p>The dashboard only accepts connections from the computer it runs on, with a private token for each session.</p></div>
+      <div><h3>Web text can't give orders</h3><p>What Flexie reads on a page is treated as information, never as instructions.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="dashboard" aria-labelledby="dash-h">
+  <div class="wrap">
+    <h2 id="dash-h">A dashboard for it all</h2>
+    <p class="sub">See your computer's health, what Flexie has been doing, which AI providers it uses and what they cost, and change how it behaves, all in one place.</p>
+    <div class="shot">
+      <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span style="margin-left:10px">Flexie OS dashboard (sample data)</span></div>
+      <img src="static/preview-home.jpg" width="1500" height="860" alt="The Flexie OS dashboard showing CPU, memory, disk and network usage, system health, the orb, performance trends, recent activity, active services, storage and quick actions." loading="lazy">
+    </div>
+    <div class="shotcta">
+      <a class="btn pri" href="demo.html">Open the interactive demo</a>
+      <span>Type to Flexie, change settings and try the orb styles. Nothing is saved.</span>
+    </div>
+  </div>
+</section>
+
+<section id="who" aria-labelledby="who-h">
+  <div class="wrap who">
+    <div class="card">
+      <div class="id">
+        <div class="avatar" aria-hidden="true">DN</div>
+        <div><h3>Dhanush N</h3><p>AI and full-stack engineer</p></div>
+      </div>
+      <ul class="facts">
+        <li>Software developer intern at Adya AI, working on a live production platform and AI data-analyst tools.</li>
+        <li>National Hackathon Winner (IIT Kharagpur and Shiv Nadar University, January 2026) and three hackathon wins in total.</li>
+        <li>B.Tech in AI and Data Science at Karpagam College of Engineering, CGPA 8.72.</li>
+      </ul>
+      <p class="open">Open to internships and collaborative AI projects.</p>
+      <div class="links">
+        <a class="btn" href="https://dhanushnataraj.netlify.app">Portfolio</a>
+        <a class="btn" href="https://github.com/DhanushN2005">GitHub</a>
+        <a class="btn" href="https://www.linkedin.com/in/dhanushnataraj/">LinkedIn</a>
+      </div>
+    </div>
+    <div class="story">
+      <h2 id="who-h">Who built this</h2>
+      <p>Flexie OS is a project by Dhanush N, who builds LLM-powered tools, from search over documents to voice assistants to 3D learning aids.</p>
+      <p>The idea was an assistant that does things on your computer instead of only talking about them, and that stays honest about what it did and what it can't do. It plans multi-step tasks, checks its own work, and keeps your data on your machine.</p>
+      <ul class="stack" aria-label="Built with">
+        <li>Python</li><li>FastAPI</li><li>PyQt6</li><li>WebSockets</li><li>ChromaDB</li><li>Playwright</li><li>Groq</li><li>Gemini</li><li>Ollama</li>
+      </ul>
+      <div class="more">
+        <h3>More projects</h3>
+        <ul>
+          <li><a href="https://github.com/DhanushN2005/Tnea_Counseling">TNEA Pro AI</a>: an admissions counselling assistant that answers from official brochures and cutoff data.</li>
+          <li><a href="https://github.com/DhanushN2005/Ai-Based-3d---molecule-visualizer">3D Molecule Visualizer</a>: turns molecule coordinates into 3D models with Blender.</li>
+          <li><a href="https://github.com/DhanushN2005/E-waste-deconstructor---digital-twin">E-Waste Deconstructor</a>: finds and classifies e-waste with computer vision and rates how hazardous it is.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Flexie OS demo. Sample data only. Built by Dhanush N.</span>
+    <span class="flinks"><a href="demo.html">Live demo</a><a href="https://github.com/DhanushN2005/flexie-agentic-assistant">Source code</a><a href="https://dhanushnataraj.netlify.app">Portfolio</a></span>
+  </div>
+</footer>
+</body>
+</html>

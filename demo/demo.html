@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Flexie OS (demo)</title>
+<meta name="description" content="Flexie OS: a voice and text desktop AI assistant for Windows. This is a demo of its dashboard with sample data.">
+<meta property="og:title" content="Flexie OS (demo)">
+<meta property="og:description" content="Live demo of the Flexie OS dashboard: system health, activity, AI providers, behavior, memory and orb styles. Sample data only.">
+<meta name="robots" content="index,follow">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23168bff'/%3E%3Cpath d='M12 4L5 20h3.6L12 12.6 15.4 20H19z' fill='white'/%3E%3C/svg%3E">
+<style>
+.demo-pill{padding:7px 14px;border-radius:20px;border:1px solid color-mix(in srgb,var(--orange) 55%,transparent);background:color-mix(in srgb,var(--orange) 12%,transparent);color:var(--orange);font-size:13px;font-weight:600;white-space:nowrap}
+.demo-back{display:flex;align-items:center;gap:8px;padding:11px 14px;border:1px solid var(--border);border-radius:14px;color:var(--muted);text-decoration:none;font-size:14px;margin-top:6px}
+.demo-back:hover{color:var(--tx);border-color:var(--cyan)}
+@media(max-width:767px){.demo-pill{display:none}}
+</style>
+<style>
+:root{
+  --bg:#050b1a; --bg-deep:#020617; --surface:#0b1530; --surface-2:#101c3a; --border:rgba(91,128,210,.20); --border2:rgba(120,155,235,.34);
+  --tx:#f4f7ff; --muted:#9aa9c8; --dim:#62739c; --cyan:#08d9f5; --blue:#168bff; --violet:#873bff; --teal:#00d6b0; --green:#00e59b; --orange:#ff9d2e; --bad:#ff4d6a;
+  --acc:#168bff; --acc2:#873bff; --sc:#08d9f5;
+  --font:Inter,Manrope,'Segoe UI Variable Display','Segoe UI Variable','Segoe UI',system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+canvas{display:block;max-width:100%}
+html,body{height:100%}
+body{background:radial-gradient(900px 560px at 56% 32%,color-mix(in srgb,var(--acc) 18%,transparent),transparent 70%),radial-gradient(700px 520px at 100% 0,color-mix(in srgb,var(--acc2) 16%,transparent),transparent 65%),radial-gradient(640px 480px at 0 100%,color-mix(in srgb,var(--acc) 12%,transparent),transparent 65%),var(--bg);
+  color:var(--tx);font:14px/1.45 var(--font);overflow:hidden}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.app-shell{display:grid;grid-template-columns:232px 1fr;height:100vh}
+/* ============ sidebar */
+.sidebar{display:flex;flex-direction:column;gap:6px;padding:20px 16px 18px;background:linear-gradient(180deg,var(--bg-deep),#030a1c);border-right:1px solid var(--border);z-index:60}
+.brand{display:flex;align-items:center;gap:12px;padding:0 6px 18px;margin-bottom:8px;border-bottom:1px solid var(--border)}
+.logo{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(140deg,var(--blue),var(--violet));box-shadow:0 0 26px color-mix(in srgb,var(--blue) 50%,transparent);flex:none}
+.logo svg{width:23px;height:23px;fill:#fff}
+.brand b{display:block;font-size:19px;font-weight:700;letter-spacing:-.2px;line-height:1.1}
+.brand b em{font-style:normal;font-weight:400;color:var(--muted);font-size:14px;margin-left:4px}
+.brand small{display:block;font-size:11.5px;color:var(--dim);margin-top:3px}
+.nav{position:relative;display:flex;align-items:center;gap:13px;padding:12px 14px;border:0;border-radius:13px;background:transparent;color:var(--muted);text-align:left;font-size:15px;transition:background .2s,color .2s}
+.nav svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.nav:hover{color:var(--tx);background:rgba(255,255,255,.05)}
+.nav[aria-current=page]{color:#fff;background:linear-gradient(90deg,var(--blue),var(--violet));box-shadow:0 8px 26px color-mix(in srgb,var(--blue) 32%,transparent)}
+.nav[aria-current=page]::before{content:"";position:absolute;left:-16px;top:10px;bottom:10px;width:3px;border-radius:3px;background:var(--cyan);box-shadow:0 0 12px var(--cyan)}
+.grow{flex:1}
+.sysok{display:flex;align-items:center;gap:11px;border:1px solid var(--border);border-radius:14px;padding:12px 14px;background:rgba(255,255,255,.03);margin-top:6px}
+.sysok b{display:block;font-size:14px;color:var(--green)}.sysok.off b{color:var(--bad)}
+.sysok small{color:var(--dim);font-size:12px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--dim);flex:none}
+.dot.on{background:var(--green);box-shadow:0 0 12px var(--green)}.dot.off{background:var(--bad);box-shadow:0 0 10px var(--bad)}.dot.busy{background:var(--orange);box-shadow:0 0 12px var(--orange)}
+/* ============ header */
+.main-area{display:flex;flex-direction:column;min-width:0;height:100vh}
+.topbar{display:flex;align-items:center;gap:16px;height:88px;padding:0 26px;border-bottom:1px solid var(--border);flex:none}
+.menu-btn{display:none;width:42px;height:42px;border-radius:12px;border:1px solid var(--border);background:rgba(255,255,255,.04)}
+.menu-btn svg{width:22px;height:22px;stroke:var(--tx);fill:none;stroke-width:1.9;stroke-linecap:round}
+.search{position:relative;flex:0 1 620px}
+.search input{width:100%;height:48px;padding:0 20px 0 50px;border-radius:24px;border:1px solid var(--border);background:rgba(255,255,255,.04);outline:none;transition:border-color .2s,box-shadow .2s}
+.search input::placeholder{color:var(--dim)}
+.search input:focus{border-color:var(--cyan);box-shadow:0 0 0 3px color-mix(in srgb,var(--cyan) 20%,transparent)}
+.search>svg{position:absolute;left:18px;top:14px;width:20px;height:20px;stroke:var(--muted);fill:none;stroke-width:1.8;stroke-linecap:round}
+.pal{position:absolute;left:0;right:0;top:54px;background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:6px;display:none;z-index:70;box-shadow:0 20px 50px rgba(0,0,0,.55)}
+.pal.on{display:block}
+.pal button{display:flex;width:100%;justify-content:space-between;gap:12px;border:0;background:transparent;padding:9px 12px;border-radius:10px;text-align:left;color:var(--tx)}
+.pal button.sel,.pal button:hover{background:color-mix(in srgb,var(--blue) 24%,transparent)}
+.pal small{color:var(--dim)}
+.tools{margin-left:auto;display:flex;align-items:center;gap:14px;position:relative}
+.live{display:flex;align-items:center;gap:9px;padding:8px 16px;border-radius:22px;border:1px solid color-mix(in srgb,var(--green) 40%,transparent);background:color-mix(in srgb,var(--green) 10%,transparent);font-weight:600;font-size:13px;color:var(--green)}
+.live.off{border-color:color-mix(in srgb,var(--bad) 45%,transparent);background:color-mix(in srgb,var(--bad) 10%,transparent);color:var(--bad)}
+.vr{width:1px;height:28px;background:var(--border)}
+.iconbtn{position:relative;width:42px;height:42px;border:0;background:transparent;color:var(--muted);border-radius:12px}
+.iconbtn:hover{background:rgba(255,255,255,.06);color:var(--tx)}
+.iconbtn svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.badge-n{position:absolute;top:2px;right:2px;min-width:18px;height:18px;border-radius:9px;background:var(--bad);font:700 11px/18px var(--font);text-align:center;color:#fff;display:none;padding:0 4px}
+.user{display:flex;align-items:center;gap:10px;padding:4px 8px 4px 4px;border:0;background:transparent;border-radius:26px}
+.user:hover{background:rgba(255,255,255,.05)}
+.user i{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font:700 13px var(--font);font-style:normal;border:1.5px solid var(--cyan);background:color-mix(in srgb,var(--cyan) 14%,transparent);color:var(--cyan)}
+.user span{font-weight:600}
+.user svg{width:16px;height:16px;stroke:var(--muted);fill:none;stroke-width:2;stroke-linecap:round}
+.pop{position:absolute;top:56px;right:0;min-width:270px;background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:8px;display:none;z-index:70;box-shadow:0 22px 54px rgba(0,0,0,.6)}
+.pop.on{display:block}
+.pop h5{font-size:13px;color:var(--muted);padding:8px 10px;font-weight:600}
+.pop button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:10px 12px;border-radius:10px}
+.pop button:hover{background:rgba(255,255,255,.06)}
+.pop .nt{padding:9px 12px;border-radius:10px;font-size:13px}.pop .nt b{display:block;font-weight:500}.pop .nt small{color:var(--dim)}
+/* ============ views */
+.views{flex:1;min-height:0;position:relative}
+.view{position:absolute;inset:0;overflow:auto;padding:22px 26px 26px;display:none}
+#v-home{padding:16px 26px 14px}
+.view.on{display:block}
+.view::-webkit-scrollbar{width:9px}.view::-webkit-scrollbar-thumb{background:var(--border2);border-radius:9px}
+.panel{position:relative;background:linear-gradient(145deg,rgba(15,28,58,.96),rgba(5,13,31,.98));border:1px solid var(--border);border-radius:18px;padding:16px 18px;box-shadow:0 14px 36px rgba(0,0,0,.24);min-width:0}
+.panel h3{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:600;margin-bottom:12px;white-space:nowrap}
+.panel h3>svg{width:21px;height:21px;stroke:var(--cyan);fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.panel h3 .r{margin-left:auto;font-size:13px;font-weight:500}
+.panel h3 .r.link{color:var(--cyan);background:none;border:0;padding:0}
+.pill{padding:3px 12px;border-radius:12px;font-size:12.5px;font-weight:600;background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green)}
+.pill.w{background:color-mix(in srgb,var(--orange) 16%,transparent);color:var(--orange)}.pill.b{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}
+/* ---- KPI */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:14px}
+.kpi{display:flex;gap:12px;height:112px;padding:14px 18px;overflow:hidden}
+.kpi .ic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none;background:color-mix(in srgb,var(--kc) 18%,transparent);color:var(--kc)}
+.kpi .ic svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.kpi .t{font-size:14px;color:var(--muted)}
+.kpi .v{font-size:25px;font-weight:700;letter-spacing:-.4px;font-variant-numeric:tabular-nums;line-height:1.2;margin-top:2px}
+.kpi .d{font-size:12.5px;color:var(--green);font-variant-numeric:tabular-nums;margin-top:2px}.kpi .d.dn{color:var(--orange)}.kpi .d.nt{color:var(--dim)}
+.kpi::after{content:"";position:absolute;right:-30px;bottom:-40px;width:180px;height:140px;background:radial-gradient(closest-side,color-mix(in srgb,var(--kc) 22%,transparent),transparent);pointer-events:none}
+.kpi canvas{position:absolute;right:6px;bottom:6px;width:52%;height:66%;z-index:1;pointer-events:none}
+/* ---- overview row (28 / 25 / 25 / 20) */
+.overview{display:grid;grid-template-columns:28fr 25fr 25fr 20fr;gap:14px;margin-bottom:14px;align-items:stretch}
+.health-body{display:flex;gap:16px;align-items:center}
+.health-body canvas{width:128px;height:128px;flex:none}
+.checks{display:flex;flex-direction:column;gap:11px;flex:1;min-width:0}
+.checks li{list-style:none;display:flex;align-items:center;gap:9px;font-size:13px}
+.checks i{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:var(--green);color:#03150d;font:800 11px var(--font);font-style:normal;flex:none}
+.checks i.w{background:var(--orange)}.checks i.b{background:var(--bad);color:#fff}
+.checks em{font-style:normal;margin-left:auto;color:var(--green);font-weight:600;font-size:12.5px;white-space:nowrap}.checks em.w{color:var(--orange)}.checks em.b{color:var(--bad)}
+.usage{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);position:relative;z-index:1}
+.usage div{font-size:12.5px;color:var(--muted)}.usage b{display:block;font-size:20px;color:var(--tx);font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+.orb-zone{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-width:0;position:relative}
+.orb-wrap{position:relative;width:min(100%,214px);aspect-ratio:1}
+.orb-wrap canvas{position:absolute;inset:0;width:100%;height:100%;border-radius:50%;cursor:pointer;display:none}
+.orb-wrap.gl canvas{display:block}
+.orb{position:absolute;inset:0;border:0;background:none;border-radius:50%;display:block}
+.orb-wrap.gl .orb .rings,.orb-wrap.gl .orb .core{display:none}
+.rings i{position:absolute;border-radius:50%;border:1.5px solid color-mix(in srgb,var(--sc) 55%,transparent);animation:spin 26s linear infinite}
+.rings i:nth-child(1){inset:0;border-color:color-mix(in srgb,var(--blue) 70%,transparent);transform:rotate(-24deg) scaleY(.5);animation:none}
+.rings i:nth-child(2){inset:2%;border-color:color-mix(in srgb,var(--violet) 70%,transparent);transform:rotate(38deg) scaleY(.62);animation:none}
+.rings i:nth-child(3){inset:7%;border-color:color-mix(in srgb,var(--sc) 35%,transparent)}
+.rings b{position:absolute;width:10px;height:10px;border-radius:50%;background:var(--sc);box-shadow:0 0 14px var(--sc),0 0 4px #fff}
+.rings .o1{top:6%;left:48%}.rings .o2{top:44%;right:1%;background:var(--violet);box-shadow:0 0 14px var(--violet)}.rings .o3{bottom:9%;left:16%;background:var(--green);box-shadow:0 0 14px var(--green)}.rings .o4{top:20%;left:3%;width:7px;height:7px}
+.orbit{position:absolute;inset:0;animation:spin 18s linear infinite}
+.orbit.rev{animation-duration:30s;animation-direction:reverse}
+.core{position:absolute;inset:15%;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  background:radial-gradient(circle at 34% 28%,color-mix(in srgb,var(--sc) 55%,#fff) 0,color-mix(in srgb,var(--sc) 70%,#0a1840) 18%,#0a1a4a 55%,#030818 100%);
+  box-shadow:0 0 50px color-mix(in srgb,var(--sc) 55%,transparent),inset 0 0 40px rgba(0,0,0,.55),inset 0 0 0 1.5px color-mix(in srgb,var(--sc) 60%,transparent);animation:glow 4.5s ease-in-out infinite}
+.core svg{width:34px;height:34px;fill:#d8e6ff;filter:drop-shadow(0 0 10px rgba(130,180,255,.9));margin-bottom:2px}
+.core b{font-size:19px;font-weight:700;letter-spacing:.3px}
+.core small{font-size:10.5px;color:#d3e0ff;max-width:80%;line-height:1.25}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes glow{50%{box-shadow:0 0 74px color-mix(in srgb,var(--sc) 70%,transparent),inset 0 0 40px rgba(0,0,0,.55),inset 0 0 0 1.5px color-mix(in srgb,var(--sc) 80%,transparent)}}
+.sysline{display:inline-flex;align-items:center;gap:10px;margin-top:4px;padding:7px 22px;border-radius:24px;border:1px solid var(--border2);background:rgba(8,16,44,.7);font-size:15px;font-weight:600}
+.hint{margin-top:4px;color:var(--muted);font-size:13px;max-width:280px}
+.mind{display:none;flex-wrap:nowrap;justify-content:center;gap:6px;margin-top:4px;max-width:330px}
+.mind.on{display:flex}
+.orb-zone:has(.mind.on) .orb-wrap{width:min(100%,158px)}
+.mind button{display:inline-flex;align-items:center;gap:5px;min-width:0;flex:0 1 auto;padding:3px 9px;border-radius:14px;border:1px solid var(--border2);background:rgba(255,255,255,.05);font-size:12px;color:var(--muted)}
+.mind button:hover{border-color:var(--cyan);color:var(--tx)}
+.mind b{font-weight:600;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:92px}
+.mind small{color:var(--dim);font-size:11.5px;white-space:nowrap}
+.say{margin-top:6px;max-width:300px;padding:7px 12px;border-radius:12px;background:rgba(0,0,0,.3);border:1px solid var(--border);text-align:left;font-size:13px;line-height:1.4;display:none;cursor:pointer;overflow:hidden}
+.say.on{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.say.open{-webkit-line-clamp:unset;display:block;max-height:150px;overflow:auto}
+.askpill{margin-top:8px;display:inline-flex;align-items:center;gap:10px;padding:10px 20px;border-radius:24px;border:0;background:linear-gradient(90deg,var(--blue),var(--violet));font-weight:600;box-shadow:0 8px 26px color-mix(in srgb,var(--blue) 35%,transparent)}
+.askpill svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+/* trends */
+.tabs{display:flex;gap:6px;margin-bottom:8px}
+.tabs button{border:1px solid var(--border);background:transparent;color:var(--muted);padding:5px 12px;border-radius:10px;font-size:13px}
+.tabs button[aria-selected=true]{background:color-mix(in srgb,var(--blue) 24%,transparent);border-color:var(--blue);color:#fff}
+.tstats{display:flex;gap:18px;margin:2px 0 4px;font-size:12.5px;color:var(--muted)}.tstats b{display:block;font-size:18px;font-weight:650;color:var(--tx);font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+.trend{position:relative}.trend canvas{width:100%;height:172px;display:block}
+.tip{position:absolute;pointer-events:none;padding:5px 10px;border-radius:9px;background:var(--surface-2);border:1px solid var(--border2);font-size:13px;display:none;white-space:nowrap;font-weight:600}
+/* activity timeline */
+.timeline{display:flex;flex-direction:column;max-height:236px;overflow:auto;position:relative;padding-right:4px}
+.timeline.all{max-height:480px}
+.ev{position:relative;display:grid;grid-template-columns:28px 1fr;gap:11px;padding:0 0 14px}
+.ev:not(:last-child)::before{content:"";position:absolute;left:13px;top:28px;bottom:0;width:1px;background:var(--border2)}
+.ev i{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font:700 12px var(--font);font-style:normal;background:color-mix(in srgb,var(--ec) 20%,transparent);color:var(--ec);border:1px solid color-mix(in srgb,var(--ec) 45%,transparent)}
+.ev small{display:block;font-size:12px;color:var(--dim)}.ev b{display:block;font-size:13.5px;font-weight:500;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ev span{display:block;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.empty{color:var(--dim);font-size:13.5px;padding:10px 2px}
+/* ---- detail row (40 / 25 / 22) */
+.detail{display:grid;grid-template-columns:40fr 25fr 22fr;gap:14px;margin-bottom:8px;align-items:stretch}
+.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.tbl th{text-align:left;font-weight:500;color:var(--dim);font-size:12px;padding:0 8px 8px}.tbl th:nth-child(n+3),.tbl td:nth-child(n+3){text-align:right}
+.tbl td{padding:6px 8px;border-top:1px solid var(--border);font-variant-numeric:tabular-nums}
+.tbl td:first-child{font-weight:500;white-space:nowrap}
+.st{display:inline-flex;align-items:center;gap:7px}.st.b{color:var(--bad)}.st.w{color:var(--orange)}.st:not(.b):not(.w){color:var(--green)}
+.tw{overflow-x:auto}
+.store{display:flex;gap:16px;align-items:center}
+.store canvas{width:112px;height:112px;flex:none}
+.legend{display:flex;flex-direction:column;gap:9px;font-size:13px;flex:1}
+.legend div{display:flex;align-items:center;gap:8px;color:var(--muted)}.legend i{width:10px;height:10px;border-radius:3px}.legend b{margin-left:auto;color:var(--tx);font-variant-numeric:tabular-nums}
+.sbar{height:10px;border-radius:10px;background:rgba(255,255,255,.1);margin-top:16px;overflow:hidden}
+.sbar i{display:block;height:100%;width:0;border-radius:10px;background:linear-gradient(90deg,var(--blue),var(--violet));box-shadow:0 0 14px color-mix(in srgb,var(--blue) 60%,transparent);transition:width .6s}
+.qa{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}
+.qa button{display:flex;flex-direction:column;align-items:center;gap:7px;padding:12px 6px 10px;border-radius:14px;border:1px solid color-mix(in srgb,var(--qc) 38%,transparent);background:color-mix(in srgb,var(--qc) 9%,transparent);font-size:13px;font-weight:500;transition:transform .15s,box-shadow .15s,border-color .15s}
+.qa button:hover{transform:translateY(-2px);border-color:var(--qc);box-shadow:0 8px 24px color-mix(in srgb,var(--qc) 28%,transparent)}
+.qa svg{width:26px;height:26px;stroke:var(--qc);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+/* ---- assistant bar */
+.assistant{position:sticky;bottom:0;z-index:20;width:min(62%,780px);margin:0 auto;padding:4px 0 0}
+.assistant div{display:flex;align-items:center;gap:12px;padding:5px 7px 5px 22px;border-radius:36px;border:1.5px solid color-mix(in srgb,var(--cyan) 60%,var(--violet));background:rgba(5,11,30,.92);backdrop-filter:blur(10px);box-shadow:0 0 34px color-mix(in srgb,var(--cyan) 22%,transparent),inset 0 0 22px color-mix(in srgb,var(--violet) 10%,transparent)}
+.assistant>div>svg{width:22px;height:22px;fill:var(--cyan);flex:none}
+.assistant input{flex:1;height:42px;border:0;background:transparent;outline:none;font-size:16px;min-width:0}
+.assistant input::placeholder{color:var(--dim)}
+.send{width:46px;height:46px;border-radius:50%;border:0;display:grid;place-items:center;background:linear-gradient(135deg,var(--cyan),var(--violet));box-shadow:0 8px 24px color-mix(in srgb,var(--cyan) 35%,transparent);flex:none}
+.send svg{width:22px;height:22px;fill:#fff;transform:translateX(-1px)}
+.send:hover{filter:brightness(1.12)}
+/* ============ settings */
+.btn{height:40px;padding:0 17px;border-radius:20px;border:1px solid var(--border2);background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:600;font-size:14px;text-decoration:none;color:var(--tx);transition:background .2s,border-color .2s}
+.btn:hover{background:rgba(255,255,255,.1);border-color:var(--cyan)}
+.btn.pri{border:0;background:linear-gradient(135deg,var(--blue),var(--violet));color:#fff;box-shadow:0 8px 24px color-mix(in srgb,var(--blue) 32%,transparent)}
+.btn[disabled]{opacity:.5;cursor:default}
+.set{display:grid;grid-template-columns:230px 1fr;gap:22px;align-items:start;max-width:1280px;padding-bottom:90px}
+.sl{display:flex;flex-direction:column;gap:6px;position:sticky;top:0}
+.sl button{display:flex;gap:12px;align-items:center;padding:12px 14px;border:1px solid transparent;border-radius:13px;background:transparent;color:var(--muted);text-align:left;font-size:14.5px}
+.sl button svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.sl button:hover{color:var(--tx);background:rgba(255,255,255,.05)}
+.sl button[aria-selected=true]{color:#fff;background:color-mix(in srgb,var(--blue) 22%,transparent);border-color:color-mix(in srgb,var(--blue) 50%,transparent)}
+.sl button i{margin-left:auto;font-style:normal;font-size:11px;font-weight:700;background:var(--orange);color:#201400;border-radius:9px;padding:1px 7px;display:none}
+.sec{display:none;flex-direction:column;gap:16px}.sec.on{display:flex}
+.prefs{display:flex;flex-direction:column;gap:6px}
+.pref{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;border:1px solid var(--border);background:rgba(255,255,255,.03)}
+.pref b{flex:1;font-weight:500;overflow-wrap:anywhere}.pref small{color:var(--dim);white-space:nowrap}
+.pref button{border:0;background:transparent;color:var(--muted);width:30px;height:30px;border-radius:8px;font-size:18px}.pref button:hover{background:color-mix(in srgb,var(--bad) 22%,transparent);color:var(--bad)}
+.sec>header h2{font-size:24px;font-weight:650;letter-spacing:-.4px}
+.sec>header p{color:var(--muted);margin-top:4px;max-width:640px}
+.route{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.seg{display:inline-flex;padding:4px;border-radius:14px;background:rgba(255,255,255,.05);border:1px solid var(--border)}
+.seg button{border:0;background:transparent;padding:8px 16px;border-radius:10px;color:var(--muted);font-size:14px}
+.seg button[aria-pressed=true]{background:linear-gradient(135deg,var(--blue),var(--violet));color:#fff;font-weight:600}
+select,.in{height:42px;border-radius:12px;border:1px solid var(--border2);background:rgba(4,9,26,.9);padding:0 13px;outline:none;min-width:0;width:100%}
+select:focus,.in:focus{border-color:var(--cyan);box-shadow:0 0 0 3px color-mix(in srgb,var(--cyan) 20%,transparent)}
+select option{background:var(--surface)}
+.prov{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}
+.pc{display:flex;flex-direction:column;gap:11px}
+.pc .hd{display:flex;align-items:center;gap:11px}.pc .hd b{font-size:16px}
+.badge{margin-left:auto;font-size:12px;font-weight:600;padding:3px 11px;border-radius:11px;background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green)}
+.badge.no{background:rgba(255,255,255,.07);color:var(--dim)}.badge.act{background:color-mix(in srgb,var(--cyan) 20%,transparent);color:var(--cyan)}
+.lbl{font-size:12.5px;color:var(--muted);display:block;margin-bottom:5px}
+.keyrow{display:flex;gap:8px}.keyrow .btn{height:42px;border-radius:12px;padding:0 13px;flex:none}
+.help{font-size:12.5px;color:var(--dim)}
+.grp{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px}
+.bh{display:flex;flex-direction:column;gap:10px}
+.bh .t2{display:flex;align-items:center;gap:10px}.bh .t2 b{font-size:15px;font-weight:600}
+.live2,.rst{margin-left:auto;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:10px}
+.live2{background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green)}.rst{background:color-mix(in srgb,var(--orange) 16%,transparent);color:var(--orange)}
+.rg{display:flex;align-items:center;gap:14px}.rg output{min-width:92px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:6px;background:rgba(255,255,255,.12);outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;border:3px solid var(--cyan);cursor:pointer;box-shadow:0 0 14px var(--cyan)}
+.sw{position:relative;width:48px;height:27px;flex:none}.sw input{position:absolute;inset:0;opacity:0;cursor:pointer;z-index:1}
+.sw i{position:absolute;inset:0;border-radius:14px;background:rgba(255,255,255,.14);transition:.2s}
+.sw i::after{content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;transition:.2s}
+.sw input:checked+i{background:linear-gradient(135deg,var(--blue),var(--violet))}.sw input:checked+i::after{transform:translateX(21px)}
+.sw input:focus-visible+i{outline:2px solid var(--cyan);outline-offset:2px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+.tile{display:flex;flex-direction:column;align-items:center;gap:9px;padding:12px 10px 13px;border-radius:16px;border:1.5px solid var(--border);background:rgba(255,255,255,.03);text-align:center;transition:border-color .2s,background .2s;color:var(--tx)}
+.tile:hover{border-color:var(--border2)}
+.tile[aria-pressed=true]{border-color:var(--cyan);background:color-mix(in srgb,var(--cyan) 11%,transparent);box-shadow:0 0 24px color-mix(in srgb,var(--cyan) 22%,transparent)}
+.tile img,.tile canvas{width:100%;max-width:130px;aspect-ratio:1;border-radius:12px;background:#03071a;display:block}
+.tile b{font-size:14px;font-weight:600}.tile small{color:var(--dim);font-size:12px;line-height:1.25;min-height:15px}
+.tile .mdot{width:44px;height:44px;border-radius:50%;border:3px solid rgba(255,255,255,.18)}
+.kv{display:grid;grid-template-columns:200px 1fr;gap:11px 16px;font-size:14px}.kv dt{color:var(--muted)}.kv dd{display:flex;gap:9px;align-items:center;min-width:0}
+.savebar{position:fixed;left:232px;right:0;bottom:0;display:none;align-items:center;gap:14px;padding:14px 32px;background:rgba(4,8,24,.94);backdrop-filter:blur(16px);border-top:1px solid var(--border2);z-index:40}
+.savebar.on{display:flex}.savebar .msg{margin-right:auto;font-size:14px}.savebar .msg b{color:var(--orange)}
+#toasts{position:fixed;right:20px;top:20px;display:flex;flex-direction:column;gap:10px;z-index:9000}
+.toast{min-width:250px;max-width:380px;background:var(--surface);border:1px solid var(--border2);border-left:3px solid var(--tc,var(--cyan));padding:11px 15px;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.55)}
+.toast b{display:block;font-size:14px}.toast span{font-size:13px;color:var(--muted)}
+.scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:55}
+/* ============ responsive */
+@media(max-width:1439px){.app-shell{grid-template-columns:208px 1fr}.savebar{left:208px}.overview{grid-template-columns:1fr 1fr}.overview .orb-zone{order:-1;grid-column:1/-1}.detail{grid-template-columns:1fr 1fr}.detail .panel:first-child{grid-column:1/-1}.orb-wrap{width:210px}.assistant{width:min(80%,780px)}}
+@media(max-width:1023px){.kpi-grid{grid-template-columns:1fr 1fr}.set{grid-template-columns:1fr}.sl{position:static;flex-direction:row;flex-wrap:wrap}}
+@media(max-width:767px){
+  .app-shell{grid-template-columns:1fr}.sidebar{position:fixed;left:0;top:0;bottom:0;width:260px;transform:translateX(-102%);transition:transform .25s}.sidebar.open{transform:none}.scrim.on{display:block}
+  .menu-btn{display:grid;place-items:center}.topbar{padding:0 14px;gap:10px;height:72px}.live span,.user span,.user svg{display:none}.view{padding:14px 14px 20px}
+  .overview,.detail{grid-template-columns:1fr}.orb-wrap{width:190px}.assistant{width:100%}.savebar{left:0;padding:12px 16px}.kpi-grid{gap:12px}.kv{grid-template-columns:1fr}
+}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="toasts" aria-live="polite"></div>
+<div class="scrim" id="scrim"></div>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar" aria-label="Main">
+    <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2L2 21h5.2L12 11.6 16.8 21H22z"/></svg></div>
+      <div><b>FLEXIE OS<em>v2.0</em></b><small>AI-Powered Business OS</small></div></div>
+    <nav aria-label="Modules">
+      <button class="nav" data-v="home" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg>Home</button>
+      <button class="nav" data-v="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
+    </nav>
+    <div class="grow"></div>
+    <div class="sysok" id="sysok"><i class="dot off" id="sysDot"></i><div><b id="sysTxt">System offline</b><small id="sysSub">Uptime: 0d 0h 0m</small></div></div>
+  </aside>
+  <div class="main-area">
+    <header class="topbar">
+      <button class="menu-btn" id="menuBtn" aria-label="Open menu"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+      <div class="search" role="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="q" placeholder="Search anything... (Ctrl + K)" autocomplete="off" maxlength="300" aria-label="Search settings or run a command">
+        <div class="pal" id="pal" role="listbox"></div></div>
+      <div class="tools">
+        <div class="live off" id="live"><i class="dot off" id="liveDot"></i><span id="liveTxt">Offline</span></div><div class="vr" aria-hidden="true"></div>
+        <button class="iconbtn" id="bell" aria-label="Notifications" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 1 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9M10 20a2 2 0 0 0 4 0"/></svg><i class="badge-n" id="bellN">0</i></button>
+        <button class="user" id="userBtn" aria-haspopup="true" aria-expanded="false"><i id="userI">DU</i><span id="userN">Demo User</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div class="pop" id="popBell" role="menu"><h5>Notifications</h5><div id="notes"></div></div>
+        <div class="pop" id="popUser" role="menu"><h5 id="userMode">Mode</h5><button role="menuitem" id="uSet">Settings</button><button role="menuitem" id="uClassic">About Flexie</button></div>
+      </div>
+    </header>
+    <div class="views">
+
+<!-- ====================================================== HOME -->
+<main class="view on" id="v-home" aria-label="Home">
+  <section class="kpi-grid" aria-label="System usage">
+    <article class="panel kpi" style="--kc:var(--blue)"><div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2.5"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"/></svg></div><div><div class="t">CPU Usage</div><div class="v" id="mCpu">--</div><div class="d nt" id="dCpu">waiting for data</div></div><canvas id="sCpu" aria-hidden="true"></canvas></article>
+    <article class="panel kpi" style="--kc:var(--violet)"><div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 7v10M11 7v10M15 7v10M19 11v2"/></svg></div><div><div class="t">Memory Usage</div><div class="v" id="mRam">--</div><div class="d nt" id="dRam">waiting for data</div></div><canvas id="sRam" aria-hidden="true"></canvas></article>
+    <article class="panel kpi" style="--kc:var(--teal)"><div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></div><div><div class="t">Disk Usage</div><div class="v" id="mDisk">--</div><div class="d nt" id="dDisk">waiting for data</div></div><canvas id="sDisk" aria-hidden="true"></canvas></article>
+    <article class="panel kpi" style="--kc:var(--orange)"><div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0M12 19.5h.01"/></svg></div><div><div class="t">Network I/O</div><div class="v" id="mNet">--</div><div class="d nt" id="dNet">waiting for data</div></div><canvas id="sNet" aria-hidden="true"></canvas></article>
+  </section>
+
+  <section class="overview" aria-label="Overview">
+    <article class="panel"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 5.6a5.5 5.5 0 0 0-8-.4L12 6l-.8-.8a5.5 5.5 0 0 0-7.8 7.8L12 21.6l8.6-8.6a5.5 5.5 0 0 0 .2-7.4z"/></svg>System Health<span class="r pill" id="hPill">Checking</span></h3>
+      <div class="health-body"><canvas id="gHealth" width="128" height="128" role="img" aria-label="Overall health score"></canvas><ul class="checks" id="checks"></ul></div>
+      <div class="usage" aria-label="AI usage"><div>Requests<b id="uCalls">0</b></div><div>Tokens<b id="uTok">0</b></div><div>Est. cost<b id="uCost">$0.00</b></div><div>Reply time<b id="uLat">0.0s</b></div></div>
+</article>
+
+    <article class="orb-zone" aria-label="Flexie assistant">
+      <div class="orb-wrap" id="orbWrap">
+        <canvas id="orb" width="720" height="720" aria-hidden="true"></canvas>
+        <button class="orb" id="orbBtn" aria-label="Wake Flexie">
+          <span class="rings" aria-hidden="true"><i></i><i></i><i></i><span class="orbit"><b class="o1"></b><b class="o3"></b></span><span class="orbit rev"><b class="o2"></b><b class="o4"></b></span></span>
+          <span class="core"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2L2 21h5.2L12 11.6 16.8 21H22z"/></svg><b>FLEXIE OS</b><small>Your Intelligent Control Center</small></span></button>
+      </div>
+      <div class="sysline"><i class="dot" id="stDot"></i><span id="stTxt">Asleep</span></div>
+      <div class="hint" id="hint">Click the orb to wake Flexie</div>
+      <div class="mind" id="mind" aria-label="What Flexie is holding in mind"></div>
+      <div class="say" id="say"></div>
+      <button class="askpill" id="askPill"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Ask me anything...<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </article>
+
+    <article class="panel"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Performance Trends</h3>
+      <div class="tabs" role="tablist" aria-label="Metric"><button role="tab" aria-selected="true" data-k="cpu">CPU</button><button role="tab" aria-selected="false" data-k="ram">Memory</button><button role="tab" aria-selected="false" data-k="disk">Disk</button><button role="tab" aria-selected="false" data-k="net">Network</button></div>
+      <div class="tstats" id="tstats"></div>
+      <div class="trend"><canvas id="tr" aria-label="Performance chart" role="img"></canvas><div class="tip" id="tip"></div></div></article>
+
+    <article class="panel"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Recent Activity<button class="r link" id="feedAll">View All</button></h3><div class="timeline" id="feed"></div></article>
+  </section>
+
+  <section class="detail" aria-label="Details">
+    <article class="panel"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l9 5v10l-9 5-9-5V7zM12 12l9-5M12 12L3 7M12 12v10"/></svg>Active Services<span class="r pill" id="svcN">0 running</span></h3>
+      <div class="tw"><table class="tbl"><thead><tr><th>Service</th><th>Status</th><th>Load</th><th>Response</th></tr></thead><tbody id="svcBody"></tbody></table></div></article>
+    <article class="panel"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>Storage Overview</h3>
+      <div class="store"><canvas id="gStore" width="112" height="112" role="img" aria-label="Disk used"></canvas><div class="legend"><div><i style="background:var(--blue)"></i>Used<b id="stUsed">--</b></div><div><i style="background:rgba(255,255,255,.18)"></i>Free<b id="stFree">--</b></div><div><i style="background:var(--violet)"></i>Total<b id="stTotal">--</b></div></div></div>
+      <div class="sbar" role="img" aria-label="Disk used"><i id="sbarFill"></i></div></article>
+    <article class="panel"><h3><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>Quick Actions</h3>
+      <div class="qa" id="qa">
+        <button style="--qc:#168bff" data-c="system status"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Monitor</button>
+        <button style="--qc:#873bff" data-c="analyze screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Analyze</button>
+        <button style="--qc:#08d9f5" data-p="search for "><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Search</button>
+        <button style="--qc:#00e59b" data-c="what can you do"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg>Assist</button>
+        <button style="--qc:#ff9d2e" data-p="generate code for "><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg>Code</button>
+        <button style="--qc:#ff5fa8" data-go="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>Settings</button>
+      </div></article>
+  </section>
+
+  <form class="assistant" id="askForm" aria-label="Ask Flexie"><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg>
+    <input id="cmd" placeholder="Ask Flexie OS anything..." autocomplete="off" maxlength="1000" aria-label="Ask Flexie OS anything"><button class="send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 11.3L21 3.5c.8-.3 1.5.4 1.2 1.2L14.4 21.5c-.4.9-1.7.8-1.9-.2l-1.6-6.6-6.7-1.6c-1-.2-1.1-1.5-.2-1.9z"/></svg></button></div></form>
+</main>
+
+<!-- ====================================================== SETTINGS -->
+<main class="view" id="v-settings" aria-label="Settings"><div class="set">
+  <div class="sl" id="sl" role="tablist" aria-label="Settings sections">
+    <button role="tab" aria-selected="true" data-s="providers"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.2 6.4L21 10l-6.8 1.6L12 18l-2.2-6.4L3 10l6.8-1.6z"/></svg>AI providers<i id="bProv">0</i></button>
+    <button role="tab" aria-selected="false" data-s="behavior"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>Behavior<i id="bBeh">0</i></button>
+    <button role="tab" aria-selected="false" data-s="appearance"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18c1.7 0 2-1.4 1.2-2.4-.8-1-.2-2.6 1.1-2.6H17a4 4 0 0 0 4-4 9 9 0 0 0-9-9z"/></svg>Appearance<i id="bApp">0</i></button>
+    <button role="tab" aria-selected="false" data-s="memory"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0-6 6c0 2 1 3.4 2 4.5V17a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-3.5c1-1.1 2-2.5 2-4.5a6 6 0 0 0-6-6zM9 21h6"/></svg>Memory</button>
+    <button role="tab" aria-selected="false" data-s="connection"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01M2 9a15 15 0 0 1 20 0"/></svg>Connection</button>
+  </div>
+  <div>
+    <section class="sec on" id="s-providers"><header><h2>AI providers</h2><p>Add keys and choose how Flexie picks a model. Changes apply instantly: the next request uses them, with no restart.</p></header>
+      <div class="panel"><h3>Routing</h3><div class="route"><div class="seg" id="routeSeg"><button data-r="auto" aria-pressed="true">Automatic fallback</button><button data-r="one" aria-pressed="false">Always use one provider</button></div><select id="routeSel" style="max-width:260px" aria-label="Provider to always use"></select></div>
+        <p class="help" style="margin-top:10px" id="routeHelp"></p></div>
+      <div class="prov" id="prov"></div>
+      <div class="panel pc"><div class="hd"><b>Ollama on this computer</b><span class="badge no" id="olBadge">Local</span></div>
+        <div><label class="lbl" for="olUrl">Server address</label><input class="in" id="olUrl" spellcheck="false"></div>
+        <div><label class="lbl" for="olModel">Model</label><input class="in" id="olModel" spellcheck="false"></div></div></section>
+    <section class="sec" id="s-behavior"><header><h2>Behavior</h2><p>Tune how Flexie answers, listens and builds. Each setting says whether it applies instantly or after a restart.</p></header><div class="grp" id="beh"></div></section>
+    <section class="sec" id="s-appearance"><header><h2>Appearance</h2><p>Pick the mode, the floating orb on your desktop, and the orb on this page.</p></header>
+      <div class="panel"><h3>Mode</h3><div class="tiles" id="modeTiles"></div></div>
+      <div class="panel"><h3>Floating orb on your desktop<span class="r help" id="orbNote"></span></h3><div class="tiles" id="floatTiles"></div></div>
+      <div class="panel"><h3>Orb on this page</h3><div class="tiles" id="webTiles"></div></div></section>
+    <section class="sec" id="s-memory"><header><h2>Memory</h2><p>Lasting preferences Flexie has learned from what you said, such as "I prefer short answers" or "call me Sam". They stay on this computer. Delete any you don't want. Turn learning off under Behavior.</p></header>
+      <div class="panel"><h3>What Flexie remembers<span class="r"><button class="btn" id="prefClear" type="button" style="height:34px">Forget everything</button></span></h3>
+        <div class="prefs" id="prefList"><div class="empty">Nothing yet. Say something like "I prefer short answers".</div></div></div></section>
+    <section class="sec" id="s-connection"><header><h2>Connection</h2><p>How this page talks to Flexie.</p></header>
+      <div class="panel"><dl class="kv" id="kv"></dl><div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap"><button class="btn" id="chkBtn">Check connection</button><a class="btn" href="index.html">About Flexie</a></div></div></section>
+  </div>
+</div></main>
+    </div>
+  </div>
+</div>
+<div class="savebar" id="savebar"><div class="msg" id="saveMsg" aria-live="polite"></div><button class="btn" id="discard">Discard</button><button class="btn pri" id="save">Save and apply</button></div>
+
+<script>
+'use strict';
+var WS_URL = 'ws://localhost:8765', API = 'http://127.0.0.1:8768';
+var AUTH_TOKEN = '{{AUTH_TOKEN}}', TOKEN_OK = AUTH_TOKEN.length > 0 && AUTH_TOKEN.indexOf('{{') !== 0, DEMO = true;   /* demo build: always sample data, never connects anywhere */
+var $ = function (id) { return document.getElementById(id); };
+function h(tag, props) {                                  // tiny DOM builder: values are always set as text, never parsed as HTML
+  var n = document.createElement(tag); props = props || {};
+  for (var k in props) { if (k === 'class') n.className = props[k]; else if (k === 'text') n.textContent = props[k]; else if (k.slice(0, 2) === 'on') n[k] = props[k]; else n.setAttribute(k, props[k]); }
+  for (var i = 2; i < arguments.length; i++) { var c = arguments[i]; if (c != null) n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); }
+  return n;
+}
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function fmt(n) { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n)); }
+function toast(t, m, c, ms) { var d = h('div', { class: 'toast' }, h('b', { text: t }), m ? h('span', { text: m }) : null); d.style.setProperty('--tc', c || 'var(--cyan)'); $('toasts').appendChild(d); setTimeout(function () { d.remove(); }, ms || 3800); }
+function rgba(hex, a) { var n = parseInt(hex.replace('#', ''), 16); return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; }
+function hexRgb(x) { var n = parseInt(x.replace('#', ''), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; }
+
+/* ---------------------------------------------------------------- tables */
+var MODES = { professional: ['#168bff', '#873bff', 'Everyday balance'], developer: ['#00e59b', '#0a9d6a', 'Code focused'], hacker: ['#ff3355', '#8a0f26', 'Terse and fast'], minimal: ['#c7ccd6', '#6f7788', 'Quiet and short'], focus: ['#a970ff', '#5b2ea6', 'Fewer interruptions'] };
+var STATES = { SLEEP: ['Asleep', '#5a6a96', 'Click the orb to wake Flexie'], IDLE: ['System Active', null, 'Click to start a new task or ask a question'], WAKE: ['Listening', '#08d9f5', 'Go ahead, I am listening'], LISTENING: ['Listening', '#08d9f5', 'Go ahead, I am listening'],
+  PROCESSING: ['Thinking', '#ff9d2e', 'Working on your request'], WORKING: ['Working', '#00e59b', 'Running your task'], SPEAKING: ['Speaking', '#ff3fa4', 'Flexie is replying'], ERROR: ['Needs attention', '#ff4d6a', 'Something went wrong. Check Recent Activity'], SUCCESS: ['Done', '#b070ff', 'All done'] };
+var curMode = 'professional', curState = 'SLEEP', ws = null, wsAuthed = false, apiOk = null, apiMs = null, apiToken = '', t0 = Date.now(), snap = null, usage = { summary: {}, recent_commands: [] };
+var mind = [], mindAt = 0, mcp = [], HMAX = 90, hist = { cpu: [], ram: [], disk: [], net: [] }, events = [], unseen = 0, last = {}, tab = 'cpu';
+var TABS = { cpu: ['CPU', '#168bff', 100, '%'], ram: ['Memory', '#873bff', 100, '%'], disk: ['Disk', '#00d6b0', 100, '%'], net: ['Network', '#ff9d2e', 0, ' MB/s'] };
+
+/* ---------------------------------------------------------------- charts */
+function cv(c) {
+  if (!c._h && c.clientHeight > 0) { c._h = c.clientHeight; c.style.height = c._h + 'px'; }   // a bitmap larger than its box must never feed back into layout (it grew on screens with display scaling)
+  var d = Math.min(window.devicePixelRatio || 1, 2), w = c.clientWidth || 200, hh = c._h || c.clientHeight || 100; if (c.width !== Math.round(w * d) || c.height !== Math.round(hh * d)) { c.width = Math.round(w * d); c.height = Math.round(hh * d); } var x = c.getContext('2d'); x.setTransform(d, 0, 0, d, 0, 0); x.clearRect(0, 0, w, hh); return { x: x, w: w, h: hh }; }
+function smooth(x, pts) { x.beginPath(); x.moveTo(pts[0][0], pts[0][1]); for (var i = 1; i < pts.length; i++) { var mx = (pts[i - 1][0] + pts[i][0]) / 2, my = (pts[i - 1][1] + pts[i][1]) / 2; x.quadraticCurveTo(pts[i - 1][0], pts[i - 1][1], mx, my); } x.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]); }
+function spark(c, data, col, max) {
+  var k = cv(c), x = k.x; if (data.length < 2) return; max = max || Math.max.apply(null, data.concat([1])) * 1.1;
+  var pts = data.slice(-40).map(function (v, i, a) { return [(k.w - 8) * i / (a.length - 1), k.h - 6 - (k.h - 14) * Math.min(v, max) / max]; });
+  var g = x.createLinearGradient(0, 0, 0, k.h); g.addColorStop(0, rgba(col, .34)); g.addColorStop(1, rgba(col, 0));
+  smooth(x, pts); x.lineTo(pts[pts.length - 1][0], k.h); x.lineTo(0, k.h); x.closePath(); x.fillStyle = g; x.fill();
+  smooth(x, pts); x.strokeStyle = col; x.lineWidth = 2.2; x.lineCap = 'round'; x.shadowColor = col; x.shadowBlur = 8; x.stroke(); x.shadowBlur = 0;
+  var lp = pts[pts.length - 1]; x.fillStyle = rgba(col, .25); x.beginPath(); x.arc(lp[0], lp[1], 6, 0, 6.3); x.fill(); x.fillStyle = '#fff'; x.beginPath(); x.arc(lp[0], lp[1], 2.6, 0, 6.3); x.fill();
+}
+function ring(c, pct, col, big, small) {
+  var k = cv(c), x = k.x, cx = k.w / 2, cy = k.h / 2, R = cx - 11; x.lineWidth = 12; x.lineCap = 'round';
+  x.strokeStyle = 'rgba(255,255,255,.09)'; x.beginPath(); x.arc(cx, cy, R, 0, 6.3); x.stroke();
+  var f = Math.max(0, Math.min(100, pct)) / 100; if (f > 0) { var g = x.createLinearGradient(0, 0, k.w, k.h); g.addColorStop(0, col[0]); g.addColorStop(1, col[1]); x.strokeStyle = g; x.shadowColor = col[0]; x.shadowBlur = 13; x.beginPath(); x.arc(cx, cy, R, -Math.PI / 2 + .1, -Math.PI / 2 + .1 + (6.2832 - .2) * f); x.stroke(); x.shadowBlur = 0; }
+  x.fillStyle = '#f4f7ff'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.font = '700 28px ' + css('--font'); x.fillText(big, cx, cy - 6); x.fillStyle = '#9aa9c8'; x.font = '12px ' + css('--font'); x.fillText(small, cx, cy + 18);
+}
+var trendPts = null, hoverIdx = -1;
+function trends() {
+  var c = $('tr'), k = cv(c), x = k.x, T = TABS[tab], data = hist[tab], pad = { l: 38, r: 12, t: 10, b: 22 }, W = k.w - pad.l - pad.r, H = k.h - pad.t - pad.b;
+  var max = T[2] || Math.max(5, Math.ceil(Math.max.apply(null, data.concat([1])) * 1.25 / 5) * 5);
+  x.font = '11.5px ' + css('--font'); x.textBaseline = 'middle'; x.textAlign = 'right';
+  for (var i = 0; i <= 4; i++) { var y = pad.t + H * i / 4; x.strokeStyle = i === 4 ? 'rgba(255,255,255,.12)' : 'rgba(255,255,255,.05)'; x.setLineDash(i === 4 ? [] : [3, 5]); x.beginPath(); x.moveTo(pad.l, y); x.lineTo(k.w - pad.r, y); x.stroke(); x.setLineDash([]); x.fillStyle = '#7d8db8'; x.fillText(Math.round(max * (1 - i / 4)) + (T[2] ? '%' : ''), pad.l - 8, y); }
+  x.textAlign = 'center'; var mins = Math.round(HMAX * 6 / 60); [mins + 'm ago', Math.round(mins / 2) + 'm', 'now'].forEach(function (t, j) { x.fillStyle = '#7d8db8'; x.fillText(t, pad.l + W * j / 2, k.h - 7); });
+  trendPts = data.map(function (v, i) { return [pad.l + W * (HMAX - data.length + i) / (HMAX - 1), pad.t + H * (1 - Math.min(max, v) / max)]; });
+  if (data.length < 2) { x.fillStyle = '#7d8db8'; x.fillText('Waiting for live data...', k.w / 2, k.h / 2); return; }
+  var base = pad.t + H, g = x.createLinearGradient(0, pad.t, 0, base); g.addColorStop(0, rgba(T[1], .38)); g.addColorStop(.7, rgba(T[1], .08)); g.addColorStop(1, rgba(T[1], 0));
+  smooth(x, trendPts); x.lineTo(trendPts[trendPts.length - 1][0], base); x.lineTo(trendPts[0][0], base); x.closePath(); x.fillStyle = g; x.fill();
+  var lg = x.createLinearGradient(pad.l, 0, k.w - pad.r, 0); lg.addColorStop(0, rgba(T[1], .55)); lg.addColorStop(1, T[1]);
+  smooth(x, trendPts); x.strokeStyle = lg; x.lineWidth = 2.6; x.lineJoin = 'round'; x.lineCap = 'round'; x.shadowColor = T[1]; x.shadowBlur = 12; x.stroke(); x.shadowBlur = 0;
+  var hi = hoverIdx >= 0 && hoverIdx < trendPts.length ? hoverIdx : trendPts.length - 1, hp = trendPts[hi];
+  if (hoverIdx >= 0) { x.strokeStyle = 'rgba(255,255,255,.22)'; x.lineWidth = 1; x.beginPath(); x.moveTo(hp[0], pad.t); x.lineTo(hp[0], base); x.stroke(); }
+  x.fillStyle = rgba(T[1], .22); x.beginPath(); x.arc(hp[0], hp[1], 9, 0, 6.3); x.fill(); x.fillStyle = '#050b1a'; x.strokeStyle = '#fff'; x.lineWidth = 2; x.beginPath(); x.arc(hp[0], hp[1], 4, 0, 6.3); x.fill(); x.stroke();
+  var v = data[hi], txt = (T[2] ? v.toFixed(1) : v.toFixed(2)) + T[3].trim(); x.font = '600 12px ' + css('--font'); var bw = x.measureText(txt).width + 18, bx = Math.max(pad.l, Math.min(k.w - bw - 4, hp[0] - bw / 2)), by = hp[1] > pad.t + 40 ? hp[1] - 34 : hp[1] + 14;
+  x.fillStyle = '#101c3a'; x.strokeStyle = rgba(T[1], .6); x.lineWidth = 1; x.beginPath(); x.roundRect(bx, by, bw, 22, 8); x.fill(); x.stroke(); x.fillStyle = '#f4f7ff'; x.fillText(txt, bx + bw / 2, by + 11.5);
+  var avg = data.reduce(function (a, b) { return a + b; }, 0) / data.length, peak = Math.max.apply(null, data), u = T[2] ? '%' : ' MB/s', f = function (n) { return (T[2] ? n.toFixed(1) : n.toFixed(2)) + u; }, st = $('tstats'); st.replaceChildren();
+  [['Now', data[data.length - 1]], ['Average', avg], ['Peak', peak]].forEach(function (r) { st.appendChild(h('div', {}, r[0], h('b', { text: f(r[1]) }))); });
+}
+$('tr').addEventListener('mousemove', function (e) {
+  if (!trendPts || !trendPts.length) return; var r = this.getBoundingClientRect(), mx = e.clientX - r.left, best = 0;
+  for (var i = 0; i < trendPts.length; i++) if (Math.abs(trendPts[i][0] - mx) < Math.abs(trendPts[best][0] - mx)) best = i;
+  hoverIdx = best; var secs = (trendPts.length - 1 - best) * 6, t = $('tip'); t.textContent = secs ? (secs >= 60 ? Math.round(secs / 60) + ' min ago' : secs + ' s ago') : 'now'; t.style.display = 'block'; t.style.left = Math.min(r.width - 90, Math.max(0, trendPts[best][0] - 30)) + 'px'; t.style.top = '-4px'; trends();
+});
+$('tr').addEventListener('mouseleave', function () { $('tip').style.display = 'none'; hoverIdx = -1; trends(); });
+document.querySelectorAll('.tabs button').forEach(function (b) { b.onclick = function () { tab = b.dataset.k; document.querySelectorAll('.tabs button').forEach(function (x) { x.setAttribute('aria-selected', x === b ? 'true' : 'false'); }); trends(); }; });
+
+/* ---------------------------------------------------------------- orb: CSS/SVG rings by default, optional shader styles on one hidden GL canvas */
+var HEAD = ['precision highp float;', 'uniform vec2 uRes; uniform float uT, uE; uniform vec3 uC1, uC2;',
+  'float h(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }',
+  'float n(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f); return mix(mix(h(i),h(i+vec2(1.0,0.0)),f.x), mix(h(i+vec2(0.0,1.0)),h(i+vec2(1.0,1.0)),f.x), f.y); }',
+  'float fbm(vec2 p){ float a=0.5, s=0.0; for(int i=0;i<4;i++){ s+=a*n(p); p=p*2.03+vec2(1.7,9.2); a*=0.5; } return s; }'].join('\n');
+function fin(body) { return HEAD + '\nvoid main(){ vec2 uv=(gl_FragCoord.xy-0.5*uRes)/uRes.y; float r=length(uv); vec3 col=vec3(0.0);\n' + body + '\n gl_FragColor=vec4(pow(1.0-exp(-col*1.3),vec3(0.95)),1.0); }'; }
+var WEB = [
+ { id: 'rings', name: 'Orbit rings', note: 'Default, no GPU needed' },
+ { id: 'glass', name: 'Glass sphere', note: 'Shader', src: fin([
+  'float R=.27*(1.0+.03*uE*sin(uT*8.0)); col+=uC2*exp(-max(r-R,0.0)*6.0)*.5*(.6+uE);',
+  'if(r<R){ vec3 nn=vec3(uv/R, sqrt(max(0.0,1.0-r*r/(R*R)))); vec3 L=normalize(vec3(-.5,.6,.65)); float d=max(dot(nn,L),0.0);',
+  ' float sw=fbm(nn.xy*3.2+vec2(uT*.22,-uT*.16)+fbm(nn.xy*2.0+uT*.1)*1.5); vec3 base=mix(uC2*.55,uC1,sw);',
+  ' col=base*(.22+.95*d)+vec3(pow(max(dot(reflect(-L,nn),vec3(0.,0.,1.)),0.0),30.0)); col+=uC1*pow(1.0-nn.z,2.5)*.9; col+=vec3(1.0)*exp(-length(uv-vec2(-.09,.1))*18.0)*.6; }',
+  'col+=uC1*exp(-pow((r-R)/.004,2.0))*.9;' ].join('\n')) },
+ { id: 'ribbons', name: 'Voice ribbons', note: 'Shader', src: fin([
+  'float a=atan(uv.y,uv.x);',
+  'for(int i=0;i<4;i++){ float fi=float(i); float rk=.22+fi*.012; float w=.0045; float amp=(.012+.03*uE)*(1.0+fi*.3);',
+  ' float rr=rk+amp*sin(a*(3.0+fi)+uT*(1.4+fi*.6)*(1.0+uE))+amp*.5*sin(a*(5.0+fi)-uT*1.9); float d=abs(r-rr); col+=mix(uC1,uC2,fi/3.0)*(exp(-d*d/(w*w))*1.3+exp(-d*d/(w*w*40.0))*.28); }',
+  'col+=mix(uC1,uC2,.5)*exp(-r*6.0)*.35*(.5+uE);' ].join('\n')) },
+ { id: 'globe', name: 'Dot globe', note: 'Shader', src: fin([
+  'float R=.3; col+=uC2*exp(-max(r-R,0.0)*6.0)*.4;',
+  'if(r<R){ vec3 nn=vec3(uv/R, sqrt(max(0.0,1.0-r*r/(R*R)))); float ay=uT*.4; vec3 q=vec3(nn.x*cos(ay)+nn.z*sin(ay), nn.y, -nn.x*sin(ay)+nn.z*cos(ay));',
+  ' float lat=asin(clamp(q.y,-1.0,1.0)); float lon=atan(q.x,q.z); float rows=24.0; float st=3.14159/rows; float li=floor(lat/st+.5); float latc=li*st;',
+  ' float cols=floor(max(5.0,rows*2.0*cos(latc))); float sl=6.28318/cols; float oi=floor(lon/sl+.5); float lonc=oi*sl;',
+  ' vec2 dd=vec2((lon-lonc)*cos(latc),lat-latc); float dist=length(dd)/st; float dm=smoothstep(.36,.2,dist); float wave=.5+.5*sin(latc*6.0-uT*3.0);',
+  ' col+=mix(uC2,uC1,wave)*dm*(.3+1.1*uE*wave+.55*nn.z)*1.4; col+=uC2*.05; }',
+  'col+=uC1*exp(-abs(r-R)*45.0)*.4;' ].join('\n')) },
+ { id: 'lightning', name: 'Plasma ball', note: 'Shader', src: fin([
+  'float R=.34; float a=atan(uv.y,uv.x); col+=uC2*exp(-r*7.0)*1.3+vec3(1.0)*exp(-r*30.0)*.9;',
+  'for(int i=0;i<7;i++){ float fi=float(i); float a0=fi*.8976+uT*.12; float wob=(fbm(vec2(r*7.0,uT*1.6+fi*3.1))-.5)*(1.8*r+.2)*(.6+uE);',
+  ' float da=a-(a0+wob); da=mod(da+3.14159,6.28318)-3.14159; float d=abs(da)*r; float m=smoothstep(R,R-.05,r)*smoothstep(.0,.03,r);',
+  ' col+=(mix(uC1,vec3(1.0),.55)*exp(-d*d/(.0028*.0028))*1.3+uC2*exp(-d*d/(.018*.018))*.25)*m; }',
+  'col+=uC1*exp(-pow((r-R)/.006,2.0))*.7+uC2*exp(-max(r-R,0.0)*8.0)*.25;' ].join('\n')) },
+ { id: 'galaxy', name: 'Spiral galaxy', note: 'Shader', src: fin([
+  'float a=atan(uv.y,uv.x); float ang=a*2.0-r*13.0+uT*.6; float arm=pow(.5+.5*cos(ang),2.4);',
+  'float dens=arm*exp(-r*4.2)*(.45+fbm(vec2(cos(a),sin(a))*2.5+vec2(uT*.1,r*10.0)))*smoothstep(.46,.2,r);',
+  'col+=mix(uC2,uC1,exp(-r*7.0))*dens*2.6; col+=vec3(1.0,.92,.8)*exp(-r*22.0)*(1.4+uE*.5);',
+  'vec2 g=floor(uv*90.0); col+=vec3(step(.993,h(g))*(.4+.6*h(g+3.0)))*smoothstep(.5,.1,r);' ].join('\n')) },
+ { id: 'hex', name: 'Hex sphere', note: 'Shader', src: [HEAD,
+  'vec4 hexc(vec2 p){ vec2 r=vec2(1.0,1.7320508); vec2 hh=r*.5; vec2 a=mod(p,r)-hh; vec2 b=mod(p-hh,r)-hh; vec2 gv=dot(a,a)<dot(b,b)?a:b; return vec4(gv,p-gv); }',
+  'float hexd(vec2 p){ p=abs(p); return max(dot(p,vec2(.5,.8660254)),p.x); }',
+  'void main(){ vec2 uv=(gl_FragCoord.xy-0.5*uRes)/uRes.y; float r=length(uv); vec3 col=vec3(0.0); float R=.3; col+=uC2*exp(-max(r-R,0.0)*6.0)*.35;',
+  ' if(r<R){ vec3 nn=vec3(uv/R,sqrt(max(0.0,1.0-r*r/(R*R)))); vec2 p=nn.xy/(1.0+nn.z)*3.2; float ca=cos(uT*.2), sa=sin(uT*.2); p=mat2(ca,-sa,sa,ca)*p;',
+  '  vec4 hc=hexc(p); float hd=hexd(hc.xy); float line=smoothstep(.42,.5,hd); float ph=h(hc.zw)*6.28+uT*(1.5+uE*2.0); float node=exp(-dot(hc.xy,hc.xy)*40.0)*(.5+.5*sin(ph));',
+  '  float travel=smoothstep(.85,1.0,sin(hc.z*1.3+hc.w*.9-uT*3.0*(.5+uE)))*line; col+=uC1*line*(.35+.5*nn.z)+uC1*node*1.1*(.6+uE)+vec3(1.0)*travel*.8; col+=uC2*.08*(1.0-nn.z); col+=uC1*pow(1.0-nn.z,3.0)*.6; }',
+  ' col+=uC1*exp(-abs(r-R)*50.0)*.35; gl_FragColor=vec4(pow(1.0-exp(-col*1.3),vec3(0.95)),1.0); }'].join('\n') },
+ { id: 'radar', name: 'Radar scope', note: 'Shader', src: fin([
+  'float R=.34; float a=atan(uv.y,uv.x); float inside=smoothstep(R+.004,R,r); col+=uC2*.05*inside;',
+  'for(int k=1;k<5;k++){ float rk=R*float(k)/4.0; col+=uC1*exp(-pow((r-rk)/.0025,2.0))*(k==4?1.0:.35); }',
+  'col+=uC1*(exp(-pow(uv.x/.0018,2.0))+exp(-pow(uv.y/.0018,2.0)))*.25*inside;',
+  'float tick=smoothstep(.9,1.0,abs(sin(a*36.0)))*smoothstep(R+.02,R+.008,r)*smoothstep(R-.006,R+.002,r); col+=uC1*tick*.8;',
+  'float sw=-uT*1.6; float da=mod(sw-a,6.28318); col+=uC1*exp(-da*2.6)*inside*1.1+uC1*exp(-pow(da/.012,2.0))*inside*.8;',
+  'for(int i=0;i<6;i++){ float fi=float(i); float ba=h(vec2(fi,1.0))*6.28318; float br=R*(.25+.7*h(vec2(fi,2.0))); vec2 bp=vec2(cos(ba),sin(ba))*br; float since=mod(sw-ba,6.28318); float fl=max(0.0,1.0-since/3.5);',
+  ' col+=vec3(1.0)*exp(-dot(uv-bp,uv-bp)/(.006*.006))*fl*1.4; }',
+  'col+=vec3(1.0)*exp(-r*70.0)*.8+uC1*exp(-r*18.0)*.25*(.6+uE);' ].join('\n')) }
+];
+var webStyle = 'rings'; try { webStyle = localStorage.getItem('flexieWebOrb2') || 'rings'; } catch (e) { /* storage blocked */ }
+if (!WEB.some(function (w) { return w.id === webStyle; })) webStyle = 'rings';
+var stage = document.createElement('canvas'), gl = null, progs = {}, orbCol = [.09, .85, .96], orbCur = [.09, .85, .96], orbE = 0, orbT = 0, orbLast = 0;
+function glInit() { gl = stage.getContext('webgl', { antialias: false, preserveDrawingBuffer: true }); if (!gl) return; var b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW); }
+function prog(id) {
+  if (progs[id] !== undefined) return progs[id]; var w = WEB.filter(function (x) { return x.id === id; })[0]; if (!w || !w.src || !gl) return (progs[id] = null);
+  function sh(t, s) { var o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return gl.getShaderParameter(o, gl.COMPILE_STATUS) ? o : null; }
+  var v = sh(gl.VERTEX_SHADER, 'attribute vec2 p; void main(){ gl_Position=vec4(p,0.,1.); }'), f = sh(gl.FRAGMENT_SHADER, w.src); if (!v || !f) return (progs[id] = null);
+  var p = gl.createProgram(); gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p); var u = {}; ['uRes', 'uT', 'uE', 'uC1', 'uC2'].forEach(function (n) { u[n] = gl.getUniformLocation(p, n); }); return (progs[id] = { p: p, u: u });
+}
+function drawStyle(id, size, T, E, c1) {
+  var pr = prog(id); if (!pr) return false; if (stage.width !== size) { stage.width = size; stage.height = size; }
+  gl.useProgram(pr.p); var pl = gl.getAttribLocation(pr.p, 'p'); gl.enableVertexAttribArray(pl); gl.vertexAttribPointer(pl, 2, gl.FLOAT, false, 0, 0); gl.viewport(0, 0, size, size);
+  gl.uniform2f(pr.u.uRes, size, size); gl.uniform1f(pr.u.uT, T); gl.uniform1f(pr.u.uE, E); gl.uniform3f(pr.u.uC1, c1[0], c1[1], c1[2]); gl.uniform3f(pr.u.uC2, c1[0] * .45, c1[1] * .45, Math.min(1, c1[2] * .55 + .12)); gl.drawArrays(gl.TRIANGLES, 0, 3); return true;
+}
+function orbFrame(now) {
+  requestAnimationFrame(orbFrame); if (webStyle === 'rings' || !gl || !$('v-home').classList.contains('on')) return; var c = $('orb');
+  var dt = Math.min(.05, (now - (orbLast || now)) / 1000); orbLast = now; var k = 1 - Math.pow(.002, dt); for (var i = 0; i < 3; i++) orbCur[i] += (orbCol[i] - orbCur[i]) * k;
+  var sp = { SLEEP: .25, IDLE: .7, LISTENING: 1.2, WAKE: 1.2, PROCESSING: 3.2, WORKING: 2.4, SPEAKING: 1.8 }[curState] || .8; orbT += dt * sp;
+  var e = curState === 'SPEAKING' ? .5 + .5 * Math.sin(now / 1000 * 9) * Math.sin(now / 1000 * 2.7 + 1) : curState === 'LISTENING' ? .35 : curState === 'PROCESSING' ? .5 : .14; orbE += (Math.max(0, e) - orbE) * (1 - Math.pow(.001, dt));
+  var dim = curState === 'SLEEP' ? .5 : 1; if (!drawStyle(webStyle, c.width, orbT, orbE, [orbCur[0] * dim, orbCur[1] * dim, orbCur[2] * dim])) return;
+  var x = c.getContext('2d'); x.clearRect(0, 0, c.width, c.height); x.drawImage(stage, 0, 0, c.width, c.height);
+}
+function applyOrbStyle() { var useGl = webStyle !== 'rings' && !!gl && !!prog(webStyle); $('orbWrap').classList.toggle('gl', useGl); if (webStyle !== 'rings' && !useGl) webStyle = 'rings'; setOrbColor(); }
+function setOrbColor() { var hex = (STATES[curState] || STATES.IDLE)[1] || MODES[curMode][0]; orbCol = hexRgb(hex); document.documentElement.style.setProperty('--sc', hex); }
+
+/* ---------------------------------------------------------------- mode + state */
+function setMode(m, quiet) {
+  if (!MODES[m]) return; curMode = m; var r = document.documentElement.style; r.setProperty('--acc', MODES[m][0]); r.setProperty('--acc2', m === 'professional' ? '#873bff' : MODES[m][1]);
+  $('userMode').textContent = 'Mode: ' + m[0].toUpperCase() + m.slice(1); setOrbColor();
+  document.querySelectorAll('#modeTiles .tile').forEach(function (t) { t.setAttribute('aria-pressed', t.dataset.m === m ? 'true' : 'false'); }); drawAll(); if (!quiet) addEvent('i', 'Mode changed', m[0].toUpperCase() + m.slice(1));
+}
+function setState(s) {
+  curState = STATES[s] ? s : 'IDLE'; var d = STATES[curState], col = d[1] || MODES[curMode][0];
+  $('stTxt').textContent = d[0]; $('hint').textContent = d[2]; $('stDot').style.background = col; $('stDot').style.boxShadow = '0 0 12px ' + col; setOrbColor();
+  if (curState === 'ERROR') addEvent('b', 'Something went wrong', 'Flexie reported an error'); renderHealth();
+}
+
+/* ---------------------------------------------------------------- activity, health, services, storage */
+function ago(t) { var s = Math.max(0, Math.round((Date.now() - t) / 1000)); return s < 10 ? 'just now' : s < 60 ? s + ' sec ago' : s < 3600 ? Math.floor(s / 60) + ' min ago' : Math.floor(s / 3600) + ' hr ago'; }
+function addEvent(kind, title, sub) { events.unshift({ t: Date.now(), k: kind, a: title, b: sub || '' }); if (events.length > 60) events.pop(); if (kind === 'w' || kind === 'b') { unseen++; bell(); } renderFeed(); renderNotes(); }
+function bell() { var b = $('bellN'); b.textContent = unseen > 9 ? '9+' : unseen; b.style.display = unseen ? 'block' : 'none'; }
+var feedAll = false, EC = { o: 'var(--green)', i: 'var(--cyan)', w: 'var(--orange)', b: 'var(--bad)' }, EM = { o: '✓', i: 'i', w: '!', b: '×' };
+function renderFeed() {
+  var box = $('feed'); box.replaceChildren(); box.classList.toggle('all', feedAll); if (!events.length) { box.appendChild(h('div', { class: 'empty', text: 'Nothing yet. Ask Flexie something.' })); return; }
+  events.slice(0, feedAll ? 60 : 6).forEach(function (e) { var ic = h('i', { text: EM[e.k] || 'i' }); ic.style.setProperty('--ec', EC[e.k] || 'var(--cyan)'); var ev = h('div', { class: 'ev' }, ic, h('div', {}, h('small', { text: ago(e.t) }), h('b', { text: e.a }), e.b ? h('span', { text: e.b }) : null)); box.appendChild(ev); });
+}
+function renderNotes() { var b = $('notes'); b.replaceChildren(); var n = events.filter(function (e) { return e.k === 'w' || e.k === 'b'; }).slice(0, 6); if (!n.length) b.appendChild(h('div', { class: 'nt' }, h('small', { text: 'No alerts. You are all caught up.' }))); n.forEach(function (e) { b.appendChild(h('div', { class: 'nt' }, h('b', { text: e.a }), h('small', { text: (e.b ? e.b + '  ' : '') + ago(e.t) }))); }); }
+$('feedAll').onclick = function () { feedAll = !feedAll; this.textContent = feedAll ? 'Show less' : 'View All'; renderFeed(); };
+function healthItems() {
+  var s = usage.summary || {}, keys = snap ? snap.providers.filter(function (p) { return p.has_key; }).length : null, online = wsAuthed || DEMO;
+  return [['CPU & Memory', last.cpu == null ? ['w', 'Waiting'] : (last.cpu > 90 || last.ram > 90) ? ['b', 'High'] : (last.cpu > 75 || last.ram > 85) ? ['w', 'Busy'] : ['o', 'Healthy']],
+    ['AI Providers', keys == null ? ['w', 'Checking'] : keys === 0 ? ['b', 'No keys'] : (s.failure_rate || 0) > .25 ? ['w', 'Unstable'] : ['o', 'Healthy']],
+    ['API Endpoints', apiOk === false ? ['w', 'Unreachable'] : apiOk ? ['o', 'Healthy'] : ['w', 'Checking']],
+    ['Network', online ? (last.net == null || last.net >= 0 ? ['o', 'Healthy'] : ['w', 'Check']) : ['b', 'Offline']]];
+}
+function renderHealth() {
+  var items = healthItems(), pen = { o: 0, w: 10, b: 24 }, score = 100; items.forEach(function (i) { score -= pen[i[1][0]]; }); score = Math.max(0, score);
+  ring($('gHealth'), score, score >= 85 ? ['#00e59b', '#08d9f5'] : score >= 60 ? ['#ff9d2e', '#ffd36b'] : ['#ff4d6a', '#ff8a9c'], Math.round(score) + '%', 'Overall Health');
+  var p = $('hPill'); p.textContent = score >= 85 ? 'Healthy' : score >= 60 ? 'Needs a look' : 'Attention'; p.className = 'r pill' + (score >= 85 ? '' : score >= 60 ? ' w' : ' b');
+  var box = $('checks'); box.replaceChildren(); items.forEach(function (i) { var k = i[1][0]; box.appendChild(h('li', {}, h('i', { class: k === 'o' ? '' : k, text: k === 'o' ? '✓' : k === 'w' ? '!' : '×' }), i[0], h('em', { class: k === 'o' ? '' : k, text: i[1][1] }))); });
+  var online = wsAuthed || DEMO;
+  $('live').className = 'live' + (online ? '' : ' off'); $('liveDot').className = 'dot ' + (online ? 'on' : 'off'); $('liveTxt').textContent = online ? 'Live' : 'Offline';
+  $('sysDot').className = 'dot ' + (online ? 'on' : 'off'); $('sysTxt').textContent = online ? 'System Online' : 'System offline'; $('sysok').className = 'sysok' + (online ? '' : ' off');
+}
+function renderServices() {
+  var s = usage.summary || {}, pp = s.per_provider || {}, rows = [], online = wsAuthed || DEMO;
+  $('uCalls').textContent = s.calls || 0; $('uTok').textContent = fmt(s.total_tokens); $('uCost').textContent = '$' + ((s.cost_usd || 0) < .1 ? (s.cost_usd || 0).toFixed(4) : (s.cost_usd || 0).toFixed(2)); $('uLat').textContent = (s.latency_p50_s || 0).toFixed(1) + 's';
+  rows.push(['Flexie link', online ? 'ok' : 'down', '--', '--']); rows.push(['Usage API', apiOk ? 'ok' : apiOk === false ? 'down' : 'wait', '--', apiMs != null ? apiMs + 'ms' : '--']);
+  (snap ? snap.providers : []).filter(function (p) { return p.has_key; }).forEach(function (p) { var u = pp[p.id], tot = u ? (u.calls || 0) + (u.failed_calls || 0) : 0; rows.push([p.label, 'ok', tot ? (Math.round((u.calls || 0) / tot * 1000) / 10) + '%' : 'Ready', '--']); });
+  (mcp || []).filter(function (m) { return m.connected; }).forEach(function (m) { rows.push(['MCP: ' + String(m.name == null ? '' : m.name), 'ok', (Number(m.tool_count) || 0) + ' tools', '--']); });
+  var body = $('svcBody'); body.replaceChildren(); var run = 0;
+  rows.forEach(function (r) { if (r[1] === 'ok') run++; var cls = r[1] === 'ok' ? '' : r[1] === 'down' ? ' b' : ' w'; body.appendChild(h('tr', {}, h('td', { text: r[0] }), h('td', {}, h('span', { class: 'st' + cls }, h('i', { class: 'dot ' + (r[1] === 'ok' ? 'on' : r[1] === 'down' ? 'off' : 'busy') }), r[1] === 'ok' ? 'Running' : r[1] === 'down' ? 'Offline' : 'Checking')), h('td', { text: r[2] }), h('td', { text: r[3] }))); });
+  $('svcN').textContent = run + '/' + rows.length + ' Running';
+}
+function renderStorage() {
+  var pct = last.disk, u = last.disk_used_gb, t = last.disk_total_gb; ring($('gStore'), pct == null ? 0 : pct, ['#168bff', '#873bff'], pct == null ? '--' : Math.round(pct) + '%', 'Used');
+  function g(v) { return v == null ? '--' : v >= 1000 ? (v / 1000).toFixed(2) + ' TB' : Math.round(v) + ' GB'; }
+  $('stUsed').textContent = g(u); $('stFree').textContent = u != null && t != null ? g(t - u) : '--'; $('stTotal').textContent = g(t); $('sbarFill').style.width = (pct == null ? 0 : Math.min(100, pct)) + '%';
+}
+
+/* ---------------------------------------------------------------- data in */
+function pushM(arr, v) { if (v == null || isNaN(v)) return; arr.push(+v); if (arr.length > HMAX) arr.shift(); }
+function delta(el, arr, unit, bad) { var n = arr.length; if (n < 2) { el.textContent = 'live'; el.className = 'd nt'; return; } var d = arr[n - 1] - arr[n - 2]; el.textContent = (d >= 0 ? '▲ +' : '▼ ') + Math.abs(d).toFixed(1) + unit; el.className = 'd' + (bad && d > 0 ? ' dn' : ''); }
+function onMetrics(d) {
+  ['cpu', 'ram', 'disk', 'net'].forEach(function (k) { pushM(hist[k], d[k]); if (d[k] != null) last[k] = +d[k]; }); if (d.disk_used_gb != null) { last.disk_used_gb = +d.disk_used_gb; last.disk_total_gb = +d.disk_total_gb; }
+  if (d.cpu != null) { $('mCpu').textContent = d.cpu + '%'; delta($('dCpu'), hist.cpu, '%', true); } if (d.ram != null) { $('mRam').textContent = d.ram + '%'; delta($('dRam'), hist.ram, '%', true); }
+  if (d.disk != null) { $('mDisk').textContent = (Math.round(d.disk * 10) / 10) + '%'; delta($('dDisk'), hist.disk, '%', true); } else { $('mDisk').textContent = '--'; $('dDisk').textContent = 'restart Flexie to show'; }
+  if (d.net != null) { $('mNet').textContent = d.net + ' MB/s'; delta($('dNet'), hist.net, ' MB/s', false); } else { $('mNet').textContent = '--'; $('dNet').textContent = 'restart Flexie to show'; }
+  drawAll();
+}
+function drawAll() { spark($('sCpu'), hist.cpu, '#168bff', 100); spark($('sRam'), hist.ram, '#873bff', 100); spark($('sDisk'), hist.disk, '#00d6b0', 100); spark($('sNet'), hist.net, '#ff9d2e'); if ($('v-home').classList.contains('on')) { trends(); renderHealth(); renderServices(); renderStorage(); } }
+function clip(t, n) { t = String(t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '\u2026' : t; }
+function showSay(t) { var s = $('say'); s.textContent = t; s.title = 'Click to read all'; s.classList.remove('open'); s.classList.add('on'); }
+$('say').onclick = function () { this.classList.toggle('open'); };
+var MIND_WORD = { screenshot: 'Screenshot', file: 'File', folder: 'Folder', project: 'Project', url: 'Page' };
+var MIND_CMD = { screenshot: 'open that screenshot', file: 'open that file', folder: 'open that folder', project: 'open the project', url: 'open that link' };
+function minAgo(sec) { return sec < 45 ? 'just now' : sec < 3600 ? Math.max(1, Math.round(sec / 60)) + ' min ago' : Math.round(sec / 3600) + ' hr ago'; }
+function renderMind() {
+  var box = $('mind'); box.replaceChildren(); var shown = mind.slice(0, 2); box.classList.toggle('on', shown.length > 0);
+  var drift = Math.round((Date.now() - mindAt) / 1000);
+  shown.forEach(function (m) { var b = h('button', { type: 'button', title: 'Open ' + m.label }, h('b', { text: m.label }), h('small', { text: minAgo(m.age + drift) })); b.onclick = function () { ask(MIND_CMD[m.kind] || 'open it'); }; box.appendChild(b); });
+}
+function onContext(list) { mind = Array.isArray(list) ? list.filter(function (m) { return m && m.kind && m.label; }) : []; mindAt = Date.now(); renderMind(); }
+var prefs = [];
+function renderPrefs() {
+  var box = $('prefList'); box.replaceChildren();
+  if (!prefs.length) { box.appendChild(h('div', { class: 'empty', text: 'Nothing yet. Say something like "I prefer short answers".' })); return; }
+  prefs.forEach(function (p) {
+    var del = h('button', { type: 'button', 'aria-label': 'Forget: ' + p.text, title: 'Forget this' }, String.fromCharCode(215));
+    del.onclick = function () { if (sendRaw('DELETE_PREF:' + p.id)) { prefs = prefs.filter(function (x) { return x.id !== p.id; }); renderPrefs(); } };
+    box.appendChild(h('div', { class: 'pref' }, h('b', { text: p.text }), h('small', { text: ago(p.updated * 1000) }), del));
+  });
+}
+function onPrefs(list) { prefs = Array.isArray(list) ? list.filter(function (p) { return p && p.text; }) : []; renderPrefs(); }
+$('prefClear').onclick = function () { if (prefs.length && confirm('Forget all ' + prefs.length + ' preferences?')) { if (sendRaw('CLEAR_PREFS')) { prefs = []; renderPrefs(); } } };
+function onSay(t) { showSay(t); addEvent('o', 'Flexie replied', clip(t, 60)); }
+var streamBuf = '';
+function onStream(c) { streamBuf += c; showSay(streamBuf); if (c.slice(-1) === '\n' || c === '') { addEvent('o', 'Flexie replied', clip(streamBuf, 60)); streamBuf = ''; } }
+function onJob(d) { if (!d) return; if (d.status === 'done') addEvent('o', 'Build finished', d.title || ''); else if (d.status === 'failed') addEvent('b', 'Build failed', d.error || d.title || ''); else if (d.status && d.status !== 'idle' && d.current_phase !== last.phase) { last.phase = d.current_phase; addEvent('i', 'Building ' + (d.title || 'project'), (d.current_phase || '').replace(/_/g, ' ')); } }
+function sendRaw(m) { if (DEMO) { addEvent('i', 'Demo mode', 'Would send: ' + m.slice(0, 60)); return true; } if (ws && wsAuthed && ws.readyState === 1) { ws.send(m); return true; } toast('Not connected', 'Flexie is offline. Reconnecting...', 'var(--bad)'); return false; }
+function ask(t) { t = (t || '').trim(); if (!t) return; if (sendRaw(t)) { addEvent('i', 'You asked', clip(t, 60)); $('say').classList.remove('on'); } }
+
+/* ---------------------------------------------------------------- websocket + api */
+function connect() {
+  if (DEMO) return; if (!TOKEN_OK) { toast('Open the dashboard from Flexie', 'Use http://localhost:8766/, not the file.', 'var(--orange)', 7000); return; }
+  ws = new WebSocket(WS_URL); wsAuthed = false;
+  ws.onopen = function () { ws.send('AUTH:' + AUTH_TOKEN); };
+  ws.onclose = function () { wsAuthed = false; setState('SLEEP'); renderHealth(); setTimeout(connect, 3000); };
+  ws.onmessage = function (e) {
+    var m = e.data; if (!wsAuthed) { if (m === 'AUTH_OK') { wsAuthed = true; setState('IDLE'); renderHealth(); ws.send('GET_SETTINGS'); ws.send('GET_CONTEXT'); ws.send('GET_PREFS'); if (window.FlexiePanels) window.FlexiePanels.onConnected(); pollApi(); toast('Connected', 'Flexie is online', 'var(--green)', 2400); } return; }
+    var i = m.indexOf(':'); if (i < 0) return; var tag = m.slice(0, i), val = m.slice(i + 1); if (window.FlexieOrbPanel) window.FlexieOrbPanel.onMessage(tag, val);
+    try {
+      if (tag === 'STATE') setState(val.toUpperCase()); else if (tag === 'SAY') onSay(val); else if (tag === 'METRICS') onMetrics(JSON.parse(val)); else if (tag === 'MODE') setMode(val.toLowerCase());
+      else if (tag === 'JOB') onJob(JSON.parse(val)); else if (tag === 'MCP') { mcp = JSON.parse(val); renderServices(); } else if (tag === 'STREAM') onStream(val); else if (tag === 'CONTEXT') onContext(JSON.parse(val)); else if (tag === 'PREFS') onPrefs(JSON.parse(val)); else if (tag === 'SETTINGS') onSnapshot(JSON.parse(val)); else if (tag === 'SETTINGS_SAVED') onSaved(JSON.parse(val));
+      else if (tag === 'NOTIFY') { var n = JSON.parse(val); addEvent('w', n.title || 'Notice', n.msg || ''); toast(n.title || 'Flexie', n.msg || ''); }
+      else if (tag === 'ALARM') { addEvent('w', 'Alarm', val); toast('Alarm', val, 'var(--orange)', 8000); } else if (tag === 'REMINDER') { addEvent('w', 'Reminder', val); toast('Reminder', val, 'var(--cyan)', 7000); }
+      else if (tag === 'ERROR') { addEvent('b', 'Error', clip(val, 60)); toast('Error', val, 'var(--bad)', 6000); }
+      else if (tag === 'PANEL' && /^(settings|keys|api)/.test(val.trim().toLowerCase())) showView('settings');
+      else if (window.FlexiePanels) window.FlexiePanels.handle(tag, val);
+    } catch (err) { /* a malformed message must never break the page */ }
+  };
+}
+async function api(path) { try { var hd = {}; if (apiToken) hd.Authorization = 'Bearer ' + apiToken; var r = await fetch(API + path, { headers: hd }); if (!r.ok) return null; return await r.json(); } catch (e) { return null; } }
+async function pollApi() {
+  if (!apiToken) { var x = await api('/health'); if (x && x.token) apiToken = x.token; apiOk = !!x; }
+  var t1 = performance.now(), u = await api('/api/flexie/usage?limit=20'); if (u) { usage = u; apiOk = true; apiMs = Math.round(performance.now() - t1); } else if (apiToken) { apiOk = false; apiMs = null; } renderServices(); renderHealth();
+  var c = await api('/api/flexie/mail/count'); if (c && c.unread > 0 && last.mail !== c.unread) { last.mail = c.unread; addEvent('i', c.unread + ' unread mail', 'Open mail in the classic dashboard'); }
+}
+
+/* ---------------------------------------------------------------- settings */
+var draft = { keys: {}, models: {}, active: null, ollama_url: null, ollama_model: null, behavior: {}, orb_style: null };
+function dirtyCount(part) {
+  var n = 0, k; if (part === 'providers' || !part) { for (k in draft.keys) if (draft.keys[k]) n++; n += Object.keys(draft.models).length + (draft.active != null ? 1 : 0) + (draft.ollama_url != null ? 1 : 0) + (draft.ollama_model != null ? 1 : 0); }
+  if (part === 'behavior' || !part) n += Object.keys(draft.behavior).length; if (part === 'appearance' || !part) n += draft.orb_style != null ? 1 : 0; return n;
+}
+function markDirty() {
+  var t = dirtyCount(); $('savebar').classList.toggle('on', t > 0 && $('v-settings').classList.contains('on')); $('saveMsg').replaceChildren(t ? h('b', { text: t + (t === 1 ? ' change' : ' changes') }) : '', t ? ' not saved yet' : '');
+  [['bProv', 'providers'], ['bBeh', 'behavior'], ['bApp', 'appearance']].forEach(function (p) { var n = dirtyCount(p[1]), b = $(p[0]); b.textContent = n; b.style.display = n ? 'inline-block' : 'none'; });
+}
+function clearDraft() { draft = { keys: {}, models: {}, active: null, ollama_url: null, ollama_model: null, behavior: {}, orb_style: null }; }
+function onSnapshot(s) { snap = s; clearDraft(); renderSettings(); renderServices(); renderHealth(); markDirty(); }
+function onSaved(r) {
+  var p = (r && r.problems) || [], n = (r && r.changed) || 0;
+  if (n) { toast('Applied', n + (n === 1 ? ' setting' : ' settings') + ' saved. Flexie is already using them.', 'var(--green)', 4200); addEvent('o', 'Settings applied', n + ' saved without a restart'); }
+  if (p.length) toast('Not saved', p.join(' '), 'var(--bad)', 7000); if (!n && !p.length) toast('Nothing changed', 'Those values were already set.', 'var(--cyan)');
+  $('save').disabled = false; $('save').textContent = 'Save and apply'; if (ws && ws.readyState === 1) ws.send('GET_SETTINGS');
+}
+function renderSettings() {
+  if (!snap) return; var act = draft.active != null ? draft.active : snap.active, box = $('prov'); box.replaceChildren();
+  $('routeSeg').querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', (b.dataset.r === 'auto') === (act === 'auto') ? 'true' : 'false'); });
+  var sel = $('routeSel'); sel.replaceChildren(); snap.active_choices.filter(function (c) { return c !== 'auto'; }).forEach(function (c) { var pv = snap.providers.filter(function (p) { return p.id === c; })[0]; sel.appendChild(h('option', { value: c, text: pv ? pv.label : c === 'ollama' ? 'Ollama (this computer)' : c })); });
+  sel.value = act === 'auto' ? (snap.active_choices[1] || '') : act; sel.style.display = act === 'auto' ? 'none' : 'block';
+  $('routeHelp').textContent = act === 'auto' ? 'Flexie tries your providers in order and moves to the next one if a request fails.' : 'Every request goes to this provider. If it fails, Flexie will not switch to another.';
+  snap.providers.forEach(function (p) {
+    var key = h('input', { class: 'in', type: 'password', autocomplete: 'new-password', spellcheck: 'false', placeholder: p.has_key ? 'Saved (' + (p.hint || 'hidden') + '). Type to replace.' : (p.placeholder || 'Paste your key'), 'aria-label': p.label + ' API key' });
+    key.oninput = function () { if (key.value.trim()) draft.keys[p.id] = key.value.trim(); else delete draft.keys[p.id]; markDirty(); };
+    var show = h('button', { class: 'btn', type: 'button', text: 'Show' }); show.onclick = function () { key.type = key.type === 'password' ? 'text' : 'password'; show.textContent = key.type === 'password' ? 'Show' : 'Hide'; };
+    var dl = h('datalist', { id: 'dl-' + p.id }); (p.models || []).forEach(function (m) { dl.appendChild(h('option', { value: m })); });
+    var model = h('input', { class: 'in', list: 'dl-' + p.id, spellcheck: 'false', value: p.model || '', 'aria-label': p.label + ' model' });
+    model.oninput = function () { var v = model.value.trim(); if (v && v !== p.model) draft.models[p.id] = v; else delete draft.models[p.id]; markDirty(); };
+    box.appendChild(h('div', { class: 'panel pc' }, h('div', { class: 'hd' }, h('b', { text: p.label }), h('span', { class: 'badge' + (act === p.id ? ' act' : p.has_key ? '' : ' no'), text: act === p.id ? 'In use' : p.has_key ? 'Key saved' : 'No key' })),
+      h('div', {}, h('label', { class: 'lbl', text: 'API key' }), h('div', { class: 'keyrow' }, key, show)), h('div', {}, h('label', { class: 'lbl', text: 'Model' }), model), dl, p.help ? h('div', { class: 'help', text: 'Get a key at ' + p.help }) : null));
+  });
+  var ou = $('olUrl'), om = $('olModel'); ou.value = (snap.ollama && snap.ollama.url) || ''; om.value = (snap.ollama && snap.ollama.model) || '';
+  ou.oninput = function () { draft.ollama_url = ou.value.trim() && ou.value.trim() !== snap.ollama.url ? ou.value.trim() : null; markDirty(); }; om.oninput = function () { draft.ollama_model = om.value.trim() && om.value.trim() !== snap.ollama.model ? om.value.trim() : null; markDirty(); };
+  $('olBadge').textContent = act === 'ollama' ? 'In use' : 'Local'; $('olBadge').className = 'badge' + (act === 'ollama' ? ' act' : ' no');
+  var bx = $('beh'); bx.replaceChildren();
+  snap.behavior.forEach(function (b) {
+    var cur = draft.behavior[b.env] != null ? draft.behavior[b.env] : b.value, ctl, tag = h('span', { class: b.live ? 'live2' : 'rst', text: b.live ? 'Applies instantly' : 'Applies after restart' });
+    if (b.type === 'bool') { var cb = h('input', { type: 'checkbox', 'aria-label': b.label }); cb.checked = !!cur; cb.onchange = function () { setBeh(b, cb.checked); }; ctl = h('div', { class: 'rg' }, h('label', { class: 'sw' }, cb, h('i', {})), h('span', { class: 'help', text: cur ? 'On' : 'Off' })); }
+    else if (b.type === 'choice') { var se = h('select', { 'aria-label': b.label }); b.choices.forEach(function (c) { se.appendChild(h('option', { value: c, text: c })); }); se.value = cur; se.onchange = function () { setBeh(b, se.value); }; ctl = se; }
+    else { var out = h('output', { text: cur + (b.unit ? ' ' + b.unit : '') }), rg = h('input', { type: 'range', min: b.min, max: b.max, step: b.type === 'int' ? Math.max(1, Math.round((b.max - b.min) / 100)) : 0.5, value: cur, 'aria-label': b.label }); rg.oninput = function () { out.textContent = rg.value + (b.unit ? ' ' + b.unit : ''); setBeh(b, b.type === 'int' ? parseInt(rg.value, 10) : parseFloat(rg.value)); }; ctl = h('div', { class: 'rg' }, rg, out); }
+    bx.appendChild(h('div', { class: 'panel bh' }, h('div', { class: 't2' }, h('b', { text: b.label }), tag), h('div', { class: 'help', text: b.help }), ctl));
+  });
+  renderTiles(); renderConnection();
+}
+function setBeh(b, v) { if (v === b.value) delete draft.behavior[b.env]; else draft.behavior[b.env] = v; markDirty(); }
+var FLOAT_NAMES = { classic: 'Classic', hud: 'Instrument ring', plasma: 'Liquid plasma', ring: 'Voice ring', eye: 'Cyber eye', crystal: 'Crystal', sonar: 'Sonar', globe: 'Dot globe', equalizer: 'Equalizer', atom: 'Atom' };
+function keyAct(t) { t.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); t.onclick(); } }; }
+function renderTiles() {
+  var mt = $('modeTiles'); mt.replaceChildren(); Object.keys(MODES).forEach(function (m) { var dot = h('i', { class: 'mdot' }); dot.style.background = 'radial-gradient(circle at 35% 30%,#fff,' + MODES[m][0] + ' 40%,' + MODES[m][1] + ')';
+    var t = h('button', { class: 'tile', type: 'button', 'aria-pressed': m === curMode ? 'true' : 'false', 'data-m': m }, dot, h('b', { text: m[0].toUpperCase() + m.slice(1) }), h('small', { text: MODES[m][2] })); t.onclick = function () { sendRaw('mode ' + m); setMode(m); }; mt.appendChild(t); });
+  var cur = draft.orb_style != null ? draft.orb_style : (snap ? snap.orb.style : 'classic'), ft = $('floatTiles'); ft.replaceChildren();
+  (snap ? snap.orb.choices : Object.keys(FLOAT_NAMES)).forEach(function (n) { var img = h('img', { src: 'static/orb-thumb-' + n + '.png', alt: '', loading: 'lazy' }); img.onerror = function () { img.style.visibility = 'hidden'; };
+    var t = h('button', { class: 'tile', type: 'button', 'aria-pressed': n === cur ? 'true' : 'false' }, img, h('b', { text: FLOAT_NAMES[n] || n }), h('small', { text: snap && n === snap.orb.style ? 'In use now' : '' }));
+    t.onclick = function () { draft.orb_style = snap && n === snap.orb.style ? null : n; renderTiles(); markDirty(); }; ft.appendChild(t); });
+  $('orbNote').textContent = 'Switches the moment you save';
+  var wt = $('webTiles'); wt.replaceChildren(); WEB.forEach(function (w) { var c = h('canvas', { width: '160', height: '160' }); c.dataset.id = w.id; var t = h('button', { class: 'tile', type: 'button', 'aria-pressed': w.id === webStyle ? 'true' : 'false' }, c, h('b', { text: w.name }), h('small', { text: w.note }));
+    t.onclick = function () { webStyle = w.id; try { localStorage.setItem('flexieWebOrb2', w.id); } catch (e) { /* storage blocked */ } applyOrbStyle(); renderTiles(); toast('Orb changed', w.name, 'var(--cyan)', 1800); }; wt.appendChild(t); });
+  paintThumbs();
+}
+function paintThumbs() {
+  var col = hexRgb(MODES[curMode][0]); document.querySelectorAll('#webTiles canvas').forEach(function (c) { var x = c.getContext('2d'); x.clearRect(0, 0, 160, 160);
+    if (c.dataset.id === 'rings') { x.fillStyle = '#03071a'; x.fillRect(0, 0, 160, 160); var a = MODES[curMode][0]; x.lineWidth = 2; [[70, .5, -.4, '#168bff'], [66, .62, .66, '#873bff'], [56, 1, 0, a]].forEach(function (r) { x.save(); x.translate(80, 80); x.rotate(r[2]); x.scale(1, r[1]); x.strokeStyle = r[3]; x.beginPath(); x.arc(0, 0, r[0], 0, 6.3); x.stroke(); x.restore(); });
+      var g = x.createRadialGradient(68, 66, 4, 80, 80, 34); g.addColorStop(0, '#d8e6ff'); g.addColorStop(.4, a); g.addColorStop(1, '#0a1a4a'); x.fillStyle = g; x.beginPath(); x.arc(80, 80, 34, 0, 6.3); x.fill(); }
+    else if (gl && drawStyle(c.dataset.id, 160, 6.3 + c.dataset.id.length, .6, col)) x.drawImage(stage, 0, 0, 160, 160); });
+}
+function renderConnection() {
+  var kv = $('kv'); kv.replaceChildren(); var act = snap ? snap.active : '-', pv = snap ? snap.providers.filter(function (p) { return p.id === act; })[0] : null;
+  function row(k, v, ok) { kv.append(h('dt', { text: k }), h('dd', {}, ok == null ? null : h('i', { class: 'dot ' + (ok ? 'on' : 'off') }), v)); }
+  row('Live link to Flexie', wsAuthed || DEMO ? 'Connected' : 'Offline', wsAuthed || DEMO); row('Usage service', apiOk ? 'Reachable' : apiOk === false ? 'Not reachable' : 'Not checked yet', apiOk == null ? null : apiOk);
+  row('Sign-in token', TOKEN_OK ? 'Issued for this session' : 'Missing. Open the page from Flexie', TOKEN_OK); row('Provider in use', act === 'auto' ? 'Automatic fallback' : (pv ? pv.label + ' (' + pv.model + ')' : act)); row('Page address', location.host || 'local file'); row('Dashboard version', 'v2.0.0');
+}
+$('chkBtn').onclick = async function () { var b = this; b.disabled = true; b.textContent = 'Checking...'; apiToken = ''; await pollApi(); renderConnection(); b.disabled = false; b.textContent = 'Check connection'; toast(apiOk ? 'Reachable' : 'Not reachable', apiOk ? 'Usage service answered.' : 'Start Flexie, then try again.', apiOk ? 'var(--green)' : 'var(--bad)'); };
+$('routeSeg').querySelectorAll('button').forEach(function (b) { b.onclick = function () { var a = b.dataset.r === 'auto' ? 'auto' : ($('routeSel').value || (snap.active_choices[1] || 'auto')); draft.active = a === snap.active ? null : a; renderSettings(); markDirty(); }; });
+$('routeSel').onchange = function () { draft.active = this.value === snap.active ? null : this.value; renderSettings(); markDirty(); };
+$('discard').onclick = function () { clearDraft(); renderSettings(); markDirty(); };
+$('save').onclick = function () {
+  var pl = {}; if (Object.keys(draft.keys).length) pl.keys = draft.keys; if (Object.keys(draft.models).length) pl.models = draft.models; if (draft.active != null) pl.active = draft.active;
+  if (draft.ollama_url != null) pl.ollama_url = draft.ollama_url; if (draft.ollama_model != null) pl.ollama_model = draft.ollama_model; if (Object.keys(draft.behavior).length) pl.behavior = draft.behavior; if (draft.orb_style != null) pl.orb_style = draft.orb_style;
+  if (DEMO) { toast('Demo mode', 'Nothing was saved.', 'var(--orange)'); return; }
+  if (sendRaw('SAVE_SETTINGS:' + JSON.stringify(pl))) { this.disabled = true; this.textContent = 'Applying...'; document.querySelectorAll('#prov input[type=password]').forEach(function (i) { i.value = ''; }); }
+};
+document.querySelectorAll('#sl button').forEach(function (b) { b.onclick = function () { showSection(b.dataset.s); }; });
+function showSection(s) { document.querySelectorAll('#sl button').forEach(function (x) { x.setAttribute('aria-selected', x.dataset.s === s ? 'true' : 'false'); }); document.querySelectorAll('.sec').forEach(function (x) { x.classList.toggle('on', x.id === 's-' + s); }); if (s === 'appearance') setTimeout(paintThumbs, 20); if (s === 'connection') renderConnection(); if (s === 'memory' && ws && ws.readyState === 1) ws.send('GET_PREFS'); }
+
+/* ---------------------------------------------------------------- navigation, popovers, search */
+function showView(v) {
+  document.querySelectorAll('.nav').forEach(function (n) { if (n.dataset.v === v) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current'); }); document.querySelectorAll('.view').forEach(function (x) { x.classList.toggle('on', x.id === 'v-' + v); });
+  closeMenu(); markDirty(); if (v === 'home') setTimeout(function () { drawAll(); renderFeed(); }, 30); else if (!snap && ws && ws.readyState === 1) ws.send('GET_SETTINGS');
+}
+document.querySelectorAll('.nav').forEach(function (n) { n.onclick = function () { showView(n.dataset.v); }; });
+function closeMenu() { $('sidebar').classList.remove('open'); $('scrim').classList.remove('on'); }
+$('menuBtn').onclick = function () { $('sidebar').classList.add('open'); $('scrim').classList.add('on'); }; $('scrim').onclick = closeMenu;
+function pop(btn, el) { var open = !el.classList.contains('on'); document.querySelectorAll('.pop').forEach(function (p) { p.classList.remove('on'); }); document.querySelectorAll('[aria-haspopup]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); }); if (open) { el.classList.add('on'); btn.setAttribute('aria-expanded', 'true'); } }
+$('bell').onclick = function (e) { e.stopPropagation(); unseen = 0; bell(); renderNotes(); pop(this, $('popBell')); }; $('userBtn').onclick = function (e) { e.stopPropagation(); pop(this, $('popUser')); };
+document.addEventListener('click', function () { document.querySelectorAll('.pop').forEach(function (p) { p.classList.remove('on'); }); document.querySelectorAll('[aria-haspopup]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); }); });
+$('uSet').onclick = function () { showView('settings'); }; $('uClassic').onclick = function () { location.href = 'index.html'; };
+function wake() { ask('wake up'); } $('orbBtn').onclick = wake; $('orb').onclick = wake;
+$('askPill').onclick = function () { $('cmd').focus(); $('cmd').scrollIntoView({ block: 'center', behavior: 'smooth' }); };
+$('qa').querySelectorAll('button').forEach(function (b) { b.onclick = function () { if (b.dataset.c) { ask(b.dataset.c); toast(b.textContent.trim(), 'Sent to Flexie', 'var(--cyan)', 1800); } else if (b.dataset.p) { $('cmd').value = b.dataset.p; $('cmd').focus(); } else showView(b.dataset.go); }; });
+$('askForm').onsubmit = function (e) { e.preventDefault(); var v = $('cmd').value; $('cmd').value = ''; ask(v); };
+var PAL = [['Go to Home', 'page', function () { showView('home'); }], ['Settings: AI providers and API keys', 'page', function () { showView('settings'); showSection('providers'); }], ['Settings: Behavior', 'page', function () { showView('settings'); showSection('behavior'); }],
+  ['Settings: Appearance and orb styles', 'page', function () { showView('settings'); showSection('appearance'); }], ['Settings: Connection', 'page', function () { showView('settings'); showSection('connection'); }]];
+Object.keys(MODES).forEach(function (m) { PAL.push(['Switch to ' + m + ' mode', 'mode', function () { sendRaw('mode ' + m); setMode(m); }]); });
+[['What is the weather', "what's the weather"], ['Daily briefing', 'daily briefing'], ['Analyze my screen', 'analyze screen'], ['Take a screenshot', 'take screenshot']].forEach(function (c) { PAL.push([c[0], 'ask', function () { ask(c[1]); }]); });
+var palSel = 0, palItems = [];
+function palRender() {
+  var q = $('q').value.trim().toLowerCase(), pal = $('pal'); palItems = PAL.filter(function (p) { return !q || p[0].toLowerCase().indexOf(q) >= 0; }).slice(0, 7); pal.replaceChildren();
+  if (q) palItems.push(['Ask Flexie: ' + $('q').value.trim().slice(0, 60), 'ask', function () { ask($('q').value); }]);
+  palSel = Math.min(palSel, palItems.length - 1); palItems.forEach(function (p, i) { var b = h('button', { class: i === palSel ? 'sel' : '', type: 'button', role: 'option' }, h('span', { text: p[0] }), h('small', { text: p[1] })); b.onmousedown = function (e) { e.preventDefault(); palRun(i); }; pal.appendChild(b); }); pal.classList.toggle('on', palItems.length > 0);
+}
+function palRun(i) { var p = palItems[i]; if (!p) return; var fn = p[2]; $('q').value = ''; $('pal').classList.remove('on'); $('q').blur(); fn(); }
+$('q').addEventListener('input', function () { palSel = 0; palRender(); }); $('q').addEventListener('focus', palRender); $('q').addEventListener('blur', function () { setTimeout(function () { $('pal').classList.remove('on'); }, 120); });
+$('q').addEventListener('keydown', function (e) { if (e.key === 'ArrowDown') { e.preventDefault(); palSel = Math.min(palItems.length - 1, palSel + 1); palRender(); } else if (e.key === 'ArrowUp') { e.preventDefault(); palSel = Math.max(0, palSel - 1); palRender(); } else if (e.key === 'Enter') { e.preventDefault(); palRun(palSel); } else if (e.key === 'Escape') $('q').blur(); });
+document.addEventListener('keydown', function (e) { if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); $('q').focus(); } });
+setInterval(function () { var s = Math.floor((Date.now() - t0) / 1000); $('sysSub').textContent = 'Uptime: ' + Math.floor(s / 86400) + 'd ' + Math.floor(s % 86400 / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm'; if ($('v-home').classList.contains('on')) { renderFeed(); renderMind(); } }, 5000);
+setInterval(function () { if (!DEMO && wsAuthed) pollApi(); }, 6000); window.addEventListener('resize', function () { drawAll(); });
+
+/* ---------------------------------------------------------------- demo data (?demo=1): design preview only */
+function startDemo() {
+  toast('Demo data', 'This page is showing sample numbers, not your system.', 'var(--orange)', 6000);
+  apiOk = true; apiMs = 12; var c = 38, r = 62, d = 71.8, n = 6;
+  for (var i = 0; i < HMAX; i++) { c = Math.max(10, Math.min(90, c + (Math.random() - .45) * 12)); r = Math.max(45, Math.min(80, r + (Math.random() - .5) * 3)); d = Math.min(90, d + (Math.random() - .45) * .1); n = Math.max(2, Math.min(40, n + (Math.random() - .5) * 8)); pushM(hist.cpu, c); pushM(hist.ram, r); pushM(hist.disk, d); pushM(hist.net, n); }
+  last = { cpu: hist.cpu[HMAX - 1], ram: hist.ram[HMAX - 1], disk: hist.disk[HMAX - 1], net: hist.net[HMAX - 1], disk_used_gb: 680, disk_total_gb: 1000 };
+  $('mCpu').textContent = last.cpu.toFixed(1) + '%'; $('mRam').textContent = last.ram.toFixed(1) + '%'; $('mDisk').textContent = last.disk.toFixed(1) + '%'; $('mNet').textContent = last.net.toFixed(1) + ' MB/s';
+  delta($('dCpu'), hist.cpu, '%', true); delta($('dRam'), hist.ram, '%', true); delta($('dDisk'), hist.disk, '%', true); delta($('dNet'), hist.net, ' MB/s', false);
+  usage = { summary: { calls: 48, failed_calls: 2, failure_rate: .04, total_tokens: 76000, cost_usd: .0714, latency_p50_s: 1.2, per_provider: { groq: { calls: 29, failed_calls: 1 }, gemini: { calls: 17, failed_calls: 1 } } }, recent_commands: [] };
+  snap = { active: 'auto', active_choices: ['auto', 'groq', 'gemini', 'openai', 'ollama'], orb: { style: 'classic', choices: Object.keys(FLOAT_NAMES) }, modes: Object.keys(MODES), ollama: { url: 'http://localhost:11434/api/generate', model: 'tinyllama:latest' },
+    providers: [{ id: 'groq', label: 'Groq', has_key: true, hint: 'gsk_...a1b2', model: 'openai/gpt-oss-20b', models: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], help: 'console.groq.com/keys', placeholder: 'gsk_...' }, { id: 'gemini', label: 'Google Gemini', has_key: true, hint: 'AIza...9xyz', model: 'gemini-2.5-flash', models: ['gemini-2.5-flash'], help: 'aistudio.google.com/apikey', placeholder: 'AIza...' }, { id: 'openai', label: 'OpenAI', has_key: false, hint: '', model: 'gpt-4o-mini', models: ['gpt-4o-mini'], help: 'platform.openai.com/api-keys', placeholder: 'sk-...' }],
+    behavior: [{ env: 'FLEXIE_CONVERSATION_HISTORY_TURNS', type: 'int', min: 0, max: 40, label: 'Conversation memory', unit: 'turns', live: true, help: 'How many earlier exchanges Flexie remembers when answering.', value: 8 }, { env: 'FLEXIE_LLM_REQUEST_TIMEOUT', type: 'float', min: 3, max: 60, label: 'AI request timeout', unit: 'seconds', live: true, help: 'How long to wait for one AI provider before falling back to the next.', value: 7 },
+      { env: 'FLEXIE_CHEAP_FIRST_ENABLED', type: 'bool', label: 'Cheap model first', live: true, help: 'Try the cheapest capable model first and escalate only if needed.', value: true }, { env: 'FLEXIE_TTS_MODE', type: 'choice', choices: ['neural', 'sapi'], label: 'Voice engine', live: false, help: 'neural = natural online voice, sapi = offline Windows voice. Applies after a restart.', value: 'neural' }] };
+  var now = Date.now(); events = [{ t: now - 120000, k: 'o', a: 'New task executed successfully', b: 'Build todo-app finished' }, { t: now - 300000, k: 'i', a: 'You asked', b: 'what is the weather in Chennai' }, { t: now - 480000, k: 'o', a: 'Flexie replied', b: 'It is 31 degrees and humid.' }, { t: now - 720000, k: 'w', a: 'Reminder', b: 'Standup in 10 minutes' }];
+  onPrefs([{ id: 1, text: 'Prefers short answers', updated: (Date.now() - 3600000) / 1000 }, { id: 2, text: 'Name is Sam', updated: (Date.now() - 86400000) / 1000 }, { id: 3, text: 'Always use VS Code for coding', updated: (Date.now() - 7200000) / 1000 }]);
+  onContext([{ kind: 'screenshot', label: 'screenshot_1195.png', age: 40 }, { kind: 'project', label: 'calendar-app', age: 600 }]);
+  unseen = 3; bell(); onSnapshot(snap); renderFeed(); renderNotes(); setState('IDLE'); wsAuthed = false; drawAll(); $('live').className = 'live'; $('liveDot').className = 'dot on'; $('liveTxt').textContent = 'Live'; $('sysDot').className = 'dot on'; $('sysTxt').textContent = 'System Online'; $('sysok').className = 'sysok';
+  setInterval(function () { var l = hist.cpu[hist.cpu.length - 1]; pushM(hist.cpu, Math.max(8, Math.min(92, l + (Math.random() - .5) * 10))); drawAll(); }, 1500);
+}
+glInit(); setMode('professional', true); setState('SLEEP'); applyOrbStyle(); renderTiles(); renderNotes(); renderFeed(); requestAnimationFrame(orbFrame);
+if (DEMO) startDemo(); else { connect(); renderServices(); renderHealth(); renderStorage(); }
+</script>
+<script src="demo.js"></script>
+</body>
+</html>
